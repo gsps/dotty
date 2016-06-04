@@ -1,5 +1,7 @@
-dotty
+dotty + *liquid-typer*
 =====
+
+### For info on LiquidTyper see the [README in the liquidtyper package](src/dotty/tools/dotc/liquidtyper/README.md)!
 
 [![Join the chat at https://gitter.im/lampepfl/dotty](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/lampepfl/dotty?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
