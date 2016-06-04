@@ -10,6 +10,7 @@ import Phases._
 import Types._
 import Symbols._
 import Scopes._
+import liquidtyper.LiquidContext
 import NameOps._
 import Uniques._
 import SymDenotations._
@@ -61,6 +62,7 @@ object Contexts {
                             with SymDenotations
                             with Reporting
                             with NamerContextOps
+                            with LiquidContext
                             with Cloneable { thiscontext =>
     implicit def ctx: Context = this
 

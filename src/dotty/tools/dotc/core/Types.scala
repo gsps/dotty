@@ -33,6 +33,7 @@ import annotation.tailrec
 import Flags.FlagSet
 import language.implicitConversions
 import scala.util.hashing.{ MurmurHash3 => hashing }
+import dotc.{ liquidtyper => lt }
 
 object Types {
 
@@ -2103,6 +2104,45 @@ object Types {
     def apply(parent: Type, name: Name, info: Type)(implicit ctx: Context): RefinedType = {
       assert(!ctx.erasedTypes)
       ctx.base.uniqueRefinedTypes.enterIfNew(parent, name, info).checkInst
+    }
+  }
+
+  // --- LiquidType ---------------------------------------------
+
+  /** A logically qualified type (LiquidType): { v : tpt | P(v) }
+    *
+    * @param subjectName: The name of the subject variable.
+    * @param baseType: The type of the subject variable.
+    * @param qualifier: An expression that represents the predicate or a qualifier variable, potentially prefixed
+    *                 with pending subsitutions.
+    * */
+  abstract case class LiquidType(subjectName: Name, baseType: Type, qualifier: Tree)
+    extends CachedProxyType with ValueType {
+    override def underlying(implicit ctx: Context) = baseType
+    // FIXME(Georg): Is it hacky to compute the hash by wrapping the values in a tuple?
+    override def computeHash = doHash((subjectName, baseType, qualifier))
+
+    def derivedLiquidType(subjectName: Name, baseType: Type, qualifier: Tree)(implicit ctx: Context) =
+      if ((subjectName eq this.subjectName) && (baseType eq this.baseType) && (qualifier eq this.qualifier)) this
+      else LiquidType(subjectName, baseType, qualifier)
+
+    def withQualifier(qualifier: Tree)(implicit ctx: Context): LiquidType =
+      if (qualifier eq this.qualifier) this else LiquidType(subjectName, baseType, qualifier)
+  }
+
+  final class CachedLiquidType(subjectName: Name, baseType: Type, qualifier: Tree)
+    extends LiquidType(subjectName, baseType, qualifier)
+
+  object LiquidType {
+    // FIXME(Georg): Allow subject variable names other than DefaultSubjectName (also see Parser)
+    def apply(subjectName: Name, subjectType: Type, qualifier: Tree)(implicit ctx: Context): LiquidType =
+    {
+      assert(ctx.canBuildLtFrom(subjectType), s"Type ${subjectType.show} is not a valid LiquidType base type")
+      unique(new CachedLiquidType(subjectName, subjectType, qualifier))
+    }
+
+    def apply(subjectType: Type, qualifier: Tree)(implicit ctx: Context): LiquidType = {
+      this(lt.SubjectVarName, subjectType, qualifier)
     }
   }
 

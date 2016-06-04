@@ -9,6 +9,7 @@ import ast.Trees._, ast._
 import java.lang.Integer.toOctalString
 import config.Config.summarizeDepth
 import scala.annotation.switch
+import liquidtyper.{TemplateEnv, Qualifier, Constraint, QType}
 
 class PlainPrinter(_ctx: Context) extends Printer {
   protected[this] implicit def ctx: Context = _ctx.addMode(Mode.Printing)
@@ -126,6 +127,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
         toTextLocal(tp.underlying) ~ "(" ~ toTextRef(tp) ~ ")"
       case tp: TypeRef =>
         toTextPrefix(tp.prefix) ~ selectionString(tp)
+      case tp: LiquidType =>
+        "{ " ~ toText(tp.subjectName) ~ ": " ~ toText(tp.baseType) ~ " | " ~ toText(tp.qualifier) ~ " }"
       case tp: RefinedType =>
         val parent :: (refined: List[RefinedType @unchecked]) =
           refinementChain(tp).reverse
@@ -416,6 +419,65 @@ class PlainPrinter(_ctx: Context) extends Printer {
   def toText(sc: Scope): Text =
     ("Scope{" ~ dclsText(sc.toList) ~ "}").close
 
+  def toText(cond: leon.purescala.Expressions.Expr): Text =
+    cond.toString.close
+
+  def toText(id: leon.purescala.Common.Identifier): Text =
+    id.toString.close
+
+  def envText(env: TemplateEnv): Text = {
+    val bindingsTxts = env.bindings map
+      { case (id, binding) => id.uniqueName ~ ": " ~ toText(binding.templateTp) }
+    val pcTxts = env.conditions map toText
+    Text(bindingsTxts ++ pcTxts , "; ")
+  }
+
+  def toText(env: TemplateEnv): Text =
+    ("(Γ= " ~ envText(env) ~ ")").close
+
+  def disjClauseText(envQual: (TemplateEnv, Qualifier)): Text = {
+    val (env, qual) = envQual
+    val pcTxts = env.conditions map toText
+    Text(pcTxts :+ toText(qual), " && ")
+  }
+
+  def toText(qual: Qualifier): Text = qual match {
+    case Qualifier.Var(name) =>
+      toText(name)
+    case Qualifier.PendingSubst(varId, replacement, in) =>
+      ("[" ~ toText(replacement) ~ "/" ~ toText(varId) ~ "] " ~ toText(in)).close
+    case Qualifier.True =>
+      "true".close
+    case Qualifier.ExtractedExpr(expr) =>
+      toText(expr)
+    case Qualifier.Disj(envQuals) =>
+      Text(envQuals map disjClauseText, " || ")
+  }
+
+  def toText(qtp: QType): Text = qtp match {
+    case QType.BaseType(underlying, Qualifier.True) =>
+      underlying.toString.close
+    case QType.BaseType(underlying, qualifier) =>
+      ("{ " ~ underlying.toString() ~ " | " ~ toText(qualifier) ~ " }").close
+    case QType.FunType(params, result) =>
+      val paramTxts = params map {
+        case (pName, pQtp: QType.FunType) =>
+          (toText(pName) ~ ": (" ~ toText(pQtp) ~ ")").close
+        case (pName, pQtp) =>
+          (toText(pName) ~ ": " ~ toText(pQtp)).close
+      }
+      (Text(paramTxts, " => ") ~ " => " ~ toText(result)).close
+    case QType.UninterpretedType(original) =>
+      ("Uninterp<" ~ toText(original) ~ ">").close
+  }
+
+  def toText(constraint: Constraint): Text = constraint match {
+    case Constraint.WfConstraint(env, typ, _) =>
+      (envText(env) ~ " ⊢ " ~ toText(typ)).close
+    case Constraint.SubtypConstraint(env, typA, typB, _) =>
+      (envText(env) ~ " ⊢ " ~ toText(typA) ~ " <: " ~ toText(typB)).close
+  }
+
   def toText[T >: Untyped](tree: Tree[T]): Text = {
     tree match {
       case node: Positioned =>
@@ -428,8 +490,10 @@ class PlainPrinter(_ctx: Context) extends Printer {
         val elems =
           Text(node.productIterator.map(toTextElem).toList, ", ")
         val tpSuffix =
-          if (ctx.settings.printtypes.value && tree.hasType)
+          if (ctx.settings.printtypes.value.equals("plain") && tree.hasType)
             " | " ~ toText(tree.typeOpt)
+          else if (ctx.settings.printtypes.value.equals("template") && tree.hasLtInfo)
+            " | " ~ toText(tree.ltInfo.templateTp)
           else
             Text()
 

@@ -3,6 +3,7 @@ package printing
 
 import core._
 import Texts._, ast.Trees._
+import liquidtyper.{Qualifier, Constraint, TemplateEnv}
 import Types.Type, Symbols.Symbol, Contexts.Context, Scopes.Scope, Constants.Constant,
        Names.Name, Denotations._, Annotations.Annotation
 
@@ -87,6 +88,15 @@ abstract class Printer {
 
   /** Textual representation of all definitions in a scope using `dclText` for each */
   def toText(sc: Scope): Text
+
+  /** Textual representation of a template environment */
+  def toText(sc: TemplateEnv): Text
+
+  /** Textual representation of liquid type qualifier */
+  def toText(qual: Qualifier): Text
+
+  /** Textual representation of liquid type constraint */
+  def toText(qual: Constraint): Text
 
   /** Textual representation of tree */
   def toText[T >: Untyped](tree: Tree[T]): Text

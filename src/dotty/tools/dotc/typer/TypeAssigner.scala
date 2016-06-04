@@ -387,6 +387,7 @@ trait TypeAssigner {
   def assignType(tree: untpd.SeqLiteral, elems: List[Tree], elemtpt: Tree)(implicit ctx: Context) = {
     val ownType = tree match {
       case tree: JavaSeqLiteral => defn.ArrayOf(elemtpt.tpe)
+      // TODO(Georg): Ensure that liquid types of these arguments will later be inferred?
       case _ => if (ctx.erasedTypes) defn.SeqType else defn.SeqType.appliedTo(elemtpt.tpe)
     }
     tree.withType(ownType)
@@ -400,6 +401,9 @@ trait TypeAssigner {
 
   def assignType(tree: untpd.OrTypeTree, left: Tree, right: Tree)(implicit ctx: Context) =
     tree.withType(left.tpe | right.tpe)
+
+  def assignType(tree: untpd.LiquidTypeTree, subjectName: Name, baseType: Type, pred: Tree)(implicit ctx: Context) =
+    tree.withType(LiquidType(subjectName, baseType, pred))
 
   // RefinedTypeTree is missing, handled specially in Typer and Unpickler.
 

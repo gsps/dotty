@@ -259,6 +259,8 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     typr.println(s"typed ident $kind$name in ${ctx.owner}")
     if (ctx.mode is Mode.Pattern) {
       if (name == nme.WILDCARD)
+        // PROP(Georg): Should probably be replaced by the following
+        // return assignType(tree, pt)
         return tree.withType(pt)
       if (isVarPattern(tree) && name.isTermName)
         return typed(desugar.patternVar(tree), pt)
@@ -281,8 +283,11 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
 
     val tree1 = ownType match {
       case ownType: NamedType if !prefixIsElidable(ownType) =>
+        // PROP(Georg): We should also notify LiquidTypeAssigner of the ident having received ownType
         ref(ownType).withPos(tree.pos)
       case _ =>
+        // PROP(Georg): Should probably be replaced by the following
+        // assignType(tree, ownType)
         tree.withType(ownType)
     }
 
@@ -898,6 +903,19 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     assignType(cpy.OrTypeTree(tree)(left1, right1), left1, right1)
   }
 
+  def typedLiquidTypeTree(tree: untpd.LiquidTypeTree)(implicit ctx: Context): LiquidTypeTree = track("typedLiquidTypeTree") {
+    val subject = tree.subject
+    val tpt1 = typedAheadType(subject.tpt)
+    val predCtx = ctx.fresh.retractMode(Mode.Type).setNewScope
+
+    def apply(implicit ctx: Context): (Name, Tree) = {
+      index(subject)
+      (tree.subject.name, typed(tree.pred, defn.BooleanType))
+    }
+    val (subjectName1, pred1) = apply(predCtx)
+    assignType(cpy.LiquidTypeTree(tree)(subject, pred1), subjectName1, tpt1.tpe, pred1)
+  }
+
   def typedRefinedTypeTree(tree: untpd.RefinedTypeTree)(implicit ctx: Context): RefinedTypeTree = track("typedRefinedTypeTree") {
     val tpt1 = if (tree.tpt.isEmpty) TypeTree(defn.ObjectType) else typedAheadType(tree.tpt)
     val refineClsDef = desugar.refinedTypeToClass(tpt1, tree.refinements)
@@ -1266,6 +1284,7 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
           case tree: untpd.SingletonTypeTree => typedSingletonTypeTree(tree)
           case tree: untpd.AndTypeTree => typedAndTypeTree(tree)
           case tree: untpd.OrTypeTree => typedOrTypeTree(tree)
+          case tree: untpd.LiquidTypeTree => typedLiquidTypeTree(tree)
           case tree: untpd.RefinedTypeTree => typedRefinedTypeTree(tree)
           case tree: untpd.AppliedTypeTree => typedAppliedTypeTree(tree)
           case tree: untpd.ByNameTypeTree => typedByNameTypeTree(tree)

@@ -178,6 +178,22 @@ object Trees {
       case _ => NoType
     }
 
+    /** A field used to debug template types and constraints for the liquid type checker */
+    private var myLtInfo: liquidtyper.LiquidTypeInfo = _
+
+    def ltInfo = myLtInfo
+
+    def withLtInfo(ltInfo: liquidtyper.LiquidTypeInfo)(implicit ctx: Context): ThisTree[Type] = {
+      val tree =
+        (if (myLtInfo == null ||
+          (myLtInfo.asInstanceOf[AnyRef] eq ltInfo.asInstanceOf[AnyRef])) this
+        else clone).asInstanceOf[Tree[Type]]
+      tree.myLtInfo = ltInfo
+      tree.asInstanceOf[ThisTree[Type]]
+    }
+
+    final def hasLtInfo: Boolean = myLtInfo != null
+
     /** The denotation referred tno by this tree.
      *  Defined for `DenotingTree`s and `ProxyTree`s, NoDenotation for other
      *  kinds of trees
@@ -580,6 +596,13 @@ object Trees {
     type ThisTree[-T >: Untyped] = OrTypeTree[T]
   }
 
+  /** { v : tpt | P(v) } */
+  case class LiquidTypeTree[-T >: Untyped] private[ast] (subject: ValDef[T], pred: Tree[T])
+    extends ProxyTree[T] with TypTree[T] {
+    type ThisTree[-T >: Untyped] = LiquidTypeTree[T]
+    def forwardTo = subject.tpt
+  }
+
   /** tpt { refinements } */
   case class RefinedTypeTree[-T >: Untyped] private[ast] (tpt: Tree[T], refinements: List[Tree[T]])
     extends ProxyTree[T] with TypTree[T] {
@@ -849,6 +872,7 @@ object Trees {
     type SelectFromTypeTree = Trees.SelectFromTypeTree[T]
     type AndTypeTree = Trees.AndTypeTree[T]
     type OrTypeTree = Trees.OrTypeTree[T]
+    type LiquidTypeTree = Trees.LiquidTypeTree[T]
     type RefinedTypeTree = Trees.RefinedTypeTree[T]
     type AppliedTypeTree = Trees.AppliedTypeTree[T]
     type ByNameTypeTree = Trees.ByNameTypeTree[T]
@@ -1020,6 +1044,10 @@ object Trees {
         case tree: OrTypeTree if (left eq tree.left) && (right eq tree.right) => tree
         case _ => finalize(tree, untpd.OrTypeTree(left, right))
       }
+      def LiquidTypeTree(tree: Tree)(subject: ValDef, pred: Tree): LiquidTypeTree = tree match {
+        case tree: LiquidTypeTree if (subject eq tree.subject) && (pred eq tree.pred) => tree
+        case _ => finalize(tree, untpd.LiquidTypeTree(subject, pred))
+      }
       def RefinedTypeTree(tree: Tree)(tpt: Tree, refinements: List[Tree]): RefinedTypeTree = tree match {
         case tree: RefinedTypeTree if (tpt eq tree.tpt) && (refinements eq tree.refinements) => tree
         case _ => finalize(tree, untpd.RefinedTypeTree(tpt, refinements))
@@ -1156,6 +1184,8 @@ object Trees {
           cpy.AndTypeTree(tree)(transform(left), transform(right))
         case OrTypeTree(left, right) =>
           cpy.OrTypeTree(tree)(transform(left), transform(right))
+        case LiquidTypeTree(subject, pred) =>
+          cpy.LiquidTypeTree(tree)(transformSub(subject), transform(pred))
         case RefinedTypeTree(tpt, refinements) =>
           cpy.RefinedTypeTree(tree)(transform(tpt), transformSub(refinements))
         case AppliedTypeTree(tpt, args) =>
@@ -1260,6 +1290,8 @@ object Trees {
             this(this(x, left), right)
           case OrTypeTree(left, right) =>
             this(this(x, left), right)
+          case LiquidTypeTree(subject, pred) =>
+            this(this(x, subject), pred)
           case RefinedTypeTree(tpt, refinements) =>
             this(this(x, tpt), refinements)
           case AppliedTypeTree(tpt, args) =>

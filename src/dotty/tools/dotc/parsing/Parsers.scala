@@ -688,10 +688,30 @@ object Parsers {
 
     /** InfixType ::= RefinedType {id [nl] refinedType}
      */
-    def infixType(): Tree = infixTypeRest(refinedType())
+    def infixType(): Tree = infixTypeRest(liquidType())
 
     def infixTypeRest(t: Tree): Tree =
-      infixOps(t, canStartTypeTokens, refinedType, isType = true, notAnOperator = nme.raw.STAR)
+      infixOps(t, canStartTypeTokens, liquidType, isType = true, notAnOperator = nme.raw.STAR)
+
+    /** LiquidType        ::=  `{' Id `:' SimpleType `:' Expr `}' | RefinedType
+      */
+    val liquidType: () => Tree = () => {
+      if (in.token == LBRACE) {
+        in.nextToken()
+        val vdOffset = in.offset
+        val varId = ident()
+        if (varId != liquidtyper.SubjectVarName)
+          syntaxError(s"subject variable name must be ${liquidtyper.SubjectVarName}", offset = vdOffset)
+        accept(COLON)
+        val baseType = simpleType()
+        accept(IF)
+        val predExpr = expr()
+        accept(RBRACE)
+        val vd = atPos(vdOffset) { ValDef(varId, baseType, EmptyTree).withFlags(Param) }
+        LiquidTypeTree(vd, predExpr)
+      }
+      else refinedType()
+    }
 
     /** RefinedType        ::=  WithType {Annotation | [nl] Refinement}
      */

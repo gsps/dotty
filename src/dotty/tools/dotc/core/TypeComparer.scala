@@ -204,6 +204,11 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       !tp2.evaluating && isSubType(tp1, tp2.ref)
     case tp2: AnnotatedType =>
       isSubType(tp1, tp2.tpe) // todo: refine?
+    case tp2: LiquidType =>
+      tp1 match {
+        case tp1: LiquidType  => isSubType(tp1.underlying, tp2.underlying)
+        case _                => isSubType(tp1, tp2.underlying)
+      }
     case tp2: ThisType =>
       def compareThis = {
         val cls2 = tp2.cls
@@ -307,6 +312,8 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       !tp1.evaluating && isSubType(tp1.ref, tp2)
     case tp1: AnnotatedType =>
       isSubType(tp1.tpe, tp2)
+    case tp1: LiquidType =>
+      isSubType(tp1.underlying, tp2)
     case AndType(tp11, tp12) =>
       if (tp11.stripTypeVar eq tp12.stripTypeVar) isSubType(tp11, tp2)
       else thirdTry(tp1, tp2)

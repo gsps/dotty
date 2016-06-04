@@ -135,6 +135,7 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
   def SelectFromTypeTree(qualifier: Tree, name: Name): SelectFromTypeTree = new SelectFromTypeTree(qualifier, name)
   def AndTypeTree(left: Tree, right: Tree): AndTypeTree = new AndTypeTree(left, right)
   def OrTypeTree(left: Tree, right: Tree): OrTypeTree = new OrTypeTree(left, right)
+  def LiquidTypeTree(subject: ValDef, pred: Tree): LiquidTypeTree = new LiquidTypeTree(subject, pred)
   def RefinedTypeTree(tpt: Tree, refinements: List[Tree]): RefinedTypeTree = new RefinedTypeTree(tpt, refinements)
   def AppliedTypeTree(tpt: Tree, args: List[Tree]): AppliedTypeTree = new AppliedTypeTree(tpt, args)
   def ByNameTypeTree(result: Tree): ByNameTypeTree = new ByNameTypeTree(result)

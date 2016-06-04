@@ -221,6 +221,9 @@ class TreePickler(pickler: TastyPickler) {
         pickleType(tpe.parent)
         pickleType(tpe.refinedInfo, richTypes = true)
       }
+    case tpe: LiquidType =>
+      // TODO(Georg): Implement pickler support for LiquidType
+      ctx.log(i"Pickling of LiquidTypes not implemented yet! (Omitting type)")
     case tpe: TypeAlias =>
       writeByte(TYPEALIAS)
       withLength {
@@ -495,6 +498,10 @@ class TreePickler(pickler: TastyPickler) {
       case PackageDef(pid, stats) =>
         writeByte(PACKAGE)
         withLength { pickleType(pid.tpe); pickleStats(stats) }
+      case ltpt: LiquidTypeTree =>
+        // Just register the subject ValDef so the sanity check in .pickle will stop complaining
+        // FIXME(Georg): Do this right?
+        registerDef(ltpt.subject.symbol)
     }}
   catch {
     case ex: AssertionError =>
