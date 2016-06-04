@@ -14,6 +14,7 @@ import transform._
 import transform.TreeTransforms.{TreeTransform, TreeTransformer}
 import core.DenotTransformers.DenotTransformer
 import core.Denotations.SingleDenotation
+import liquidtyper.LiquidTyper
 
 import dotty.tools.backend.jvm.{LabelDefs, GenBCode}
 import dotty.tools.backend.sjs.GenSJSIR
@@ -44,6 +45,7 @@ class Compiler {
       List(new FrontEnd),           // Compiler frontend: scanner, parser, namer, typer
       List(new sbt.ExtractDependencies), // Sends information on classes' dependencies to sbt via callbacks
       List(new PostTyper),          // Additional checks and cleanups after type checking
+      List(new LiquidTyper),        // A type checker for qualified types
       List(new sbt.ExtractAPI),     // Sends a representation of the API of classes to sbt via callbacks
       List(new Pickler),            // Generate TASTY info
       List(new FirstTransform,      // Some transformations to put trees into a canonical form
