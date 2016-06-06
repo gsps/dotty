@@ -10,6 +10,7 @@ import java.lang.Integer.toOctalString
 import config.Config.summarizeDepth
 import scala.annotation.switch
 import liquidtyper.{TemplateEnv, Qualifier, Constraint, QType}
+import leon.purescala.Types.{TypeTree => LeonType}
 
 class PlainPrinter(_ctx: Context) extends Printer {
   protected[this] implicit def ctx: Context = _ctx.addMode(Mode.Printing)
@@ -454,11 +455,18 @@ class PlainPrinter(_ctx: Context) extends Printer {
       Text(envQuals map disjClauseText, " || ")
   }
 
+  def toText(leonTp: LeonType): Text = leonTp match {
+    case liquidtyper.UninterpretedLeonType(original) =>
+      ("UninterpLeon<" ~ toText(original) ~ ">").close
+    case _ =>
+      leonTp.toString.close
+  }
+
   def toText(qtp: QType): Text = qtp match {
     case QType.BaseType(underlying, Qualifier.True) =>
-      underlying.toString.close
+      toText(underlying)
     case QType.BaseType(underlying, qualifier) =>
-      ("{ " ~ underlying.toString() ~ " | " ~ toText(qualifier) ~ " }").close
+      ("{ " ~ toText(underlying) ~ " | " ~ toText(qualifier) ~ " }").close
     case QType.FunType(params, result) =>
       val paramTxts = params map {
         case (pName, pQtp: QType.FunType) =>

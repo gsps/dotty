@@ -124,8 +124,8 @@ object Index {
     traverser.traverse(treeToIndex)
     createSynthetic()             // depends on symbol references
 
-//    println("TREE:")
-//    println(treeToIndex)
+//    println(s"TREE:\n$treeToIndex")
+//    println(s"SYMBOLDEFS:\n$symbolDef")
 
     // TODO(Georg): Remove symbolDef, symbolRefs and syntheticParams from the result
     new Index(

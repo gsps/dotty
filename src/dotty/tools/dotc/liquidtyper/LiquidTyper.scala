@@ -25,13 +25,19 @@ class LiquidTyper extends Phase with IdentityDenotTransformer {
   override def phaseName: String = "liquidtyper"
 
   override def run(implicit ctx: Context): Unit = {
-    val tree          = ctx.compilationUnit.tpdTree
+    val unit          = ctx.compilationUnit
+    val tree          = unit.tpdTree
     val index         = Index(tree)
     val typing        = Typing(new Extractor, index, tree)
+
+    ctx.debugLiquidTyping = Some(typing)
+    ctx.echo(s"result of $unit after liquid template type assignment:")
+    ctx.echo(unit.tpdTree.show(ctx) + "\n")
+
     val constraints   = new ConstraintGenerator(typing).apply(NoConstraints, tree)
 
     val consStr       = constraints.map(_.show).mkString("\n\t\t")
-    ltypr.println(s"\tGenerated constraints:\n\t\t$consStr")
+    ltypr.println(s"\tGenerated constraints:\n\t\t$consStr\n")
 
     val inferenceRes  = new PreciseInference(typing).apply(constraints.toList)
     ltypr.println(s"\tPreciseInference result: $inferenceRes")
@@ -148,8 +154,10 @@ object LiquidTyper {
       val env = templateEnv(tree)
       val templTp = templateType(tree)
 
-      // XXX(Georg): Is getting rid of the .widen here a problem?
-      val QType.FunType(_, resTemplTp) = templTp
+      val resTemplTp = templTp match {
+        case QType.FunType(_, tp) => tp
+        case _                    => templTp
+      }
 
       val LiquidTypeInfo(bodyTemplTp, bodyCs, Some(bodyEnv)) = typeInfo(tree.rhs)
 
@@ -215,8 +223,12 @@ object LiquidTyper {
     //    for (ltInfo <- maybeLtInfo if ctx.settings.printtypes.value.equals("template"))
     //      tree.putAttachment(DebugLTInfo, ltInfo)
 
-    def apply(acc: ConstraintSet, tree: Tree)(implicit ctx: Context): ConstraintSet =
+    def apply(acc: ConstraintSet, tree: Tree)(implicit ctx: Context): ConstraintSet = {
+//      // FIXME(Georg): Super hacky way of attaching template types to trees
+//      if (ctx.settings.printTemplateTypes.value)
+//        typing.templateTyp.get(tree).foreach { qtp => tree.overwriteLtInfo(LiquidTypeInfo(qtp, NoConstraints, None)) }
       maybeDoTree(tree) map { acc ++ _ } getOrElse { foldOver(acc, tree) }
+    }
 
     def apply(tree: Tree)(implicit ctx: Context): ConstraintSet =
       apply(NoConstraints, tree)

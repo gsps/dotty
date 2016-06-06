@@ -29,5 +29,8 @@ trait LiquidContext { this: Context =>
   def canBuildLtFrom(tp: Type): Boolean =
     ltBaseTypes.exists(tp <:< _)
 
+
+  var debugLiquidTyping: Option[Typing] = None
+
 }
 

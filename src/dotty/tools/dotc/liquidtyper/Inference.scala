@@ -26,6 +26,7 @@ object Inference {
 
   val qualIdTop   = FreshIdentifier("Top")
   val groundQuals = Bijection[Qualifier, QualId]() // Key is really ExtractedExpr | PendingSubst | Disj
+  groundQuals    += Qualifier.True -> qualIdTop
 
   // XXX(Georg): Is it okay to return different QualIds for Qualifiers that are equivalent (but cannot be proven so)?
   object HasQualId {
@@ -36,7 +37,9 @@ object Inference {
         Some((qtp, qualVarId))
       case QType.BaseType(_, qualifier) =>
         // FIXME(Georg): If qualifier == PendingSubst(Var(...), ...) we also get here. Should these be separate?
-        val id = groundQuals.cachedB(qualifier) { FreshIdentifier("G", alwaysShowUniqueID = true) }
+        val prefix = if (qualifier.isInstanceOf[Qualifier.PendingSubst]) "S" else "G"
+        val id = groundQuals.cachedB(qualifier) { FreshIdentifier(prefix, alwaysShowUniqueID = true) }
+//        println(s">> $qtp HasQualId $id")
         Some((qtp, id))
       case _: QType.UninterpretedType =>
         // We could in principle return qualIdTop here, but since this will only give use lots of trivial constraints
@@ -56,7 +59,7 @@ object Inference {
   *     1) Replace qualifier variables by ascriptions, where present
   *     2) Create qualifier var implication graph and mark unsafe qualifier vars (that is, those coming from types of
   *       method parameters that have not been ascribed a qualifier)
-  *     3) Merge equivalent qualifier vars
+  *     3) Detect and abort upon recursive dependencies
   *     4a) Compute precise qualifiers by topologically traversing yet-to-be-determined, safe qualifier vars
   *     4b) Assign trivial qualifier to those that cannot be determined precisely
   *   C. Send remaining constraints to SMT solver and return result
@@ -110,6 +113,134 @@ class PreciseInference(typing: Typing)(implicit ctx: Context) extends Inference 
     qualIdEnv.asInstanceOf[Map[QualId, Set[TemplateEnv.Binding]]]
   }
 
+  private def dumpGraph(edges: Seq[(QualId, QualId)], qualMap: QualMap, unsafeQualVars: Set[QualId],
+                        inferred: Set[QualId]): Unit = {
+    val fw = {
+      val fileName = s"smt-sessions/qualifierGraph.dot"
+
+      val javaFile = new java.io.File(fileName)
+      javaFile.getParentFile.mkdirs()
+
+      new java.io.FileWriter(javaFile, false)
+    }
+
+    fw.write("digraph {\n")
+    for ((id, qual) <- qualMap) {
+      val qualStr   = qual.show.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+      val label     = s"""<$id<BR /><FONT POINT-SIZE="10">$qualStr</FONT>>"""
+      val shape     = if (unsafeQualVars(id)) "shape=box" else ""
+      val fillcolor = if (inferred(id)) "fillcolor=yellow" else ""
+      fw.write(s""""$id" [label=$label $shape $fillcolor]\n""")
+    }
+    for ((idA, idB) <- edges)
+      fw.write(s""""$idA" -> "$idB"\n""")
+    fw.write("}")
+
+    fw.close()
+  }
+
+  // Detect when we cannot precisely infer the type because of recursive dependencies, i.e. cycles in the graph, which
+  //  are not broken by already assigned qualifier variables.
+  private def detectRecursiveDeps(nodes: Set[QualId], outEdges: mutable.Map[QualId, List[QualId]],
+                                  assigned: QualId => Boolean): List[List[QualId]] =
+  {
+    var unseen  = nodes.filter(!assigned(_))
+    var sccs    = List.empty[List[QualId]]
+
+    var nextIndex   = 0
+    var indices     = Map.empty[QualId, Int]
+    var lowPreds    = Map.empty[QualId, Int]
+    var component   = mutable.ArrayStack[QualId]()
+
+    def findSccs(id: QualId): Unit = {
+      assert(!indices.contains(id))
+      unseen      -= id
+      val index   = nextIndex
+      nextIndex   += 1
+      indices     += id -> index
+      lowPreds    += id -> index
+      component push id
+
+      for (succId <- outEdges(id) if !assigned(succId))
+        indices.get(succId) match {
+          case None =>
+            findSccs(succId)
+          case Some(succIndex) if succIndex < indices(component(component.length - 1)) =>
+            // Ignore successor in a different strongly-connected component
+          case Some(succIndex) =>
+            for (updateId <- component if updateId != succId)
+              lowPreds += updateId -> succIndex
+        }
+
+      // Is 'id' the root of a strongly connected component?
+      if (lowPreds(id) == index) {
+        var scc = List.empty[QualId]
+        while (component.head != id)
+          scc = component.pop() :: scc
+        scc = component.pop() :: scc
+        sccs = scc :: sccs
+      }
+    }
+
+    while (unseen.nonEmpty) {
+      val id = unseen.head
+      unseen -= id
+      findSccs(id)
+    }
+
+    sccs
+  }
+
+  // TODO(Georg): Clean this up
+  private def reportRecursiveDeps(nontrivialSccs: List[List[QualId]]): Unit = {
+    for (scc0 <- nontrivialSccs) {
+      val scc = scc0.sorted
+      val cols = Seq("\u001B[91m", "\u001B[92m", "\u001B[93m", "\u001B[94m", "\u001B[95m", "\u001B[96m")
+      val colReset = "\u001B[39m"
+      val sccStr = scc.zipWithIndex.map { case (id, i) => s"${cols(i)}$id$colReset" } .mkString("{", ", ", "}")
+      val idPosPairs = scc.zipWithIndex.map { case (id, i) => typing.qualVarInfo.get(Qualifier.Var(id)) match {
+        case Some(QualVarInfo(_, _, _, pos))  => (id, i, Some(pos))
+        case None                             => (id, i, None)
+      } }
+      val idPosLines = idPosPairs
+        .groupBy { case (_, _, optPos) => optPos.map { pos => (pos.source, pos.line) } }
+        .toSeq
+        .sortWith { case ((optC1, _), (optC2, _)) =>
+          //          implicitly[Ordering[(util.SourceFile, Int)]].lt(optC1.getOrElse((util.NoSource, 0)), optC2.getOrElse((util.NoSource, 0))) }
+          //          implicitly[Ordering[Option[(util.SourceFile, Int)]]].lt(optC1, optC2) }
+          //          coordOrdering.lt(optC1, optC2) }
+          //          coordOrdering.lt(optC1.getOrElse((util.NoSource, 0)), optC2.getOrElse((util.NoSource, 0))) }
+          val (source1, line1) = optC1.getOrElse((util.NoSource, 0))
+          val (source2, line2) = optC2.getOrElse((util.NoSource, 0))
+          implicitly[Ordering[String]].compare(source1.path, source2.path) match {
+            case v if v < 0 => true
+            case v if v > 0 => false
+            case _ => line1 < line2
+          }
+        }
+      val sourceStr = idPosLines.map { case (optSourceLine, idPosPairs) =>
+        val lineStr = idPosPairs.find { case (_, _, Some(pos)) => true } match {
+          case Some((_, _, Some(somePosInLine)))  => somePosInLine.lineContent.stripLineEnd
+          case None                               => ""
+        }
+        var x = 0
+        val markerStr = idPosPairs
+          .sortBy { case (_, _, optPos) => optPos.map(_.column).getOrElse(-1) }
+          .map {
+            case (_, _, None)       => ""
+            case (id, i, Some(pos))  =>
+              val res = " " * (pos.column - x) + s"${cols(i)}^$colReset"
+              x = pos.column + 1
+              res
+          }
+          .mkString("")
+        s"$lineStr\n$markerStr"
+      } .mkString("\n")
+      ctx.error("Precise liquid type inference does not support circular qualifier constraints. " +
+        s"The following cycle has been detected:\n\t$sccStr\n$sourceStr")
+    }
+  }
+
 
   /** Inference phases */
 
@@ -124,17 +255,14 @@ class PreciseInference(typing: Typing)(implicit ctx: Context) extends Inference 
     def getAssignedOrGroundQual(id: QualId): Qualifier = qualMap.getOrElse(id, groundQuals.toA(id))
 
     val qualVarIds      = typing.qualVars.map(_.id)
-//    val qualVars        = qualVarIds ++ OTHERS
 
     // 1. Replace by ascribed qualifiers and signatures, where present
-    // FIXME(Georg): Should we actually use the env we have for each qualVar mapping?
     for ((Qualifier.Var(id), QualVarInfo(_, _, Some(expr), _)) <- typing.qualVarInfo) {
       val qual = Qualifier.ExtractedExpr(expr)
-      assert(qual.freeVars subsetOf (qualEnv(id).map(_.identifier) union Extractor.subjectVarIds),
+      assert(qual.freeVars() subsetOf (qualEnv(id).map(_.identifier) union Extractor.subjectVarIds),
         "Ascribed qualifiers should by construction only capture variables in the environment.")
       qualMap(id) = qual
     }
-//    val fixedQualVars = index.qualVarExpectation.keySet
 
     // 2. Create qualifier variable implication graph
     //  (K1 -> K2 expresses that qual var K1 is a subtype of qual var K2)
@@ -154,24 +282,15 @@ class PreciseInference(typing: Typing)(implicit ctx: Context) extends Inference 
         remainingCs        += constraint
     }
 
-    // 3. Merge equivalent qualifier variables
-    // XXX(Georg): Scrap equivalence classes for now?
-    //  As far as I can tell, implication-cycles ("equivalences") should be impossible, if we disallow outgoing edges
-    //  from qualifier variables originating from parameters (as we currently do).
-//    // Equivalence classes for qualifier vars
-//    val eqClass = mutable.Map[QualId, QualId]()
-////    for (Qualifier.Var(id) <- index.qualVarIds)
-////      eqClass(id) = id
-//
-//    def mergeEqQualVars(qualVar: QualId, path: List[QualId]): Unit = {
-//      ???
-//    }
-//
-//    index.qualVarIds.foreach { case Qualifier.Var(id) => mergeEqQualVars(id, List(id)) }
+    // 3. Detect recursive dependencies (which we require to be resolved using ascriptions)
+    val nontrivialSccs = detectRecursiveDeps(inEdges.keySet.toSet, outEdges, assigned).filter(_.size > 1)
+    if (nontrivialSccs.nonEmpty) {
+      reportRecursiveDeps(nontrivialSccs)
+      return (qualMap, remainingCs.toList)
+    }
 
     // 4. Assign qualifier variables
     // "Safe" are those qualifier variables that we can be sure to know all constraints for
-//    val unsafeQualVars = index.qualVarIds filter index.qualVarInParam map { _.id }
     val unsafeQualIds = typing.qualVarInfo.collect { case (Qualifier.Var(id), info) if info.inParam => id } .toSet
     val safeQualIds   = qualVarIds diff unsafeQualIds
 
@@ -181,10 +300,8 @@ class PreciseInference(typing: Typing)(implicit ctx: Context) extends Inference 
 
     // Precisely capture qualifier vars where we can be sure to know of all subtyping constraints
     //  (We essentially do a topological sort to make sure all qualifier we rely on are already concrete)
-//    val succsOfUnsafe = unsafeQualIds.flatMap(outEdges).toSeq
     val predLeft = {
       val pairs = inEdges map { case (id, edges) =>
-//        id -> (edges count { case (_, from) => qualVarIds(from) && !unsafeQualIds(from) })
         id -> (edges count { case (_, from) => qualVarIds(from) && !assigned(from) })
       }
       mutable.HashMap(pairs.toSeq: _*)
@@ -193,20 +310,13 @@ class PreciseInference(typing: Typing)(implicit ctx: Context) extends Inference 
     val frontier        = mutable.Queue[QualId](initialSources: _*)
     val inferred        = mutable.Set[QualId]()
 
-//    println(s"QualVarInfo:\n\t${typing.qualVarInfo}")
-//    println(s"Unsafe qual ids: $unsafeQualIds")
-//    println(s"outEdges:\n\t$outEdges")
-//    println(s"predLeft: $predLeft")
-//    println(s"initialSources: $initialSources")
-
-    // FIXME: Do we still have to ignore unsafe qual ids here?
     while (frontier.nonEmpty) {
       val id     = frontier.dequeue()
       inferred  += id
 
       val incoming = inEdges(id)
       if (incoming.nonEmpty) {
-        // TODO: Should really just add the additional path condition here rather than a seperate TemplateEnv
+        // TODO: Should really just add the additional path condition here rather than a separate TemplateEnv
         val envQuals  = incoming map { case (incEnv, incId) => (incEnv, getAssignedOrGroundQual(incId)) }
         for ((incEnv, incQual) <- envQuals) assert(incQual.qualifierVars.isEmpty) // Sanity check
         qualMap(id)   = Qualifier.Disj(envQuals)
@@ -240,12 +350,18 @@ class PreciseInference(typing: Typing)(implicit ctx: Context) extends Inference 
 
     // Check that each assignment we made doesn't violate the well-formedness constraints
     for ((id, availableBindings) <- qualEnv)
-      if (!(qualMap(id).freeVars subsetOf (availableBindings.map(_.identifier) union Extractor.subjectVarIds))) {
+      // FIXME(Georg): It's questionable whether we should require qualMap to be passed to freeVars here -- after all,
+      //  at this point qualifiers should be ground -- why make an exception for PendingSubsts?
+      if (!(qualMap(id).freeVars(qualMap) subsetOf (availableBindings.map(_.identifier) union Extractor.subjectVarIds)))
+      {
         ctx.warning(s"Precise qualifier for qualifier var $id would not eliminate all parameters, falling back to True")
 //        ltypr.println(s"qualMap($id) = ${qualMap(id)} // free vars: ${qualMap(id).freeVars} " +
 //          s"// available bindings: $availableBindings")
         qualMap(id) = Qualifier.True
       }
+
+    dumpGraph(outEdges.toSeq.flatMap { case (from, tos) => tos.map { to => from -> to } },
+      qualMap, unsafeQualIds, inferred.toSet)
 
     (qualMap.toMap, remainingCs.toList)
   }
@@ -281,15 +397,13 @@ class PreciseInference(typing: Typing)(implicit ctx: Context) extends Inference 
 
     /** B. Eliminate all qualifier vars */
 
-//    println(s"Constraints before eliminateQualVars:"); for (c <- subtypConstraints) println(i"\t$c")
     val (qualMap, remainingCs) = eliminateQualVars(qualEnv, subtypConstraints)
-//    println(s"Constraints after eliminateQualVars:"); for (c <- remainingCs) println(i"\t$c")
 
     if (ctx.reporter.errorsReported)
       return false
 
 
-    /** Debug output */
+    /** _. Debug output */
 
     def printQualVarMap(qualMap: QualMap, prefix: String = "") =
       ltypr.println(qualMap.toList.sortBy(_._1.toString)
@@ -297,10 +411,11 @@ class PreciseInference(typing: Typing)(implicit ctx: Context) extends Inference 
     printQualVarMap(qualMap, prefix="\n\tQualifier map:\n\t\t")
 
     val consStr = remainingCs.map(_.show).mkString("\n\t\t")
-    ltypr.println(s"\n\tRemaining constraints:\n\t\t$consStr")
+    ltypr.println(s"\n\tRemaining constraints:\n\t\t$consStr\n")
 
 
-    // C. Send remaining constraints to SMT solver and return result
+    /** C. Send remaining constraints to SMT solver and return result */
+
     testConstraints(qualMap, remainingCs)
   }
 

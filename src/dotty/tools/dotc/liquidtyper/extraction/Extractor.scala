@@ -126,7 +126,7 @@ class Extractor(implicit val ctx: Context) extends ASTExtractors {
 
 
     protected def weakened(tree: DottyTree)(implicit state: ExtractionState, env: TemplateEnv): Try[LeonExpr] = {
-      for (tpe <- extractType(tree))
+      for (tpe <- extractWeakType(tree))
         yield Variable(state.freshUnbound(tpe))
     }
 
@@ -279,6 +279,15 @@ class Extractor(implicit val ctx: Context) extends ASTExtractors {
 //          failExpr(tree0, "Not a primitive a primitive call (or not implemented yet)")
           Try(outOfSubsetError(tree0, "Not a primitive a primitive call (or not implemented yet)"))
       }
+
+
+    @inline
+    protected def extractWeakType(t: DottyTree)(implicit state: ExtractionState, env: TemplateEnv): Try[LeonType] =
+      extractWeakType(t, t.tpe)(state, env, t.pos)
+
+    protected def extractWeakType(tree0: DottyTree, tpe: DottyType)
+                                 (implicit state: ExtractionState, env: TemplateEnv, pos: Position): Try[LeonType] =
+      extractType(tree0, tpe) recover { case _ => UninterpretedLeonType(tpe) }
 
 
     @inline

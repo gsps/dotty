@@ -183,13 +183,18 @@ object Trees {
 
     def ltInfo = myLtInfo
 
-    def withLtInfo(ltInfo: liquidtyper.LiquidTypeInfo)(implicit ctx: Context): ThisTree[Type] = {
-      val tree =
-        (if (myLtInfo == null ||
-          (myLtInfo.asInstanceOf[AnyRef] eq ltInfo.asInstanceOf[AnyRef])) this
-        else clone).asInstanceOf[Tree[Type]]
-      tree.myLtInfo = ltInfo
-      tree.asInstanceOf[ThisTree[Type]]
+//    def withLtInfo(ltInfo: liquidtyper.LiquidTypeInfo)(implicit ctx: Context): ThisTree[Type] = {
+//      val tree =
+//        (if (myLtInfo == null ||
+//          (myLtInfo.asInstanceOf[AnyRef] eq ltInfo.asInstanceOf[AnyRef])) this
+//        else clone).asInstanceOf[Tree[Type]]
+//      tree.myLtInfo = ltInfo
+//      tree.asInstanceOf[ThisTree[Type]]
+//    }
+
+    def overwriteLtInfo(ltInfo: liquidtyper.LiquidTypeInfo): ThisTree[Type] = {
+      myLtInfo = ltInfo
+      this.asInstanceOf[ThisTree[Type]]
     }
 
     final def hasLtInfo: Boolean = myLtInfo != null

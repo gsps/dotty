@@ -64,7 +64,7 @@ sealed abstract class QType
         FunType(newParams, newResult)
 
       case tpe @ BaseType(underlying, oldQual) =>
-        val freeVars = oldQual.freeVars
+        val freeVars = oldQual.freeVars()
         val relevant = substs.filter { case (id,_) => freeVars.contains(id) }
         if (relevant.isEmpty)
           tpe
@@ -167,13 +167,15 @@ sealed abstract class Qualifier extends Showable {
       Set.empty
   }
 
-  def freeVars: Set[Identifier] = this match {
+  def freeVars(qualMap: Inference.QualMap = Map.empty): Set[Identifier] = this match {
     case Qualifier.ExtractedExpr(expr) =>
       variablesOf(expr)
     case Qualifier.PendingSubst(varId, replacement, in) =>
-      (in.freeVars - varId) union variablesOf(replacement)
+      (in.freeVars(qualMap) - varId) union variablesOf(replacement)
     case Qualifier.Disj(envQuals) =>
-      envQuals.map(_._2.freeVars).reduce(_ union _)
+      envQuals.map(_._2.freeVars(qualMap)).reduce(_ union _)
+    case Qualifier.Var(qualVarId) if qualMap.nonEmpty && qualMap.contains(qualVarId) =>
+      qualMap(qualVarId).freeVars(qualMap)
     case _ =>
       Set.empty
   }

@@ -222,6 +222,26 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
       // Dotty deviation: called with an untpd.Tree, so cannot be a untpd.Tree[T] (seems to be a Scala2 problem to allow this)
       // More deviations marked below as // DD
 
+    def optTemplateTypeOrAscription(tree: untpd.Tree, tpt: untpd.Tree) = {
+      val res: Option[Text] =
+        if (ctx.settings.printTemplateTypes.value)
+          ctx.debugLiquidTyping.flatMap { typing =>
+            typing.templateTyp.get(tree.asInstanceOf[tpd.Tree]).map { qtp =>
+              val shownQtp = tree match {
+                case _: DefDef => qtp match {
+                  case liquidtyper.QType.FunType(_, result) => result
+                  case _ => qtp
+                }
+                case _ => qtp
+              }
+              ": " ~ toText(shownQtp)
+            }
+          }
+        else
+          None
+      res.getOrElse(optAscription(tpt))
+    }
+
     def tparamsText[T >: Untyped](params: List[Tree]): Text =
       "[" ~ toText(params, ", ") ~ "]" provided params.nonEmpty
 
@@ -356,8 +376,8 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
         toText(name) ~ " = " ~ toText(arg)
       case Assign(lhs, rhs) =>
         changePrec(GlobalPrec) { toTextLocal(lhs) ~ " = " ~ toText(rhs) }
-      case Block(stats, expr) =>
-        blockText(stats :+ expr)
+      case tree @ Block(stats, expr) =>
+        blockText(stats :+ expr) ~ optTemplateTypeOrAscription(tree, EmptyTree)
       case If(cond, thenp, elsep) =>
         changePrec(GlobalPrec) {
           "if " ~ toText(cond) ~ (" then" provided !cond.isInstanceOf[Parens]) ~~ toText(thenp) ~ optText(elsep)(" else " ~ _)
@@ -417,14 +437,14 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
       case tree @ ValDef(name, tpt, _) =>
         dclTextOr {
           modText(tree.mods, if (tree.mods is Mutable) "var" else "val") ~~
-          nameIdText(tree) ~ optAscription(tpt) ~
+          nameIdText(tree) ~ optTemplateTypeOrAscription(tree, tpt) ~
           withEnclosingDef(tree) { optText(tree.rhs)(" = " ~ _) }
         }
       case tree @ DefDef(name, tparams, vparamss, tpt, _) =>
         dclTextOr {
           val prefix = modText(tree.mods, "def") ~~ nameIdText(tree)
           withEnclosingDef(tree) {
-            addVparamssText(prefix ~ tparamsText(tparams), vparamss) ~ optAscription(tpt) ~
+            addVparamssText(prefix ~ tparamsText(tparams), vparamss) ~ optTemplateTypeOrAscription(tree, tpt) ~
             optText(tree.rhs)(" = " ~ _)
           }
         }
