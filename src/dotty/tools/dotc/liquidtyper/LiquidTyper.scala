@@ -274,10 +274,11 @@ object LiquidTyper {
     *   This helps us validate the subtyping checks the real typer did, but on the qualifier level.
     *   Note that the real typer will just ignore qualifiers (i.e. assume them to be trivially true). This is why
     *   we need to discover situations in which such a "carte blanche" was given, and generate appropriate subtyping
-    *   constraints.
+    *   constraints among qualifiers.
     *
     *   The large issue here is that we do not have any good way of relating Dotty types to our previously extracted
-    *   QTypes. Dotty types are reused for many trees, so exploiting identity won't do.
+    *   QTypes (if they were extracted at all). Dotty types are reused for many trees, so exploiting their identity
+    *   won't do.
     *   What's worse is the fact that the real Dotty typer is a complex beast, without much internal structure that
     *   we could hold on to. For instance, "adapt" might be a natural point to override, as it happens at the very
     *   end of every type assignment. Since "typed" is called only with the expected type, rather than the tree that
@@ -292,8 +293,17 @@ object LiquidTyper {
     *   Yet another problem is that the "carte blanche" checks will often occur deep inside some complex
     *   (Refined-)Types, which we never extract in the first place.
     *
-    *   For these reasons we currently use this generator only for purported subtypes when they occur as type
-    *   refinements while simultaneously involving qualifier ascriptions.
+    *   Yet another problem is our assumption that any top-level call to isSubType which ultimately returns true, will
+    *   actually cause the typer to rely on and require that subtyping relation. This is certainly not true in general,
+    *   since top-level calls to isSubType may in fact be caused by other public methods of TypeComparer, such as
+    *   isSameType or even glb/lub. Moreover, the typer may perform backtracking (but it's not clear to me whether
+    *   backtracking actually ever happens during retyping).
+    *
+    *   I therefore suspect that we might both miss some constraints and produce others that are unnecessary.
+    *   To fix this problem, we'll probably have to make some sort of change to Dotty's typer.
+    *
+    *   We currently use this generator only for types which occur both as type refinements (RefinedTypes) and also
+    *   involve qualifier ascriptions.
     *   */
   class RetyperConstraintGenerator(treeToEnv: tpd.Tree => TemplateEnv, qtypeXtor: extraction.QTypeExtractor)
     extends ReTyper
