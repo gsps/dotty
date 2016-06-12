@@ -6,39 +6,47 @@ import org.junit.Assert._
 import test.DottyTest
 
 import core.Names._
-import core.Types._
 import core.StdNames._
 import core.Symbols._
 import core.Contexts._
 
 import leon.purescala.Types.{BooleanType, Int32Type}
 
+import extraction.{Extractor, ExtractionInfo}
+
 import scala.collection.mutable
 
 
-class IndexTest extends DottyTest {
+class SymbolIndexTest extends DottyTest {
 
   import ast.tpd._
 
-  def indexTest(program: String)(assertion: (Tree, Index) => Unit): Unit =
+  def indexTest(program: String)(assertion: (Tree, ExtractionInfo, SymbolIndex) => Unit): Unit =
     checkCompile("posttyper", program){ (tree, compilationCtx) =>
       val oldCtx = ctx
       ctx = compilationCtx
       try {
-        assertion(tree, Index(tree)(compilationCtx))
+        val xtor  = new Extractor
+        val index = SymbolIndex(xtor, xtor, tree)(compilationCtx)
+        xtor.notifyIndexComplete()
+        xtor.notifyTypingComplete()
+        assertion(tree, xtor.extractionInfo, index)
       } finally {
         ctx = oldCtx
       }
     }
 
-  def typingTest(program: String)(assertion: (Tree, Typing) => Unit): Unit =
+  def typingTest(program: String)(assertion: (Tree, ExtractionInfo, Typing) => Unit): Unit =
     checkCompile("posttyper", program){ (tree, compilationCtx) =>
       val oldCtx = ctx
       ctx = compilationCtx
       try {
-        val extractor = new extraction.Extractor()
-        val index     = Index(tree)(compilationCtx)
-        assertion(tree, Typing(extractor, index, tree))
+        val xtor    = new Extractor
+        val index   = SymbolIndex(xtor, xtor, tree)(compilationCtx)
+        xtor.notifyIndexComplete()
+        val typing  = Typing(xtor, xtor, index, xtor.ascriptionQualMap, tree)(compilationCtx)
+        xtor.notifyTypingComplete()
+        assertion(tree, xtor.extractionInfo, typing)
       } finally {
         ctx = oldCtx
       }
@@ -74,10 +82,10 @@ class IndexTest extends DottyTest {
 
   @Test
   def testIndexesDefDef() = indexTest("""object Foo { def f(x: Int, y: Int): Boolean = true }""")
-  { (cuTree, index) =>
+  { (cuTree, _, index) =>
     val fTree = treeByName(cuTree, "f")
-    assertTrue(index.symbolDef contains fTree.symbol)
-    assertEquals(fTree, index.symbolDef(fTree.symbol))
+    assertTrue(index.defn contains fTree.symbol)
+    assertEquals(fTree, index.defn(fTree.symbol))
     assertTrue(fTree.isInstanceOf[DefDef])
 //    assertEquals(fTree.asInstanceOf[DefDef].vparamss.flatten.map(_.symbol), index.paramSymbols(fTree.symbol))
   }
@@ -85,63 +93,63 @@ class IndexTest extends DottyTest {
   @Test
   def testIndexesTermRefs() = indexTest(
     """object Foo { def f(x: Int, y: Int): Boolean = x > y; def g(z: Int) = f(z,z) }""")
-  { (cuTree, index) =>
+  { (cuTree, _, index) =>
     for (name <- Seq("f", "x", "y")) {
       val tree = treeByName(cuTree, name)
       val refTrees = refsByName(cuTree, name)
-      assertTrue(index.symbolRefs contains tree.symbol)
-      assertEquals(refTrees, index.symbolRefs(tree.symbol).toList)
+      assertTrue(index.refs contains tree.symbol)
+      assertEquals(refTrees, index.refs(tree.symbol).toList)
     }
   }
 
   @Test
   def testCreatesSyntheticDefs() = indexTest(
     """object Foo { def f(x: Int): String = (x + x).toString(); println(f(123)) }""")
-  { (cuTree, index) =>
+  { (cuTree, _, index) =>
     val plusTree = treeByName(cuTree, nme.PLUS)
     val toStringTree = treeByName(cuTree, "toString")
     val printlnTree = treeByName(cuTree, "println")
 
     assertTrue(index.syntheticParams contains plusTree.symbol)
-    assertEquals(1, index.syntheticParams(plusTree.symbol).length)
-    assertEquals(defn.IntType, index.syntheticParams(plusTree.symbol).head.info)
+    assertEquals(1, index.syntheticParams(plusTree.symbol).flatten.length)
+    assertEquals(defn.IntType, index.syntheticParams(plusTree.symbol).head.head.info)
 
     assertTrue(index.syntheticParams contains toStringTree.symbol)
-    assertEquals(0, index.syntheticParams(toStringTree.symbol).length)
+    assertEquals(0, index.syntheticParams(toStringTree.symbol).flatten.length)
 
     assertTrue(index.syntheticParams contains printlnTree.symbol)
-    assertEquals(1, index.syntheticParams(printlnTree.symbol).length)
-    assertEquals(defn.AnyType, index.syntheticParams(printlnTree.symbol).head.info)
+    assertEquals(1, index.syntheticParams(printlnTree.symbol).flatten.length)
+    assertEquals(defn.AnyType, index.syntheticParams(printlnTree.symbol).head.head.info)
   }
 
   @Test
   def testIndexesIf() = typingTest("""object Foo { def f(x: Int) = if (x < 0) -x else x }""")
-  { (cuTree, typing) =>
+  { (cuTree, xtorInfo, typing) =>
     val ifTree = treeByPred(cuTree, _.isInstanceOf[If])
     assertTrue(typing.templateTyp contains ifTree)
 
     val QType.BaseType(_, qualifier: Qualifier.Var) = typing.templateTyp(ifTree)
-    assertTrue(typing.qualVarInfo contains qualifier)
+    assertTrue(xtorInfo.qualVarInfo contains qualifier)
   }
 
 
   @Test
   def testCreatesFreshQualifiers() = typingTest("""object Foo { def f(x: Int, y: Int) = true }""")
-  { (cuTree, typing) =>
+  { (cuTree, xtorInfo, typing) =>
     val fTree = treeByName(cuTree, "f").asInstanceOf[DefDef]
     val xTree = treeByName(cuTree, "x")
     val yTree = treeByName(cuTree, "y")
     val QType.FunType(params, result) = typing.templateTyp(fTree)
 
-    assertEquals(3, typing.qualVarInfo.size)
-    assertTrue(typing.qualVarInfo.values.forall(_.ascriptionOpt.isEmpty))
+    assertEquals(3, xtorInfo.qualVarInfo.size)
+    assertTrue(xtorInfo.qualVarInfo.values.forall(_.optAscriptionTree.isEmpty))
 
     val paramTps = params.values.toList
     val QType.BaseType(Int32Type, param0Qual: Qualifier.Var) = paramTps(0)
     val QType.BaseType(Int32Type, param1Qual: Qualifier.Var) = paramTps(1)
     val QType.BaseType(BooleanType, resultQual: Qualifier.Var) = result
 
-    val qualVarsA = mutable.Set(typing.qualVars.toSeq: _*)
+    val qualVarsA = mutable.Set(xtorInfo.qualVars.toSeq: _*)
     assertTrue(qualVarsA remove param0Qual)
     assertTrue(qualVarsA remove param1Qual)
     assertTrue(qualVarsA remove resultQual)
@@ -150,7 +158,7 @@ class IndexTest extends DottyTest {
     val QType.BaseType(Int32Type, xQual: Qualifier.Var) = typing.templateTyp(xTree)
     val QType.BaseType(Int32Type, yQual: Qualifier.Var) = typing.templateTyp(yTree)
 
-    val qualVarsB = mutable.Set(typing.qualVars.toSeq: _*)
+    val qualVarsB = mutable.Set(xtorInfo.qualVars.toSeq: _*)
     assertTrue(qualVarsB remove xQual)
     assertTrue(qualVarsB remove yQual)
     assertEquals(1, qualVarsB.size)
@@ -158,20 +166,20 @@ class IndexTest extends DottyTest {
 
   @Test
   def testRecordsQualifierAscription() = typingTest("""object Foo { def f(x: { v: Int if v > 0 }) = true }""")
-  { (cuTree, typing) =>
+  { (cuTree, xtorInfo, typing) =>
     val QType.BaseType(Int32Type, xQual: Qualifier.Var) = typing.templateTyp(treeByName(cuTree, "x"))
-    assertTrue(typing.qualVarInfo contains xQual)
-    assertTrue(typing.qualVarInfo(xQual).ascriptionOpt.isDefined)
+    assertTrue(xtorInfo.qualVarInfo contains xQual)
+    assertTrue(xtorInfo.qualVarInfo(xQual).optAscriptionTree.isDefined)
   }
 
   @Test
   def testDoesNotRecordAscriptionForIf() = typingTest(
     """object Foo { def f(x: { v: Int if v > 0 }) = if (x>0) true else false }""")
-  { (cuTree, typing) =>
-    val ifTree                                            = treeByPred(cuTree, _.isInstanceOf[If])
+  { (cuTree, xtorInfo, typing) =>
+    val ifTree                                              = treeByPred(cuTree, _.isInstanceOf[If])
     val QType.BaseType(BooleanType, qualVar: Qualifier.Var) = typing.templateTyp(ifTree)
-    assertTrue(typing.qualVarInfo contains qualVar)
-    assertFalse(typing.qualVarInfo(qualVar).ascriptionOpt.isDefined)
+    assertTrue(xtorInfo.qualVarInfo contains qualVar)
+    assertFalse(xtorInfo.qualVarInfo(qualVar).optAscriptionTree.isDefined)
   }
 
 
@@ -179,7 +187,7 @@ class IndexTest extends DottyTest {
   @Test(expected = classOf[NoSuchElementException])
   def testSubjectDefErased() = indexTest(
     """object Foo { def f(x: Int): { v: Boolean if x == 0 } = x == 0 }""")
-  { (cuTree, _) =>
+  { (cuTree, _, _) =>
     treeByName(cuTree, "v")
   }
 

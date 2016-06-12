@@ -14,7 +14,7 @@ import core.Types._
 
 trait ASTExtractors {
 
-  implicit val ctx: Context
+  protected implicit val ctx: Context
 
 
   def classFromName(nameStr: String): ClassSymbol = ctx.requiredClass(typeName(nameStr))
@@ -116,6 +116,13 @@ trait ASTExtractors {
     object ExIdentifier {
       def unapply(tree: tpd.Ident): Option[(Symbol, tpd.Tree)] = tree match {
         case i: tpd.Ident => Some((i.symbol, i))
+        case _ => None
+      }
+    }
+
+    object ExThis {
+      def unapply(tree: tpd.This): Option[(Symbol, tpd.Tree)] = tree match {
+        case thiz: tpd.This => Some((thiz.symbol, thiz))
         case _ => None
       }
     }

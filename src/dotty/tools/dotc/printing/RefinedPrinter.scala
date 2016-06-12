@@ -228,11 +228,8 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
           ctx.debugLiquidTyping.flatMap { typing =>
             typing.templateTyp.get(tree.asInstanceOf[tpd.Tree]).map { qtp =>
               val shownQtp = tree match {
-                case _: DefDef => qtp match {
-                  case liquidtyper.QType.FunType(_, result) => result
-                  case _ => qtp
-                }
-                case _ => qtp
+                case tree: DefDef => qtp.resultType(level = tree.vparamss.length)
+                case _            => qtp
               }
               ": " ~ toText(shownQtp)
             }

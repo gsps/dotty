@@ -446,7 +446,7 @@ class PlainPrinter(_ctx: Context) extends Printer {
     case Qualifier.Var(name) =>
       toText(name)
     case Qualifier.PendingSubst(varId, replacement, in) =>
-      ("[" ~ toText(replacement) ~ "/" ~ toText(varId) ~ "] " ~ toText(in)).close
+      ("[" ~ toText(replacement) ~ "/" ~ varId.uniqueName ~ "] " ~ toText(in)).close
     case Qualifier.True =>
       "true".close
     case Qualifier.ExtractedExpr(expr) =>
@@ -456,7 +456,7 @@ class PlainPrinter(_ctx: Context) extends Printer {
   }
 
   def toText(leonTp: LeonType): Text = leonTp match {
-    case liquidtyper.UninterpretedLeonType(original) =>
+    case liquidtyper.UninterpretedLeonType(original, _) =>
       ("UninterpLeon<" ~ toText(original) ~ ">").close
     case _ =>
       leonTp.toString.close
@@ -475,7 +475,7 @@ class PlainPrinter(_ctx: Context) extends Printer {
           (toText(pName) ~ ": " ~ toText(pQtp)).close
       }
       (Text(paramTxts, " => ") ~ " => " ~ toText(result)).close
-    case QType.UninterpretedType(original) =>
+    case QType.UninterpretedType(original, _) =>
       ("Uninterp<" ~ toText(original) ~ ">").close
   }
 
@@ -498,10 +498,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
         val elems =
           Text(node.productIterator.map(toTextElem).toList, ", ")
         val tpSuffix =
-          if (ctx.settings.printtypes.value.equals("plain") && tree.hasType)
+          if (ctx.settings.printtypes.value && tree.hasType)
             " | " ~ toText(tree.typeOpt)
-          else if (ctx.settings.printtypes.value.equals("template") && tree.hasLtInfo)
-            " | " ~ toText(tree.ltInfo.templateTp)
           else
             Text()
 

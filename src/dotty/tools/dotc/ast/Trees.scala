@@ -178,27 +178,6 @@ object Trees {
       case _ => NoType
     }
 
-    /** A field used to debug template types and constraints for the liquid type checker */
-    private var myLtInfo: liquidtyper.LiquidTypeInfo = _
-
-    def ltInfo = myLtInfo
-
-//    def withLtInfo(ltInfo: liquidtyper.LiquidTypeInfo)(implicit ctx: Context): ThisTree[Type] = {
-//      val tree =
-//        (if (myLtInfo == null ||
-//          (myLtInfo.asInstanceOf[AnyRef] eq ltInfo.asInstanceOf[AnyRef])) this
-//        else clone).asInstanceOf[Tree[Type]]
-//      tree.myLtInfo = ltInfo
-//      tree.asInstanceOf[ThisTree[Type]]
-//    }
-
-    def overwriteLtInfo(ltInfo: liquidtyper.LiquidTypeInfo): ThisTree[Type] = {
-      myLtInfo = ltInfo
-      this.asInstanceOf[ThisTree[Type]]
-    }
-
-    final def hasLtInfo: Boolean = myLtInfo != null
-
     /** The denotation referred tno by this tree.
      *  Defined for `DenotingTree`s and `ProxyTree`s, NoDenotation for other
      *  kinds of trees

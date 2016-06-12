@@ -122,4 +122,127 @@ class LiquidTyperPhaseTest extends DottyTest {
       """.stripMargin
     )
 
+
+  @Test
+  // TODO: Fails because x's constraint isn't asserted
+  def testPassesReassignment() =
+    acceptedByLt(
+      s"""object Foo {
+          |val x = 1
+          |val y: { v: Int if v == 1 } = x
+          |}""".stripMargin)
+
+
+  @Test
+  def testPassesClassMinimal() =
+    acceptedByLt(
+      """object Foo {
+        |class Widget {
+        |  val n = 2
+        |  def f(x: Int) = x
+        |}
+        |}""".stripMargin)
+
+  @Test
+  def testPassesClassWithSimpleThis() =
+    acceptedByLt(
+      """object Foo {
+        |class Widget {
+        |  val n = 2
+        |  def getN: { v: Int if v == 2 } = n
+        |}
+        |}""".stripMargin)
+
+  @Test
+  def testPassesClassFieldGetter1() =
+    acceptedByLt(
+      """object Foo {
+        |class Widget {
+        |  val n = 2
+        |  val a: { v: Boolean if v == true } = n == 2
+        |}
+        |}""".stripMargin)
+
+  @Test
+  def testPassesClassFieldGetter2() =
+    acceptedByLt(
+      """object Foo {
+        |class Widget { val n = 2 }
+        |val w = new Widget()
+        |val b: { v: Boolean if v == true } = w.n == 2
+        |}""".stripMargin)
+
+  @Test
+  // TODO: Fails because m's constraint isn't asserted
+  def testPassesClassFieldGetter3() =
+    acceptedByLt(
+      """object Foo {
+        |class Widget { val n = 2 }
+        |val m: { v: Int if v == 2 } = new Widget().n
+        |val b: { v: Boolean if v == true } = m == 2
+        |}""".stripMargin)
+
+  @Test
+  // TODO: Fails because new can't be extracted yet?
+  def testPassesClassFieldGetter4() =
+    acceptedByLt(
+      """object Foo {
+        |class Widget { val n = 2 }
+        |val b: { v: Boolean if v == true } = new Widget().n == 2
+        |}""".stripMargin)
+
+
+  val WidgetWithAccess =
+    """class Widget {
+      |  val n = 2
+      |  def access(i: { v: Int if 0 <= v && v < n }) = 123
+      |}
+    """.stripMargin
+
+  @Test
+  def testPassesClassCanInstantiateAndCall() =
+    acceptedByLt(
+      s"""object Foo {
+        |$WidgetWithAccess
+        |new Widget().access(1)
+        |}""".stripMargin)
+
+  @Test
+  def testFailsClassWithUnsafeMethodCall() =
+    rejectedByPhase("liquidtyper",
+      s"""object Foo {
+        |$WidgetWithAccess
+        |new Widget().access(2)
+        |}""".stripMargin)
+
+
+  val NonNegList =
+    """type NonNeg = { v: Int if v >= 0 }
+      |val nnList = List[NonNeg](1, 2, 3)
+    """.stripMargin
+
+  @Test
+  def testPassesListMinimal() =
+    acceptedByLt(
+      s"""object Foo {
+          |$NonNegList
+          |val nnInt: NonNeg = nnList.head
+          |}""".stripMargin)
+
+  @Test
+  def testPassesListRetainsAscribedTypeParam() =
+    acceptedByLt(
+      s"""object Foo {
+          |$NonNegList
+          |val nnListRev: List[NonNeg] = nnList.reverse
+          |}""".stripMargin)
+
+  @Test
+  def testFailsUnsafeListReassignment() =
+    rejectedByPhase("liquidtyper",
+      s"""object Foo {
+          |$NonNegList
+          |type Neg = { v: Int if v < 0 }
+          |val negList: List[Neg] = nnList
+          |}""".stripMargin)
 }

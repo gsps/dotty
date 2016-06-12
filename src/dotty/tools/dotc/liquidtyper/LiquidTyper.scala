@@ -8,10 +8,16 @@ import config.Printers.ltypr
 import core.Contexts._
 import core.Decorators._
 import core.DenotTransformers._
-import core.Flags.{PackageVal, Param, Synthetic}
+import core.Flags.PackageVal
+import core.Mode
 import core.Phases._
 import core.Symbols._
+import reporting.ThrowingReporter
 import util.Attachment
+
+import core.TypeComparer
+import core.Types.{Type, LiquidType, RefinedType}
+import typer.ReTyper
 
 import extraction.Extractor
 
@@ -25,22 +31,48 @@ class LiquidTyper extends Phase with IdentityDenotTransformer {
   override def phaseName: String = "liquidtyper"
 
   override def run(implicit ctx: Context): Unit = {
-    val unit          = ctx.compilationUnit
-    val tree          = unit.tpdTree
-    val index         = Index(tree)
-    val typing        = Typing(new Extractor, index, tree)
+    val unit    = ctx.compilationUnit
+    val tree    = unit.tpdTree
+    val xtor    = new Extractor
+
+    val index   = SymbolIndex(xtor, xtor, tree)
+    xtor.notifyIndexComplete()
+
+    val typing  = Typing(xtor, xtor, index, xtor.ascriptionQualMap, tree)
+
+    val constraintsRetyper = runRetyperConstraintGenerator(typing.templateEnv.apply, xtor)
+
+    xtor.notifyTypingComplete()
+    typing.templateEnv.values.foreach(_.complete(xtor))
 
     ctx.debugLiquidTyping = Some(typing)
     ctx.echo(s"result of $unit after liquid template type assignment:")
     ctx.echo(unit.tpdTree.show(ctx) + "\n")
 
-    val constraints   = new ConstraintGenerator(typing).apply(NoConstraints, tree)
+    val constraintsBase = new ConstraintGenerator(typing).apply(NoConstraints, tree)
 
-    val consStr       = constraints.map(_.show).mkString("\n\t\t")
-    ltypr.println(s"\tGenerated constraints:\n\t\t$consStr\n")
+    val consAStr      = constraintsBase.map(_.show).mkString("\n\t\t")
+    val consBStr      = constraintsRetyper.map(_.show).mkString("\n\t\t")
+    ltypr.println(s"\tGenerated constraints:\n\t\t$consAStr\n\t===== via retyper: =====\n\t$consBStr\n")
 
-    val inferenceRes  = new PreciseInference(typing).apply(constraints.toList)
-    ltypr.println(s"\tPreciseInference result: $inferenceRes")
+    def idTemplateTyp(id: Identifier): QType = index.symTemplateTyp(xtor.lookupIdentifier(id)).get
+    val inferenceRes  = new PreciseInference(xtor.extractionInfo, idTemplateTyp(_), typing)
+      .apply((constraintsBase union constraintsRetyper).toList)
+//    ltypr.println(s"\tPreciseInference result: $inferenceRes")
+
+    if (!inferenceRes)
+      ctx.echo("Liquid type check failed!")
+  }
+
+  def runRetyperConstraintGenerator(treeToEnv: tpd.Tree => TemplateEnv, qtypeXtor: extraction.QTypeExtractor)
+                                   (implicit ctx: Context): Set[Constraint] = {
+    val checkingCtx = ctx
+      .fresh
+      .setMode(Mode.ImplicitsEnabled)
+      .setReporter(new ThrowingReporter(ctx.reporter))
+    val gen = new RetyperConstraintGenerator(treeToEnv, qtypeXtor)
+    gen.typedExpr(ctx.compilationUnit.tpdTree)(checkingCtx)
+    gen.recordedConstraints.toSet
   }
 
 }
@@ -129,17 +161,16 @@ object LiquidTyper {
 
     def doApply(tree: Apply)(implicit ctx: Context) = {
       val LiquidTypeInfo(fnTemplTp, fnCs, _) = typeInfo(tree.fun)
-//      val MethodType(_, ptypes) = fnTemplTp.widen
-//      val QType fnTemplTp
       val QType.FunType(params, _)  = fnTemplTp
       val (_, paramTps)             = params.unzip
 
-      val argTemplTps = tree.args.map(templateType)
+      // FIXME(Georg): Why do we not get the correct argument positions? Another bug in Dotty?
+      val argTpsAndPs = tree.args.map { arg => (templateType(arg), arg.pos) }
       val argCs       = tree.args.map(apply)
 
       val env         = templateEnv(tree)
-      val paramCs     = (paramTps zip argTemplTps) map { case (paramType, argType) =>
-        SubtypConstraint(env, argType, paramType, tree.pos)
+      val paramCs     = (paramTps zip argTpsAndPs) map {
+        case (paramType, (argType, argPos)) => SubtypConstraint(env, argType, paramType, argPos)
       }
 
       fnCs ++ argCs.flatten ++ paramCs
@@ -147,17 +178,13 @@ object LiquidTyper {
 
     def doDefDef(tree: DefDef)(implicit ctx: Context): ConstraintSet = {
       if (!tree.rhs.tpe.exists) {
-        ctx.warning(i"rhs of $tree is untyped, skipping", tree.rhs.pos)
+        ctx.debugwarn(i"rhs of $tree is untyped, skipping", tree.rhs.pos)
         return NoConstraints
       }
 
       val env = templateEnv(tree)
       val templTp = templateType(tree)
-
-      val resTemplTp = templTp match {
-        case QType.FunType(_, tp) => tp
-        case _                    => templTp
-      }
+      val resTemplTp = templTp.resultType(level = tree.vparamss.length)
 
       val LiquidTypeInfo(bodyTemplTp, bodyCs, Some(bodyEnv)) = typeInfo(tree.rhs)
 
@@ -224,9 +251,6 @@ object LiquidTyper {
     //      tree.putAttachment(DebugLTInfo, ltInfo)
 
     def apply(acc: ConstraintSet, tree: Tree)(implicit ctx: Context): ConstraintSet = {
-//      // FIXME(Georg): Super hacky way of attaching template types to trees
-//      if (ctx.settings.printTemplateTypes.value)
-//        typing.templateTyp.get(tree).foreach { qtp => tree.overwriteLtInfo(LiquidTypeInfo(qtp, NoConstraints, None)) }
       maybeDoTree(tree) map { acc ++ _ } getOrElse { foldOver(acc, tree) }
     }
 
@@ -239,6 +263,138 @@ object LiquidTyper {
       val cs      = apply(tree)
       val env     = typing.templateEnv.get(tree)
       LiquidTypeInfo(templTp, cs, env)
+    }
+  }
+
+
+  /** Generates *some* constraints based on a retyping of the compilation unit.
+    *
+    *   XXX(Georg): Potential unsoundness.
+    *
+    *   This helps us validate the subtyping checks the real typer did, but on the qualifier level.
+    *   Note that the real typer will just ignore qualifiers (i.e. assume them to be trivially true). This is why
+    *   we need to discover situations in which such a "carte blanche" was given, and generate appropriate subtyping
+    *   constraints.
+    *
+    *   The large issue here is that we do not have any good way of relating Dotty types to our previously extracted
+    *   QTypes. Dotty types are reused for many trees, so exploiting identity won't do.
+    *   What's worse is the fact that the real Dotty typer is a complex beast, without much internal structure that
+    *   we could hold on to. For instance, "adapt" might be a natural point to override, as it happens at the very
+    *   end of every type assignment. Since "typed" is called only with the expected type, rather than the tree that
+    *   imposes the expectation, we cannot know where exactly the expected type comes from, unless we look at all the
+    *   sites at which "typed" is invoked. This quickly degenerates into a goose chase across thousands of lines of
+    *   code.
+    *   => Potential solution: We do know the tree whose type is being inferred. We could save "parent" edges for each
+    *     such tree along with the "position" in which it is connected to the parent (i.e. "rhs", def "param #n", ...).
+    *     This would allow us to reconstruct the expected type along with the QType that we extracted for that expected
+    *     type.
+    *   Another problem is that we traverse trees for which we might not have extracted a QType in the first place.
+    *   Yet another problem is that the "carte blanche" checks will often occur deep inside some complex
+    *   (Refined-)Types, which we never extract in the first place.
+    *
+    *   For these reasons we currently use this generator only for purported subtypes when they occur as type
+    *   refinements while simultaneously involving qualifier ascriptions.
+    *   */
+  class RetyperConstraintGenerator(treeToEnv: tpd.Tree => TemplateEnv, qtypeXtor: extraction.QTypeExtractor)
+    extends ReTyper
+  {
+    import ast.untpd
+    import scala.collection.mutable
+
+    var templateEnv = TemplateEnv.empty
+    var pos = util.Positions.NoPosition
+    val recordedConstraints = new mutable.ArrayBuffer[SubtypConstraint]
+    var uncommitedConstraints: List[SubtypConstraint] = Nil
+
+    class RecordingTypeComparer(tree: tpd.Tree, initCtx: Context) extends TypeComparer(initCtx) {
+      var running   = false // true <=> there are ongoing calls to isSubType
+      var primed    = false // true <=> one of the calls in progress had a RefinedType as tp2
+      var relevant  = true  // true <=> the result of this subtyping check might result in a new constraint
+
+      private def show(res: Any) = res match {
+        case res: printing.Showable => res.show
+        case _ => String.valueOf(res)
+      }
+
+      override def isSubType(tp1: Type, tp2: Type) = {
+        val isEntryPoint = !running
+        running = true
+
+//        println(s"[] ${show(tp1)} <:< ${show(tp2)}${if (frozenConstraint) " frozen" else ""}")
+
+        lazy val wtp1 = tp1.widenDealias
+        lazy val wtp2 = tp2.widenDealias
+
+        val result =
+          if (!primed && wtp2.isInstanceOf[RefinedType]) {
+            primed = true
+            val result0 = super.isSubType(tp1, tp2)
+            primed = false
+            result0
+
+          } else if (primed && relevant && wtp2.isInstanceOf[LiquidType]) {
+            relevant = false
+//            println(s"() ${show(tp1)} <:< ${show(tp2)}${if (frozenConstraint) " frozen" else ""}")
+            val result0 = super.isSubType(tp1, tp2)
+            relevant = true
+
+            if (result0) {
+              val qtp1 = qtypeXtor.extractQType(tp1, None, templateEnv, pos, freshQualVars = true,
+                inParam = true, extractAscriptions = true)
+              val qtp2 = qtypeXtor.extractQType(tp2, None, templateEnv, pos, freshQualVars = true,
+                inParam = true, extractAscriptions = true)
+              println(i"\t $wtp1 / $qtp1  <:  $wtp2 / $qtp2")
+
+              uncommitedConstraints = uncommitedConstraints :+ SubtypConstraint(treeToEnv(tree), qtp1, qtp2, tree.pos)
+            }
+            result0
+
+          } else {
+            super.isSubType(tp1, tp2)
+          }
+
+        if (isEntryPoint) {
+          if (result && uncommitedConstraints.nonEmpty) {
+            recordedConstraints ++= uncommitedConstraints
+          }
+          uncommitedConstraints = Nil
+          running = false
+        }
+        result
+      }
+
+      // FIXME(Georg): Should also add code for other entry points to TypeComparer
+      // XXX(Georg): Potential unsoundness.
+    }
+
+    protected def recorded[T](tree: tpd.Tree)(op: Context => T)(implicit ctx: Context): Unit = {
+      val nestedCtx = ctx.fresh.setTypeComparerFn(new RecordingTypeComparer(tree, _))
+      try op(nestedCtx)
+      catch { case _: Throwable =>
+        // ReTyping things and actually re-running methods such as adapt() seems to be hairy business and sometimes
+        //  produces exceptions.
+        // FIXME(Georg): Could we miss some important constraints and thus become unsound?
+        //  (So far, we've only experienced these exceptions on trivial adaptations for Ints)
+        // XXX(Georg): Potential unsoundness.
+      }
+    }
+
+    override def adapt(tree: tpd.Tree, pt: Type, original: untpd.Tree = untpd.EmptyTree)(implicit ctx: Context) = {
+      if (!tree.isEmpty && tree.isTerm) {
+        try {
+          templateEnv = treeToEnv(tree)
+          pos = tree.pos
+          recorded(tree) { implicit ctx =>
+            super.adapt(tree, pt, original)
+          }
+        } catch {
+          case e: Throwable =>
+            // FIXME(Georg): Should cover all kinds of nodes // silently ignoring some might make us miss constraints.
+            // XXX(Georg): Potential unsoundness.
+        }
+      }
+
+      tree
     }
   }
 }
