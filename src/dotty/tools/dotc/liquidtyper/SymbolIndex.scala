@@ -40,7 +40,7 @@ private[liquidtyper] case class SymbolIndex(defn: Map[Symbol, Tree],
                                             syntheticDefTyp: Map[Symbol, QType],
                                             syntheticParams: Map[Symbol, List[List[Symbol]]],
 
-                                            scope: Map[Tree, SymbolIndex.Scope])
+                                            defInfo: Map[Tree, SymbolIndex.DefInfo])
 {
   def paramSymbols(methSym: Symbol)(implicit ctx: Context): List[List[Symbol]] =
     defn.get(methSym).flatMap {
@@ -54,7 +54,7 @@ private[liquidtyper] case class SymbolIndex(defn: Map[Symbol, Tree],
   //  a) that symbol was defined locally, or
   //  b) it is an external symbol that was referenced
   def symTemplateTyp(sym: Symbol): Option[QType] =
-    defn.get(sym).map(scope(_).tp) orElse syntheticDefTyp.get(sym)
+    defn.get(sym).map(defInfo(_).tp) orElse syntheticDefTyp.get(sym)
 }
 
 
@@ -62,14 +62,15 @@ object SymbolIndex {
 
   import TemplateEnv.Binding
 
-  case class Scope(tp: QType, env: TemplateEnv, children: Seq[(TemplateEnv, Tree)], optSymbol: Option[Symbol])
+  // Provides some metadata on a defining tree, making it easier to later traverse them later
+  case class DefInfo(tp: QType, env: TemplateEnv, children: Seq[(TemplateEnv, Tree)], optSymbol: Option[Symbol])
 
 
   protected abstract class IndexingTraversal(leonXtor: LeonExtractor, qtypeXtor: QTypeExtractor) extends TreeTraverser
   {
     protected def enterDef(sym: Symbol, defTree: Tree)
     protected def enterRef(sym: Symbol, refTree: Tree)
-    protected def enterScope(tree: Tree, scope: Scope)
+    protected def enterDefInfo(tree: Tree, defInfo: DefInfo)
 
 
     /**
@@ -86,7 +87,7 @@ object SymbolIndex {
     protected def localCtx(tree: Tree)(implicit ctx: Context): Context =
       if (tree.hasType && tree.symbol.exists) ctx.withOwner(tree.symbol) else ctx
 
-    protected def handleDefDef(tree: DefDef)(implicit ctx: Context): Scope = {
+    protected def handleDefDef(tree: DefDef)(implicit ctx: Context): DefInfo = {
       val paramSymss = tree.vparamss.map(_.map(_.symbol))
       val templateTp = qtypeXtor.extractMethodQType(tree.tpe, Some(tree.symbol), Some(paramSymss), templateEnv,
         tree.pos, freshQualVars = true, extractAscriptions = true)
@@ -115,7 +116,7 @@ object SymbolIndex {
             val paramGroupEnv = templateEnv.withBindings(newBindings.reverse)
             for (((id, templType), paramVd) <- zipSafe(templParams, params)) {
               assert(id.name equals paramVd.name.toString)
-              enterScope(paramVd, Scope(templType, paramGroupEnv, Seq.empty, Some(paramVd.symbol)))
+              enterDefInfo(paramVd, DefInfo(templType, paramGroupEnv, Seq.empty, Some(paramVd.symbol)))
               newBindings = qtypeXtor.newBinding(paramVd.symbol, templType) :: newBindings
             }
           }
@@ -128,18 +129,18 @@ object SymbolIndex {
 
       /** Traverse body with a potentially modified TemplateEnv */
       traverseWithEnv(tree.rhs, rhsTemplateEnv)(localCtx(tree))
-      Scope(templateTp, templateEnv, Seq((rhsTemplateEnv, tree.rhs)), Some(tree.symbol))
+      DefInfo(templateTp, templateEnv, Seq((rhsTemplateEnv, tree.rhs)), Some(tree.symbol))
     }
 
     @inline
-    protected def handleValDef(tree: ValDef, fresh: Boolean)(implicit ctx: Context): Scope = {
+    protected def handleValDef(tree: ValDef, fresh: Boolean)(implicit ctx: Context): DefInfo = {
       val qtp = qtypeXtor.extractQType(tree.tpe, Some(tree.symbol), templateEnv, tree.pos,
         freshQualVars = fresh, inParam = false, extractAscriptions = fresh)
       traverseWithEnv(tree.rhs)(localCtx(tree))
-      Scope(qtp, templateEnv, Seq((templateEnv, tree.rhs)), Some(tree.symbol))
+      DefInfo(qtp, templateEnv, Seq((templateEnv, tree.rhs)), Some(tree.symbol))
     }
 
-    protected def handleTypeDef(td: TypeDef, templ: Template)(implicit ctx: Context): Scope = {
+    protected def handleTypeDef(td: TypeDef, templ: Template)(implicit ctx: Context): DefInfo = {
       val Trees.Template(constr, parents, self, _) = templ
       val templateTp = qtypeXtor.extractQType(td.tpe, Some(td.symbol), templateEnv, td.pos, freshQualVars = true)
 
@@ -179,20 +180,20 @@ object SymbolIndex {
 
       val children = Seq((templateEnv, constr)) ++ parents.map((templateEnv, _)) ++
         Seq((templateEnv, self)) ++ templ.body.map((bodyEnv, _))
-      Scope(templateTp, templateEnv, children, Some(td.symbol))
+      DefInfo(templateTp, templateEnv, children, Some(td.symbol))
     }
 
 
-    protected def handleBlock(tree: Block)(implicit ctx: Context): Scope = {
+    protected def handleBlock(tree: Block)(implicit ctx: Context): DefInfo = {
       var oldTemplateEnv = templateEnv
 
       val children = tree.stats.map { stat =>
         val child = (templateEnv, stat)
         stat match {
           case vd: ValDef =>
-            val vdScope = handleValDef(vd, fresh = !(vd.mods is Mutable))
-            enterScope(vd, vdScope)
-            templateEnv = templateEnv.withBinding(qtypeXtor.newBinding(vd.symbol, vdScope.tp))
+            val vdInfo = handleValDef(vd, fresh = !(vd.mods is Mutable))
+            enterDefInfo(vd, vdInfo)
+            templateEnv = templateEnv.withBinding(qtypeXtor.newBinding(vd.symbol, vdInfo.tp))
           case stat: Assign =>
             // Ignore (mutable ValDefs are trivially qualified for now, so this is sound)
           case dd: DefDef =>
@@ -213,10 +214,10 @@ object SymbolIndex {
 
       val templateTp = qtypeXtor.extractQType(tree.tpe, None, templateEnv, tree.pos,
         freshQualVars = true, extractAscriptions = false)
-      Scope(templateTp, templateEnv, children :+ exprChild, None)
+      DefInfo(templateTp, templateEnv, children :+ exprChild, None)
     }
 
-    protected def handleIf(tree: If)(implicit ctx: Context): Scope = {
+    protected def handleIf(tree: If)(implicit ctx: Context): DefInfo = {
       val templateTp = qtypeXtor.extractQType(tree.tpe, None, templateEnv, tree.pos,
         freshQualVars = true, extractAscriptions = false)
 
@@ -224,7 +225,7 @@ object SymbolIndex {
       val thenEnv = traverseWithCond(tree.thenp, tree.cond, negated = false)
       val elseEnv = traverseWithCond(tree.elsep, tree.cond, negated = true)
 
-      Scope(templateTp, templateEnv, Seq((templateEnv, tree.cond), (thenEnv, tree.thenp), (elseEnv, tree.elsep)), None)
+      DefInfo(templateTp, templateEnv, Seq((templateEnv, tree.cond), (thenEnv, tree.thenp), (elseEnv, tree.elsep)), None)
     }
 
 
@@ -252,24 +253,24 @@ object SymbolIndex {
       tree match {
         case tree: DefDef =>
           enterDef(tree.symbol, tree)
-          enterScope(tree, handleDefDef(tree))
+          enterDefInfo(tree, handleDefDef(tree))
 
         case tree: ValDef =>
           // NOTE: We only get here for ValDefs that are neither parameters of methods nor ValDefs in a Block
           enterDef(tree.symbol, tree)
           // XXX(Georg): Do we ever want fresh to be false here?
-          enterScope(tree, handleValDef(tree, fresh = true))
+          enterDefInfo(tree, handleValDef(tree, fresh = true))
 
         case tree @ Trees.TypeDef(_, templ: Template) =>
           enterDef(tree.symbol, tree)
-          enterScope(tree, handleTypeDef(tree, templ))
+          enterDefInfo(tree, handleTypeDef(tree, templ))
 
 
         case tree: Block =>
-          enterScope(tree, handleBlock(tree))
+          enterDefInfo(tree, handleBlock(tree))
 
         case tree: If =>
-          enterScope(tree, handleIf(tree))
+          enterDefInfo(tree, handleIf(tree))
 
 
         case tree: Ident if tree.isTerm =>
@@ -296,11 +297,11 @@ object SymbolIndex {
   def apply(leonXtor: LeonExtractor, qtypeXtor: QTypeExtractor, treeToIndex: Tree)(implicit ctx: Context) = {
 
     // For each locally defined symbol
-    val defn  = new mutable.HashMap[Symbol, Tree]()
+    val defn    = new mutable.HashMap[Symbol, Tree]()
     // For each locally referenced symbol
-    val refs  = new mutable.HashMap[Symbol, mutable.ArrayBuffer[Tree]]()
-    // For each tree that introduces a new scope
-    val scope = new mutable.HashMap[Tree, Scope]()
+    val refs    = new mutable.HashMap[Symbol, mutable.ArrayBuffer[Tree]]()
+    // For each tree that introduces a new defInfo
+    val defInfo = new mutable.HashMap[Tree, DefInfo]()
 
     // For each parameter of each referenced (method) symbol that was not defined locally
     val syntheticDefTyp = new mutable.HashMap[Symbol, QType]()
@@ -316,8 +317,8 @@ object SymbolIndex {
       override protected def enterRef(sym: Symbol, refTree: Tree) =
         refs.getOrElseUpdate(sym, {new mutable.ArrayBuffer()}) += refTree
 
-      override protected def enterScope(tree: Tree, treeScope: Scope) =
-        scope += tree -> treeScope
+      override protected def enterDefInfo(tree: Tree, treeScope: DefInfo) =
+        defInfo += tree -> treeScope
     }
 
 
@@ -367,7 +368,7 @@ object SymbolIndex {
 //    println(s"SYMBOLDEFS:\n$defn")
 //    println(s"SYMBOLREFS:\n$refs")
 //    println(s"SYNTH SYMBOLS:\n$syntheticParams")
-//    println(s"SCOPE:"); for ((tree, treeScope) <- scope) println(i"\t$tree ---> ${treeScope.tp}")
+//    println(s"SCOPE:"); for ((tree, treeScope) <- defInfo) println(i"\t$tree ---> ${treeScope.tp}")
 
     // TODO(Georg): Remove defn, refs and syntheticParams from the result
     new SymbolIndex(
@@ -377,7 +378,7 @@ object SymbolIndex {
       syntheticDefTyp.toMap,
       syntheticParams.toMap,
 
-      scope.toMap)
+      defInfo.toMap)
   }
 
 }

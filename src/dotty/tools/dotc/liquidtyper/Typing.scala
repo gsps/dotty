@@ -40,7 +40,7 @@ private[liquidtyper] case class Typing(templateTyp: Map[Tree, QType],
 
 object Typing {
 
-  import SymbolIndex.Scope
+  import SymbolIndex.DefInfo
 
   // TODO(Georg): Remove dependency on Context -- only tpe.resultType in extractQType needs it!
   protected abstract class TypingTraversal(leonXtor: LeonExtractor, qtypeXtor: QTypeExtractor, index: SymbolIndex,
@@ -56,16 +56,16 @@ object Typing {
       */
 
     object Indexed {
-      def unapply(tree: Tree)(implicit ctx: Context): Option[(Tree, SymbolIndex.Scope)] = {
+      def unapply(tree: Tree)(implicit ctx: Context): Option[(Tree, SymbolIndex.DefInfo)] = {
         def fetch(tree: Tree) = {
-          val scope = index.scope.getOrElse(tree, {
-            throw new AssertionError(s"Expected SymbolIndex to contain scope for tree ${tree.show}")
+          val defInfo = index.defInfo.getOrElse(tree, {
+            throw new AssertionError(s"Expected SymbolIndex to contain DefInfo for tree ${tree.show}")
           })
-          Some((tree, scope))
+          Some((tree, defInfo))
         }
 
         tree match {
-          // NOTE: Pattern should match exactly those kinds of trees whose scopes are recorded in SymbolIndex
+          // NOTE: Pattern should match exactly those kinds of trees for which DefInfos are recorded in SymbolIndex
           case _: DefDef | _: ValDef | _: If | _: Block         => fetch(tree)
           case tree: TypeDef if tree.rhs.isInstanceOf[Template] => fetch(tree)
           case _                                                => None
@@ -102,7 +102,7 @@ object Typing {
 
       val optTemplateTyp: Option[QType] = tree match
       {
-        case Indexed(_, Scope(templateTp, _, children, _)) =>
+        case Indexed(_, DefInfo(templateTp, _, children, _)) =>
           for ((childEnv, childTree) <- children)
             traverseWithEnv(childTree, childEnv)
 
@@ -283,9 +283,9 @@ object Typing {
     // Putting it all together
     traverser.traverse(treeToType)
 
-    // Copy template types for trees that were not traversed anymore, but previously received a scope
-    for (tree <- index.scope.keySet diff templateTyp.keySet) {
-      val Scope(qtp, env, _, _) = index.scope(tree)
+    // Copy template types for trees that were not traversed anymore, but previously received a DefInfo
+    for (tree <- index.defInfo.keySet diff templateTyp.keySet) {
+      val DefInfo(qtp, env, _, _) = index.defInfo(tree)
       templateTyp += tree -> qtp
       templateEnv += tree -> env
     }
