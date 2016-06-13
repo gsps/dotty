@@ -31,7 +31,7 @@ trait LeonExtractor extends ASTExtractors {
 
   implicit protected val ctx: Context
 
-  protected val state = ExtractionState(Bijection(), mutable.Set(), mutable.Set())
+  protected val state = ExtractionState(Bijection(), mutable.Set(), Bijection(), mutable.Set())
 
 
   /** Conversion from Dotty to PureScala positions */
@@ -70,7 +70,12 @@ trait LeonExtractor extends ASTExtractors {
   }
 
 
+
+  case class ClassDef(symbol: ClassSymbol, id: Identifier, fields: List[Identifier])
+
+  // TODO(Georg): Remove bindingIds, we don't use them, do we?
   case class ExtractionState(symsToIds: Bijection[Symbol, Identifier], bindingIds: mutable.Set[Identifier],
+                             classDefs: Bijection[Identifier, ClassDef],
                              unboundIds: mutable.Set[Identifier])
   {
     def registerSym(sym: Symbol, tpe: LeonType = Untyped, isBinding: Boolean) = {
@@ -79,6 +84,14 @@ trait LeonExtractor extends ASTExtractors {
         val id = FreshIdentifier(sym.name.toString.trim, tpe).setPos(sym.pos)
         if (isBinding) bindingIds += id
         id
+      }
+    }
+
+    def registerClass(sym: ClassSymbol, fields: Seq[Symbol]) = {
+      val classId = symsToIds.toB(sym)
+      val fieldIds = fields.map(symsToIds.toB)
+      classDefs.cachedB(classId) {
+        ClassDef(sym, classId, fieldIds.toList)
       }
     }
 
@@ -93,7 +106,7 @@ trait LeonExtractor extends ASTExtractors {
     sealed trait Base {
       def failExpr(tree0: DottyTree, msg: String)(implicit state: ExtractionState, env: TemplateEnv): Try[LeonExpr] =
         Try(outOfSubsetError(tree0, msg))
-      def failType(tree0: DottyTree, msg: String)(implicit state: ExtractionState, env: TemplateEnv): Try[LeonType] =
+      def failType(tree0: DottyTree, msg: String)(implicit state: ExtractionState): Try[LeonType] =
         Try(outOfSubsetError(tree0, msg))
     }
 
@@ -126,13 +139,13 @@ trait LeonExtractor extends ASTExtractors {
     implicit def typeToTry(tpe: => LeonType): Try[LeonType] = Try(tpe)
 
     def failExpr(tree0: DottyTree, msg: String)(implicit state: ExtractionState, env: TemplateEnv): Try[LeonExpr]
-    def failType(tree0: DottyTree, msg: String)(implicit state: ExtractionState, env: TemplateEnv): Try[LeonType]
+    def failType(tree0: DottyTree, msg: String)(implicit state: ExtractionState): Try[LeonType]
 
     def extract(state: ExtractionState, env: TemplateEnv, from: From): Result[To]
 
 
     protected def weakened(tree: DottyTree)(implicit state: ExtractionState, env: TemplateEnv): Try[LeonExpr] = {
-      for (tpe <- extractWeakType(tree))
+      for (tpe <- extractAnyType(tree))
         yield Variable(state.freshUnbound(tpe))
     }
 
@@ -158,6 +171,9 @@ trait LeonExtractor extends ASTExtractors {
           for (xLhs <- extractTree(lhs); xRhs <- extractTree(rhs); expr <- extractEquals(tree, xLhs, xRhs))
             yield Not(expr)
 
+        case ExInstantiation(dottyTp, args) =>
+          extractInstantiation(tree, dottyTp.widen, args)
+
         case ExCall(Some(recv), sym, args) =>
           for (recvExpr <- extractTree(recv);
                argExprs <- Try(args.map(extractTree(_).get));
@@ -180,7 +196,7 @@ trait LeonExtractor extends ASTExtractors {
     @inline
     protected def extractThis(tree0: DottyTree, sym: Symbol)
                              (implicit state: ExtractionState, env: TemplateEnv): Try[LeonExpr] =
-      extractWeakType(tree0, sym.info)(state, env, tree0.pos).flatMap {
+      extractAnyType(tree0, sym.info)(state, tree0.pos).flatMap {
         case leonTp: UninterpretedLeonType => Try(Variable(LeonExtractor.thisVarId(sym, leonTp)).setPos(tree0.pos))
         case leonTp => failExpr(tree0, s"Cannot extract this for type $leonTp")
       }
@@ -312,22 +328,34 @@ trait LeonExtractor extends ASTExtractors {
         }
       }
 
+    // TODO(Georg): Clean this up.
+    protected def extractInstantiation(tree0: DottyTree, tpe: DottyType, args: Seq[DottyTree])
+                                      (implicit state: ExtractionState, env: TemplateEnv): Try[LeonExpr] =
+      for (leonTp <- extractAnyType(tree0, tpe)(state, NoPosition)
+           if leonTp.isInstanceOf[UninterpretedLeonType];
+           classId = state.symsToIds.toB(tpe.classSymbol);
+           classDef = state.classDefs.toB(classId);
+           ref = FreshIdentifier(s"<${leonTp.asInstanceOf[UninterpretedLeonType].prettyName}$$inst>", leonTp);
+           argExprs <- Try(args.map(extractTree(_).get));
+           _ = assert(argExprs.length == classDef.fields.length))
+        yield ObjectLiteral(ref, (classDef.fields zip argExprs).toMap)
+
 
     @inline
-    protected def extractWeakType(t: DottyTree)(implicit state: ExtractionState, env: TemplateEnv): Try[LeonType] =
-      extractWeakType(t, t.tpe)(state, env, t.pos)
+    protected def extractAnyType(t: DottyTree)(implicit state: ExtractionState): Try[LeonType] =
+      extractAnyType(t, t.tpe)(state, t.pos)
 
-    protected def extractWeakType(tree0: DottyTree, tpe: DottyType)
-                                 (implicit state: ExtractionState, env: TemplateEnv, pos: Position): Try[LeonType] =
+    protected def extractAnyType(tree0: DottyTree, tpe: DottyType)
+                                (implicit state: ExtractionState, pos: Position): Try[LeonType] =
       extractType(tree0, tpe) recover { case _ => UninterpretedLeonType(tpe, tpe.show) }
 
 
     @inline
-    protected def extractType(t: DottyTree)(implicit state: ExtractionState, env: TemplateEnv): Try[LeonType] =
-      extractType(t, t.tpe)(state, env, t.pos)
+    protected def extractType(t: DottyTree)(implicit state: ExtractionState): Try[LeonType] =
+      extractType(t, t.tpe)(state, t.pos)
 
     protected def extractType(tree0: DottyTree, tpe: DottyType)
-                             (implicit state: ExtractionState, env: TemplateEnv, pos: Position): Try[LeonType] =
+                             (implicit state: ExtractionState, pos: Position): Try[LeonType] =
       tpe match {
         case _ if tpe.classSymbol == defn.CharClass     => CharType
         case _ if tpe.classSymbol == defn.IntClass      => Int32Type
@@ -352,10 +380,7 @@ trait LeonExtractor extends ASTExtractors {
   // X   Extract literals
 
 
-  abstract class TypeExtraction extends Extraction[DottyType, LeonType] {
-    def extract(state: ExtractionState, env: TemplateEnv, tpe: DottyType): Result[LeonType] =
-      extractType(EmptyDottyTree, tpe)(state, env, NoPosition)
-  }
+  abstract class TypeExtraction extends Extraction[DottyType, LeonType]
 
   abstract class TreeExtraction extends Extraction[DottyTree, LeonExpr]
 
@@ -373,9 +398,16 @@ trait LeonExtractor extends ASTExtractors {
   }
 
 
-  object StrictTypeExtraction   extends TypeExtraction with ExtractionMode.Strict
+  object AnyTypeExtraction      extends TypeExtraction with ExtractionMode.Strict {
+    def extract(state: ExtractionState, env: TemplateEnv, tpe: DottyType): LeonType =
+      extractAnyType(EmptyDottyTree, tpe)(state, NoPosition)
+  }
 
-  object OptionalTypeExtraction extends TypeExtraction with ExtractionMode.Optional
+  object OptionalTypeExtraction extends TypeExtraction with ExtractionMode.Optional {
+    // NOTE: We only extract base types here (no uninterpreted ones)
+    def extract(state: ExtractionState, env: TemplateEnv, tpe: DottyType): Option[LeonType] =
+      extractType(EmptyDottyTree, tpe)(state, NoPosition)
+  }
 
   object SubstitutionExtraction extends TermExtraction with ExtractionMode.Weak
 
@@ -388,7 +420,7 @@ trait LeonExtractor extends ASTExtractors {
                                             (implicit state: ExtractionState, env: TemplateEnv) =
       tree0 match {
         case dotc.ast.Trees.Ident(dotc.liquidtyper.SubjectVarName) =>
-          val leonType      = extractType(tree0, tree0.tpe.widen)(state, env, tree0.pos)
+          val leonType      = extractType(tree0, tree0.tpe.widen)(state, tree0.pos)
           Variable(LeonExtractor.subjectVarId(leonType)).setPos(tree0.pos)
 
         case _ =>
@@ -406,11 +438,15 @@ trait LeonExtractor extends ASTExtractors {
       implicit val impEnv   = env
       assert(tree.isTerm)
       tree match {
+        case ExInstantiation(dottyTp, args) =>
+          extractInstantiation(tree, dottyTp.widen, args)
+
         case ExCall(Some(recv), sym, args) =>
           for (recvExpr <- extractTree(recv);
                argExprs <- Try(args.map(extractTree(_).get));
                expr     <- maybeExtractPrimitiveCall(tree, recvExpr, sym, argExprs.toList))
             yield expr
+
         case _ =>
           None
       }
@@ -434,11 +470,14 @@ trait LeonExtractor extends ASTExtractors {
 
   // The bread & butter business of the liquid typer
 
-  def extractSubstitution(env: TemplateEnv, tree: DottyTree)  = SubstitutionExtraction.extract(state, env, tree)
-  def extractAscription(env: TemplateEnv, tree: DottyTree)    = AscriptionExtraction.extract(state, env, tree)
-  def extractCondition(env: TemplateEnv, tree: DottyTree)     = ConditionExtraction.extract(state, env, tree)
+  // TODO(Georg): Verify that TemplateEnvs are indeed not needed within the extractor and remove all the references
+  private val NoEnv = TemplateEnv.Root
 
-  def maybeExtractType(env: TemplateEnv, tpe: DottyType)      = OptionalTypeExtraction.extract(state, env, tpe)
+  def extractSubstitution(tree: DottyTree)  = SubstitutionExtraction.extract(state, NoEnv, tree)
+  def extractAscription(tree: DottyTree)    = AscriptionExtraction.extract(state, NoEnv, tree)
+  def extractCondition(tree: DottyTree)     = ConditionExtraction.extract(state, NoEnv, tree)
+
+  def maybeExtractType(tpe: DottyType)      = OptionalTypeExtraction.extract(state, NoEnv, tpe)
 
 
   // Primitive, reference and constant extractions
@@ -450,8 +489,8 @@ trait LeonExtractor extends ASTExtractors {
       throw new IllegalArgumentException(s"Leon type $leonType is not simple.")
   }
 
-  private def preciseQType(env: TemplateEnv, tpe: DottyType, rhsExpr: LeonExpr): QType = {
-    val expectedTpe = StrictTypeExtraction.extract(state, env, tpe)
+  private def preciseQType(tpe: DottyType, rhsExpr: LeonExpr): QType = {
+    val expectedTpe = AnyTypeExtraction.extract(state, TemplateEnv.Root, tpe)
     assert(expectedTpe == rhsExpr.getType,
       s"Expected type $expectedTpe didn't match the extracted type ${rhsExpr.getType}")
     val preciseExpr = Equals(Variable(LeonExtractor.subjectVarId(expectedTpe)), rhsExpr)
@@ -459,13 +498,13 @@ trait LeonExtractor extends ASTExtractors {
   }
 
   def maybeExtractPrimitive(env: TemplateEnv, tpe: => DottyType, tree: DottyTree): Option[QType] =
-    PrimitiveExtraction.extract(state, env, tree).map(preciseQType(env, tpe, _))
+    PrimitiveExtraction.extract(state, env, tree).map(preciseQType(tpe, _))
 
   def maybeExtractSimpleIdent(env: TemplateEnv, tpe: => DottyType, tree: DottyTree): Option[QType] =
-    SimpleIdentExtraction.extract(state, env, tree).map(preciseQType(env, tpe, _))
+    SimpleIdentExtraction.extract(state, env, tree).map(preciseQType(tpe, _))
 
   def extractLiteral(env: TemplateEnv, tpe: DottyType, tree: DottyTree): QType =
-    preciseQType(env, tpe, LiteralExtraction.extract(state, env, tree))
+    preciseQType(tpe, LiteralExtraction.extract(state, env, tree))
 
 
   def registerSymbol(sym: Symbol, tpe: LeonType, isBinding: Boolean): Identifier =
@@ -476,6 +515,9 @@ trait LeonExtractor extends ASTExtractors {
 
   def lookupIdentifier(id: Identifier): Symbol =
     state.symsToIds.toA(id)
+
+  def registerClass(sym: ClassSymbol, fields: Seq[Symbol]): ClassDef =
+    state.registerClass(sym, fields)
 }
 
 

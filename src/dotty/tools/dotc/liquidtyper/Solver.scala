@@ -110,7 +110,8 @@ class Solver(lctx: LeonContext, idTemplateTyp: Identifier => QType, qualMap: Inf
 
   protected def ObjectSort = Sort(SMTIdentifier(SSymbol("AnyRef")))
 
-  protected val fieldGetters = new IncrementalBijection[Identifier, SSymbol]()
+  protected val fieldGetters  = new IncrementalBijection[Identifier, SSymbol]()
+  protected val objects       = new IncrementalBijection[Identifier, SSymbol]()
 
   // This is a hack; we shouldn't add a concrete recv to the mix
   protected def declareFieldGetter(fg: FieldGetter): SSymbol = {
@@ -139,6 +140,17 @@ class Solver(lctx: LeonContext, idTemplateTyp: Identifier => QType, qualMap: Inf
     }
   }
 
+  protected def declareObject(obj: ObjectLiteral): SSymbol = {
+    objects.cachedB(obj.ref) {
+      val refSSym = declareVariable(obj.ref)
+      val fieldEqs  = obj.fieldExprs.map { case (field, expr) =>
+        FunctionApplication(id2sym(field), Seq(refSSym))
+      }
+      emit(Assert(Constructors.and(fieldEqs.toSeq)))
+      refSSym
+    }
+  }
+
   override protected def declareSort(t: LeonType): Sort =
     t match {
       case _: UninterpretedLeonType =>
@@ -149,11 +161,13 @@ class Solver(lctx: LeonContext, idTemplateTyp: Identifier => QType, qualMap: Inf
 
   override def push(): Unit = {
     fieldGetters.push()
+    objects.push()
     super.push()
   }
 
   override def pop(): Unit = {
     fieldGetters.pop()
+    objects.pop()
     super.pop()
   }
 
@@ -162,6 +176,8 @@ class Solver(lctx: LeonContext, idTemplateTyp: Identifier => QType, qualMap: Inf
     e match {
       case fg: FieldGetter =>
         FunctionApplication(declareFieldGetter(fg), Seq(toSMT(fg.recv)))
+      case obj: ObjectLiteral =>
+        declareObject(obj)
       case _ =>
         super.toSMT(e)
     }
@@ -174,7 +190,7 @@ class Solver(lctx: LeonContext, idTemplateTyp: Identifier => QType, qualMap: Inf
     (t, otpe) match {
       case (SimpleSymbol(s), Some(ult: UninterpretedLeonType)) =>
         val id = variables.getA(s).getOrElse { FreshIdentifier(s.name, ult) }
-        ObjectLiteral(id, ult)
+        ObjectLiteral(id, Map.empty)
       case _ =>
         super.fromSMT(t, otpe)
     }

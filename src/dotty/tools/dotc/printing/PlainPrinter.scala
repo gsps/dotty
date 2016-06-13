@@ -426,11 +426,26 @@ class PlainPrinter(_ctx: Context) extends Printer {
   def toText(id: leon.purescala.Common.Identifier): Text =
     id.toString.close
 
+  def envBindingsTxt(env: TemplateEnv, verbose: Boolean = true): Text = {
+    env match {
+      case env: TemplateEnv.TypeDefBody => envBindingsTxt(env.parent, verbose = false)
+
+      case _ if verbose =>
+        val (prefix, addBindings) = env match {
+          case env: TemplateEnv.ChainedTemplateEnv  => (envBindingsTxt(env.parent, verbose = true), env.localBindings)
+          case _                                    => (Text(), env.bindings)
+        }
+        val txts = addBindings.toSeq map { case (id, binding) => id.uniqueName ~ ": " ~ toText(binding.templateTp) }
+        Text(prefix +: txts, "; ")
+
+      case env: TemplateEnv.NamedEnv  => Text(Seq(envBindingsTxt(env.parent, verbose = false), env.name), "; ")
+      case _                          => Text()
+    }
+  }
+
   def envText(env: TemplateEnv): Text = {
-    val bindingsTxts = env.bindings map
-      { case (id, binding) => id.uniqueName ~ ": " ~ toText(binding.templateTp) }
     val pcTxts = env.conditions map toText
-    Text(bindingsTxts ++ pcTxts , "; ")
+    envBindingsTxt(env) ~ Text(pcTxts , "; ")
   }
 
   def toText(env: TemplateEnv): Text =
@@ -457,7 +472,7 @@ class PlainPrinter(_ctx: Context) extends Printer {
 
   def toText(leonTp: LeonType): Text = leonTp match {
     case liquidtyper.UninterpretedLeonType(original, _) =>
-      ("UninterpLeon<" ~ toText(original) ~ ">").close
+      ("UL<" ~ toText(original) ~ ">").close
     case _ =>
       leonTp.toString.close
   }
@@ -476,7 +491,7 @@ class PlainPrinter(_ctx: Context) extends Printer {
       }
       (Text(paramTxts, " => ") ~ " => " ~ toText(result)).close
     case QType.UninterpretedType(original, _) =>
-      ("Uninterp<" ~ toText(original) ~ ">").close
+      ("U<" ~ toText(original) ~ ">").close
   }
 
   def toText(constraint: Constraint): Text = constraint match {

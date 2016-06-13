@@ -14,7 +14,6 @@ import leon.purescala.Expressions.{Expr => LeonExpr}
 import leon.solvers.Model
 import leon.utils.Bijection
 
-import scala.collection.Map
 import scala.collection.mutable
 
 
@@ -41,18 +40,18 @@ object Inference {
 
   // XXX(Georg): Is it okay to return different QualIds for Qualifiers that are equivalent (but cannot be proven so)?
   object HasQualId {
-    def unapply(qtp: QType): Option[(QType, QualId, Substitutions)] = qtp match {
+    def unapply(qtp: QType): Option[(QType, QualId, Substitutions, Boolean)] = qtp match {
       case _: QType.FunType =>
         None
 
       case QType.BaseType(_, QualifierWithSubstitutions(Qualifier.Var(qualVarId), substs)) =>
-        Some((qtp, qualVarId, substs))
+        Some((qtp, qualVarId, substs, true))
 
       case QType.BaseType(_, QualifierWithSubstitutions(qualifier, substs)) =>
         assert(!qualifier.isInstanceOf[Qualifier.PendingSubst])
         val prefix = "G"
         val id = groundQuals.cachedB(qualifier) { FreshIdentifier(prefix, alwaysShowUniqueID = true) }
-        Some((qtp, id, substs))
+        Some((qtp, id, substs, false))
 
       case _: QType.UninterpretedType =>
         // We could in principle return qualIdTop here, but since this will only give use lots of trivial constraints
@@ -107,9 +106,18 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
     unfold(env, tpA, tpB, covariant = true, List.empty)
   }
 
-  private def computeQualIdEnv(constraints: List[WfConstraint]): QualEnv =
+  private def computeQualIdEnv(wfCs: List[WfConstraint], stCs: List[SubtypConstraint]): QualEnv =
   {
     val qualIdEnv = new mutable.HashMap[QualId, Set[Identifier]]()
+
+    def limit(env: TemplateEnv, qualId: QualId, substs: Substitutions): Unit = {
+      val oldBindings = (env.bindings.valuesIterator.map(_.identifier) ++ substs.map(_._1)).toSet
+      val newBindings = qualIdEnv.get(qualId) match {
+        case None     => oldBindings
+        case Some(bs) => oldBindings intersect bs
+      }
+      qualIdEnv(qualId) = newBindings
+    }
 
     // Decomposes a potentially complex WfConstraint into multiple that are only over simple QTypes
     def unfold(env: TemplateEnv, tp: QType): Unit = tp match {
@@ -117,21 +125,22 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
         unfold(tpe.resultEnv(env), tpe.result)
         params.valuesIterator.foreach(unfold(env, _))
 
-      case HasQualId(_, qualId, substs) =>
-        val oldBindings = (env.bindings.valuesIterator.map(_.identifier) ++ substs.map(_._1)).toSet
-        val newBindings = qualIdEnv.get(qualId) match {
-          case None     => oldBindings
-          case Some(bs) => oldBindings intersect bs
-        }
-        qualIdEnv(qualId) = newBindings
+      case HasQualId(_, qualId, substs, true) =>
+        limit(env, qualId, substs)
 
       case _ =>
         // TODO(Georg): Also handle other QTypes
     }
 
-    for (WfConstraint(env, tp, _) <- constraints)
+    for (WfConstraint(env, tp, _) <- wfCs)
       unfold(env, tp)
-    qualIdEnv.asInstanceOf[Map[QualId, Set[Identifier]]]
+    for (SubtypConstraint(env, tpA, tpB, _) <- stCs; tp <- Seq(tpA, tpB))
+      tp match {
+        case HasQualId(_, qualId, substs, true) => limit(env, qualId, substs)
+        case _ => //
+      }
+
+    qualIdEnv.toMap
   }
 
   private def dumpGraph(edges: Map[(QualId, QualId), Substitutions],
@@ -302,15 +311,8 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
     // 1. Replace by ascribed qualifiers and signatures, where present
     for ((Qualifier.Var(id), info) <- xtorInfo.qualVarInfo; expr <- info.optAscription) {
       val qual = Qualifier.ExtractedExpr(expr)
-
-      // XXX(Georg): Should we allow free variables from outside the template environment?
-//      assert(qual.freeVars() subsetOf (qualEnv(id) union LeonExtractor.subjectVarIds),
-//        "Ascribed qualifiers should by construction only capture variables in the environment.")
-      val envVars     = qualEnv(id) union LeonExtractor.subjectVarIds union LeonExtractor.thisVarIds
-      val outsideVars = qual.freeVars() diff envVars
-      for (varId <- outsideVars if !xtorInfo.boundIds.contains(varId))
-        ctx.error(s"Ascription $expr uses unregistered variable $varId.", info.pos)
-
+      assert(qual.freeVars() subsetOf (qualEnv(id) union LeonExtractor.subjectVarIds),
+        "Ascribed qualifiers should by construction only capture variables in the environment.")
       qualMap(id) = qual
     }
 
@@ -321,25 +323,18 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
     val unsafeQualIds = new mutable.HashSet[QualId]
 
     constraints foreach {
-      case SubtypConstraint(env, HasQualId(_, idA, substsA), HasQualId(_, idB, substsB), _) =>
+      case SubtypConstraint(env, HasQualId(_, idA, substsA, _), HasQualId(_, idB, substsB, _), _) =>
         inEdges(idB)        = (env, substsA, idA) :: inEdges(idB)
         outEdges(idA)       = idB :: outEdges(idA)
         if (substsB.nonEmpty) unsafeQualIds += idB
 
-      case SubtypConstraint(env, _, HasQualId(_, idB, substsB), _) =>
+      case SubtypConstraint(env, _, HasQualId(_, idB, substsB, _), _) =>
         inEdges(idB)        = (env, Nil, qualIdTop) :: inEdges(idB)
         outEdges(qualIdTop) = idB :: outEdges(qualIdTop)
         if (substsB.nonEmpty) unsafeQualIds += idB
 
       case c =>
         throw new AssertionError(s"Constraint $c should have been decomposed for qual var elimination!")
-
-//      case c @ SubtypConstraint(env, _, HasQualId(_, idB, substsB), _) =>
-//        // NOTE: Constraints that have substitutions on the rhs type fall through here
-//        //  (We can't infer them. What does unification on two predicate types even mean?)
-//        assert(substsB.nonEmpty)
-//        remainingCs   += c
-//        unsafeQualIds += idB
     }
 
     // 3. Detect recursive dependencies (which we require to be resolved using ascriptions)
@@ -347,7 +342,7 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
     val nontrivialSccs = detectRecursiveDeps(inEdges.keySet.toSet, outEdges, assigned).filter(_.size > 1)
     if (nontrivialSccs.nonEmpty) {
       reportRecursiveDeps(nontrivialSccs)
-      return (qualMap, remainingCs.toList)
+      return (qualMap.toMap, remainingCs.toList)
     }
 
     // 4. Assign qualifier variables
@@ -368,7 +363,7 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
     dumpGraph(
       inEdges.toSeq.flatMap { case (to, froms) =>
         froms.collect { case (_, substs, from) => ((from, to), substs) } } .toMap,
-      qualMap, unsafeQualIds.toSet, Set.empty, ascribed.toSet)
+      qualMap.toMap, unsafeQualIds.toSet, Set.empty, ascribed.toSet)
     // DEBUG <<
 
     val predLeft = {
@@ -409,11 +404,10 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
     val retainConstraintsTo = inEdges.keySet diff inferred
 //    ltypr.println(s"\tInferred: $inferred")
 //    ltypr.println(s"\tRetain constraints to: $retainConstraintsTo")
-    for (c @ SubtypConstraint(_, _, HasQualId(_, idB, _), _) <- constraints if retainConstraintsTo(idB))
+    for (c @ SubtypConstraint(_, _, HasQualId(_, idB, _, _), _) <- constraints if retainConstraintsTo(idB))
       remainingCs += c
 
     // Sanity checks
-//    for ((id, left) <- predLeft if safeQualIds(id) && left > 0)
     for ((id, left) <- predLeft if unassignedQualVar(id) && left > 0)
       ctx.error(s"Qualifier variable elimination couldn't handle qual var $id -- appears to be part of cycle")
     for ((id, qual) <- qualMap if qual.qualifierVars.nonEmpty)
@@ -429,11 +423,11 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
     // Check that each assignment we made doesn't violate the well-formedness constraints
     for ((id, availableIds) <- qualEnv) {
       // XXX(Georg): Should we allow free variables from outside the template environment?
-//      val validVars = availableIds union LeonExtractor.subjectVarIds
-      val validVars = xtorInfo.boundIds union LeonExtractor.subjectVarIds union LeonExtractor.thisVarIds
-      val freeVars  = qualMap(id).freeVars(qualMap)
+      val validVars = availableIds union LeonExtractor.subjectVarIds
       // FIXME(Georg): It's questionable whether we should require qualMap to be passed to freeVars here -- after all,
       //  at this point qualifiers should be ground -- why make an exception for PendingSubsts?
+      // FIXME(Georg): Converting the qualMap all the time is slow. Fix this // Do we even need to pass it here?
+      val freeVars  = qualMap(id).freeVars(qualMap.toMap)
       if (!(freeVars subsetOf validVars))
       {
         ctx.warning(s"Precise qualifier for qualifier var $id would not eliminate all parameters, falling back to " +
@@ -448,7 +442,7 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
     dumpGraph(
       inEdges.toSeq.flatMap { case (to, froms) =>
         froms.collect { case (_, substs, from) => ((from, to), substs) } } .toMap,
-      qualMap, unsafeQualIds.toSet, inferred.toSet, ascribed.toSet)
+      qualMap.toMap, unsafeQualIds.toSet, inferred.toSet, ascribed.toSet)
 
     (qualMap.toMap, remainingCs.toList)
   }
@@ -482,11 +476,8 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
 
     // Extract the environments within which each qualifier var needs to eventually be well-formed
     val qualEnv = {
-      val qualEnv0 = computeQualIdEnv(wfConstraints0)
-
-      // XXX(Georg): Should we fall back to the qual var's creation env if no WfConstraints on it were established?
-      //  (So far, such qual vars only appear and are useful for type vars returned by calls to to synthetic methods)
-      //  For another comment on how to resolve this more systematically, see the "Select" case in Typing.
+      val qualEnv0 = computeQualIdEnv(wfConstraints0, subtypConstraints)
+      // Some qualifier vars might not have been mentioned in any of the explicit constraints
       xtorInfo.qualVarInfo.collect { case (Qualifier.Var(id), info) if !qualEnv0.contains(id) =>
         id -> info.env.bindings.valuesIterator.map(_.identifier).toSet
       } .toMap ++ qualEnv0
@@ -517,23 +508,34 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
 
     /** C. Send remaining constraints to SMT solver and return result */
 
-    testConstraints(idTemplateTyp, qualMap, remainingCs, xtorInfo.qualVarInfo)
+    testConstraints(idTemplateTyp, qualMap, remainingCs)
   }
 
   // TODO(Georg): Implement type inference via predicate abstraction
 
-  protected def grounded(qualMap: QualMap, b: TemplateEnv.Binding): TemplateEnv.Binding =
-    b.copy(templateTp = b.templateTp.substQualVars(qualMap))
-  protected def grounded(qualMap: QualMap, e: TemplateEnv): TemplateEnv =
-    e.copyExceptBindings(e.bindings.mapValues(grounded(qualMap, _)))
-  protected def grounded(qualMap: QualMap, c: SubtypConstraint): SubtypConstraint =
-    c.copy(env = grounded(qualMap, c.env), tpA = c.tpA.substQualVars(qualMap), tpB = c.tpB.substQualVars(qualMap))
+  protected object Grounding {
+    def grounded(qualMap: QualMap, b: TemplateEnv.Binding): TemplateEnv.Binding =
+      b.copy(templateTp = b.templateTp.substQualVars(qualMap))
 
-  def testConstraints(idTemplateTyp: Identifier => QType, qualMap: QualMap, constraints: Seq[SubtypConstraint], TMP: Qualifier.Var => QualVarInfo)
+    class GroundedTemplateEnv(val name: String, val fullName: String,
+                              val bindings: Map[Identifier, TemplateEnv.Binding],
+                              val conditions: List[LeonExpr]) extends TemplateEnv {
+      protected def isComplete = true
+      def complete(xtor: extraction.Extractor): Unit = {}
+    }
+
+    def grounded(qualMap: QualMap, e: TemplateEnv): TemplateEnv =
+      new GroundedTemplateEnv(e.name, e.fullName, e.bindings.mapValues(grounded(qualMap, _)), e.conditions)
+
+    def grounded(qualMap: QualMap, c: SubtypConstraint): SubtypConstraint =
+      c.copy(env = grounded(qualMap, c.env), tpA = c.tpA.substQualVars(qualMap), tpB = c.tpB.substQualVars(qualMap))
+  }
+
+  def testConstraints(idTemplateTyp: Identifier => QType, qualMap: QualMap, constraints: Seq[SubtypConstraint])
                      (implicit ctx: Context): Boolean =
   {
     def reportViolation(constraint: SubtypConstraint, model: Model)(implicit lctx: LeonContext): Unit = {
-      val groundedC = grounded(qualMap, constraint)
+      val groundedC = Grounding.grounded(qualMap, constraint)
       val modelStr = model.seq.map { case (id, expr) => s"$id: ${expr.asString}" } .mkString("\n\t\t", "\n\t\t", "")
       ctx.error(i"constraint violation\n\t(abstract) $constraint\n\t(grounded) $groundedC\n\n\t" +
         i"Counterexample:$modelStr", constraint.pos)

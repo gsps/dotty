@@ -205,6 +205,18 @@ trait ASTExtractors {
     }
 
 
+    object ExInstantiation {
+      // TODO(Georg): Handle partial application of constructor -- or do we get that for free by virtue of desugaring?
+      def unapply(tree: tpd.Tree): Option[(Type, Seq[tpd.Tree])] = tree match {
+        case Apply(Select(New(tpt), CONSTRUCTOR), args) =>
+          Some((tpt.tpe, args))
+
+        case _ =>
+          None
+      }
+    }
+
+
 //    object ExAnd {
 //      def unapply(tree: tpd.Apply): Option[(tpd.Tree, tpd.Tree)] = tree match {
 //        case Apply(s @ Select(lhs, _), List(rhs)) if s.symbol == defn.Boolean_&& =>

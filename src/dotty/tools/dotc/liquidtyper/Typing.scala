@@ -77,7 +77,7 @@ object Typing {
       * State
       */
 
-    private var templateEnv = TemplateEnv.empty
+    private var templateEnv: TemplateEnv = TemplateEnv.Root
 
     /**
       * Actual tree traversal
@@ -102,7 +102,7 @@ object Typing {
 
       val optTemplateTyp: Option[QType] = tree match
       {
-        case Indexed(_, DefInfo(templateTp, _, children, _)) =>
+        case Indexed(_, DefInfo(templateTp, children, _)) =>
           for ((childEnv, childTree) <- children)
             traverseWithEnv(childTree, childEnv)
 
@@ -154,7 +154,7 @@ object Typing {
                     case _: QType.UninterpretedType =>
                       val thisVarId       = LeonExtractor.thisVarId(recvTree.tpe.widen.classSymbol,
                         recvTp.toUnqualifiedLeonType)
-                      val extractedRecv   = leonXtor.extractSubstitution(templateEnv, recvTree)
+                      val extractedRecv   = leonXtor.extractSubstitution(recvTree)
                       val substTemplateTp = templateTp.substTerms(Seq(thisVarId -> extractedRecv), ascriptionQualMap)
                       Some(substTemplateTp)
 
@@ -163,6 +163,10 @@ object Typing {
                   }
 
                 case _ =>
+                  // TODO(Georg): Add a special case for Select(New(*type*), CONSTRUCTOR) (see failing tests)
+                  // TODO(Georg): Unrelated: Should we disable primitive extraction if we already did further up?
+                  // TODO(Georg): Unrelated: Add qualifiers to UninterpretedTypes
+
                   // Default: Fall back to extracting the template type ... in high fidelity
                   // TODO(Georg): In case of type vars, We should actually force their qualifiers to be consistent
                   //  for each occurrence of the type var (rather than assigning fresh qual vars to each)
@@ -179,11 +183,15 @@ object Typing {
           val optFunTp = traverse(tree.fun, forceTemplateType = true)
           tree.args.foreach(traverse(_, forceTemplateType = true))
 
+          println(s"APPLY $tree")
+
           leonXtor.maybeExtractPrimitive(templateEnv, tree.tpe.widenDealias, tree) match {
             case Some(extractedQType) =>
+              println(s"\tprimitive! -> $extractedQType")
               Some(extractedQType)
 
             case None =>
+              println(s"\tnon-primitive.")
               val Some(funTp) = optFunTp
 //              println(s"\nNon-primitive Apply:\n\tTREE $tree\n\tFUN  ${tree.fun}\n\tFUN SYMBOL ${tree.fun.symbol}" +
 //                s"\n\tFUN TPE ${tree.fun.tpe}\n")
@@ -226,7 +234,7 @@ object Typing {
               val paramSyms     = paramSymss(applyDepth)
 
               val paramIds      = paramSyms.map(leonXtor.lookupSymbol)
-              val extractedArgs = tree.args.map(leonXtor.extractSubstitution(templateEnv, _))
+              val extractedArgs = tree.args.map(leonXtor.extractSubstitution)
               val resTemplTp    = funTp.resultType().substTerms(paramIds zip extractedArgs, ascriptionQualMap)
 
 //              println(i"\tparamIds = $paramIds\n\textractedArgs = $extractedArgs")
@@ -282,13 +290,6 @@ object Typing {
 
     // Putting it all together
     traverser.traverse(treeToType)
-
-    // Copy template types for trees that were not traversed anymore, but previously received a DefInfo
-    for (tree <- index.defInfo.keySet diff templateTyp.keySet) {
-      val DefInfo(qtp, env, _, _) = index.defInfo(tree)
-      templateTyp += tree -> qtp
-      templateEnv += tree -> env
-    }
 
 //    println("Template typs:")
 //    for ((tree, tpe) <- templateTyp) println(s"\t${tree.show}: ${tpe}")

@@ -245,4 +245,15 @@ class LiquidTyperPhaseTest extends DottyTest {
           |type Neg = { v: Int if v < 0 }
           |val negList: List[Neg] = nnList
           |}""".stripMargin)
+
+  @Test
+  def testPassesListLongWindedUsageOfElement() =
+    acceptedByLt(
+      s"""object Foo {
+          |$NonNegList
+          |val x: NonNeg = nnList.head
+          |val y = x
+          |def f(z: NonNeg): Unit = ()
+          |f(y)
+          |}""".stripMargin)
 }

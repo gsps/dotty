@@ -104,7 +104,7 @@ trait QTypeExtractor {
           case _                                            => None
         }
 
-        val qtp = leonXtor.maybeExtractType(env, tpe) match {
+        val qtp = leonXtor.maybeExtractType(tpe) match {
           case Some(leonType) =>
             val qualifier =
               if (freshQualVars)  freshQualVar(env, inParam, optAscription, tpe, pos)

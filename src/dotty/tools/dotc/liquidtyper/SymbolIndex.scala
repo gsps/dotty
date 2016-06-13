@@ -63,7 +63,7 @@ object SymbolIndex {
   import TemplateEnv.Binding
 
   // Provides some metadata on a defining tree, making it easier to later traverse them later
-  case class DefInfo(tp: QType, env: TemplateEnv, children: Seq[(TemplateEnv, Tree)], optSymbol: Option[Symbol])
+  case class DefInfo(tp: QType, children: Seq[(TemplateEnv, Tree)], optSymbol: Option[Symbol])
 
 
   protected abstract class IndexingTraversal(leonXtor: LeonExtractor, qtypeXtor: QTypeExtractor) extends TreeTraverser
@@ -77,7 +77,7 @@ object SymbolIndex {
       * State
       */
 
-    private var templateEnv = TemplateEnv.empty
+    private var templateEnv: TemplateEnv = TemplateEnv.Root
 
 
     /**
@@ -92,7 +92,7 @@ object SymbolIndex {
       val templateTp = qtypeXtor.extractMethodQType(tree.tpe, Some(tree.symbol), Some(paramSymss), templateEnv,
         tree.pos, freshQualVars = true, extractAscriptions = true)
 
-      val rhsTemplateEnv = templateTp match {
+      val (paramChildren, rhsTemplateEnv) = templateTp match {
         case funTemplateTp: QType.FunType =>
           /** Enter parameter definitions */
           // Since we already generated fresh qualifier variables for the overall MethodType, we need to match
@@ -105,87 +105,142 @@ object SymbolIndex {
               case _ => acc.reverse
             }
           def zipSafe[S, T](xs: List[S], ys: List[T]) = {
-            assert(xs.length == ys.length);
+            assert(xs.length == ys.length)
             xs zip ys
           }
 
           val templateParamss = unfoldParams(funTemplateTp, Nil)
-          var newBindings = List.empty[Binding]
+          var newBindings     = List.empty[Binding]
+          var paramChildren   = List.empty[(TemplateEnv, Tree)]
 
           for ((templParams, params) <- zipSafe(templateParamss, tree.vparamss)) {
             val paramGroupEnv = templateEnv.withBindings(newBindings.reverse)
             for (((id, templType), paramVd) <- zipSafe(templParams, params)) {
               assert(id.name equals paramVd.name.toString)
-              enterDefInfo(paramVd, DefInfo(templType, paramGroupEnv, Seq.empty, Some(paramVd.symbol)))
-              newBindings = qtypeXtor.newBinding(paramVd.symbol, templType) :: newBindings
+              // FIXME(Georg): Missing enterDef(paramVd), no?
+              enterDefInfo(paramVd, DefInfo(templType, Seq.empty, Some(paramVd.symbol)))
+              newBindings   = qtypeXtor.newBinding(paramVd.symbol, templType) :: newBindings
+              paramChildren = (paramGroupEnv, paramVd) :: paramChildren
             }
           }
 
-          templateEnv.withBindings(newBindings.reverse)
+          (paramChildren.reverse, templateEnv.withBindings(newBindings.reverse))
 
         case _ =>
-          templateEnv
+          (Seq(), templateEnv)
       }
 
       /** Traverse body with a potentially modified TemplateEnv */
       traverseWithEnv(tree.rhs, rhsTemplateEnv)(localCtx(tree))
-      DefInfo(templateTp, templateEnv, Seq((rhsTemplateEnv, tree.rhs)), Some(tree.symbol))
+      DefInfo(templateTp, paramChildren :+ (rhsTemplateEnv, tree.rhs), Some(tree.symbol))
     }
 
     @inline
     protected def handleValDef(tree: ValDef, fresh: Boolean)(implicit ctx: Context): DefInfo = {
-      val qtp = qtypeXtor.extractQType(tree.tpe, Some(tree.symbol), templateEnv, tree.pos,
+      val rhsEnv  = templateEnv.fresh(tree.rhs.symbol.name.toString)
+      val qtp     = qtypeXtor.extractQType(tree.tpe, Some(tree.symbol), templateEnv, tree.pos,
         freshQualVars = fresh, inParam = false, extractAscriptions = fresh)
-      traverseWithEnv(tree.rhs)(localCtx(tree))
-      DefInfo(qtp, templateEnv, Seq((templateEnv, tree.rhs)), Some(tree.symbol))
+      traverseWithEnv(tree.rhs, rhsEnv)(localCtx(tree))
+      DefInfo(qtp, Seq((rhsEnv, tree.rhs)), Some(tree.symbol))
+    }
+
+    // TODO(Georg): No idea whether this is actually in tune with Scala's semantics for initializers
+    protected def handleStatsInPackageOrTypeDef(stats: List[Tree], bodyEnv: TemplateEnv.TypeDefBody,
+                                                constructorBindings: Map[TermName, TemplateEnv.Binding])
+                                               (implicit ctx: Context): List[(TemplateEnv, Tree)] = {
+      var children = List[(TemplateEnv, Tree)]()
+
+      // Handle cases where we already registered the symbol and extracted the QType as part of the constructor
+      //  (This is basically just like handling a param ValDef in a DefDef.)
+      def tryHandleDerivedVparam(stat: Tree, statEnv: TemplateEnv): Boolean = stat match {
+        // XXX(Georg): The typer seems to eradicate every trace of the original symbol and/or the vparam ValDef that
+        //  derived vparams are pointing to. Thus, this somewhat hacky solution of comparing term names.
+        case vd: ValDef if constructorBindings contains vd.name =>
+          val binding = constructorBindings(vd.name)
+          val rhs     = vd.rhs
+          val rhsEnv  = statEnv.fresh(rhs.symbol.name.toString)
+          traverseWithEnv(rhs, rhsEnv)(localCtx(vd))
+          enterDefInfo(vd, DefInfo(binding.templateTp, Seq((rhsEnv, rhs)), Some(vd.symbol)))
+          true
+
+        case _ =>
+          false
+      }
+
+      for (stat <- stats) {
+        val statEnv = bodyEnv.fresh(stat.symbol.name.toString)
+        if (!tryHandleDerivedVparam(stat, statEnv)) {
+          traverseWithEnv(stat, statEnv) match {
+            case Some(DefInfo(qtp, _, Some(sym))) if stat.isInstanceOf[MemberDef] =>
+              bodyEnv.addBinding(qtypeXtor.newBinding(sym, qtp))
+            case _ => //
+          }
+        }
+        children = statEnv -> stat :: children
+      }
+
+      children
     }
 
     protected def handleTypeDef(td: TypeDef, templ: Template)(implicit ctx: Context): DefInfo = {
       val Trees.Template(constr, parents, self, _) = templ
       val templateTp = qtypeXtor.extractQType(td.tpe, Some(td.symbol), templateEnv, td.pos, freshQualVars = true)
+      val bodyEnv    = templateEnv.freshTypeDefBody("<Body>")
+      val body       = templ.body
 
-      // QType.UninterpretedType(defn.ObjectType, "Object")
       // XXX(Georg): Does thisTemplTp really need to be separate from templateTp?
       val thisTemplTp = qtypeXtor.extractQType(td.tpe, None, templateEnv, td.pos)
       val thisBinding = qtypeXtor.newBinding(
         LeonExtractor.thisVarId(td.symbol, thisTemplTp.toUnqualifiedLeonType), thisTemplTp, mutable = true)
-      val bodyEnv = templateEnv.withBindings(Seq(thisBinding))
-
-//      println(s"TYPEDEF named ${td.name}")
-//      println(s"\t>> Constructor: $constr")
-//      println(s"\t>> Parents: $parents")
-//      println(s"\t>> Self: $self")
-//      println(s"\t>> Self.tpe: ${self.tpe}")
-//      println(s"\t>> Body: ${templ.body}")
-//
-//      println(s"\t|| td.tpe: ${td.tpe}")
-//      println(s"\t|| td.tpe.widen: ${td.tpe.widen}")
+      bodyEnv.addBinding(thisBinding)
 
       @inline
-      def handle(implicit ctx: Context) {
-        traverse(constr)
+      def handle(implicit ctx: Context) = {
+        val constrBindings = {
+          val Some(DefInfo(_, constrChildren, _)) = traverseDI(constr)
+
+          // NOTE: This is somewhat brittle, as it relies on the fact that the rhsEnc is constructed with a single call
+          //  to .withBindings(...) and the implementation of TemplateEnv, which allows access to a single TemplateEnv's
+          //  localBindings even before the entire Indexing run is done.
+          val paramSyms       = constrChildren.init.map(_._2.symbol)
+          leonXtor.registerClass(td.symbol.asClass, paramSyms)
+
+          val localBindings   = constrChildren.last._1.asInstanceOf[TemplateEnv.AddBindings].localBindings
+          constrChildren.init.map { case (_, vd: ValDef) =>
+            vd.name -> localBindings(leonXtor.lookupSymbol(vd.symbol))
+          } .toMap
+        }
+
+        // TODO(Georg): Traverse parents and self with a template env that contains the constructor parameters
         for (parent <- parents)
           traverse(parent)
+
+        // TODO(Georg): Derive thisBinding from "self" (instead of ignoring it)
         traverse(self)
 
-        for (stat <- templ.body)
-          traverseWithEnv(stat, bodyEnv)
-
-//        // TODO(Georg): No idea whether this is actually in tune with Scala's semantics for initializers
-//        val body = templ.body
-//        var initEnv = bodyEnv
-//        val (def)
+        handleStatsInPackageOrTypeDef(body, bodyEnv, constrBindings)
       }
-      handle(localCtx(td))
+      val bodyChildren = handle(localCtx(td))
 
       val children = Seq((templateEnv, constr)) ++ parents.map((templateEnv, _)) ++
-        Seq((templateEnv, self)) ++ templ.body.map((bodyEnv, _))
-      DefInfo(templateTp, templateEnv, children, Some(td.symbol))
+        Seq((templateEnv, self)) ++ bodyChildren
+      DefInfo(templateTp, children, Some(td.symbol))
+    }
+
+    protected def handlePackageDef(pd: PackageDef)(implicit ctx: Context): DefInfo = {
+      val templateTp  = qtypeXtor.extractQType(pd.tpe, Some(pd.symbol), templateEnv, pd.pos, freshQualVars = false)
+
+      val bodyEnv  = templateEnv.freshTypeDefBody("<Body>")
+      val children = handleStatsInPackageOrTypeDef(pd.stats, bodyEnv, Map.empty)
+
+      DefInfo(templateTp, children, Some(pd.symbol))
     }
 
 
     protected def handleBlock(tree: Block)(implicit ctx: Context): DefInfo = {
-      var oldTemplateEnv = templateEnv
+      val oldTemplateEnv = templateEnv
+      val blockEnv = templateEnv.freshTypeDefBody("<Block>")
+      templateEnv = blockEnv
 
       val children = tree.stats.map { stat =>
         val child = (templateEnv, stat)
@@ -194,13 +249,17 @@ object SymbolIndex {
             val vdInfo = handleValDef(vd, fresh = !(vd.mods is Mutable))
             enterDefInfo(vd, vdInfo)
             templateEnv = templateEnv.withBinding(qtypeXtor.newBinding(vd.symbol, vdInfo.tp))
+
           case stat: Assign =>
             // Ignore (mutable ValDefs are trivially qualified for now, so this is sound)
+
           case dd: DefDef =>
-            // TODO(Georg): Handle as part any other top-level DefDef?
-            traverseWithEnv(dd)(localCtx(tree))
+            val ddEnv = blockEnv.fresh(dd.symbol.name.toString)
+            val Some(DefInfo(qtp, _, Some(sym))) = traverseWithEnv(dd, ddEnv)
+            blockEnv.addBinding(qtypeXtor.newBinding(sym, qtp))
+
           case _          =>
-            // TODO(Georg): Also allow statements other than ValDefs and Assigns
+            // TODO(Georg): Are we missing anything else other than Imports?
             ltypr.println(s"Unsupported statement in Block: ${stat.show}\n\t$stat")
             throw new NotImplementedError("Statements of a Block must be ValDefs, for now.")
         }
@@ -214,7 +273,7 @@ object SymbolIndex {
 
       val templateTp = qtypeXtor.extractQType(tree.tpe, None, templateEnv, tree.pos,
         freshQualVars = true, extractAscriptions = false)
-      DefInfo(templateTp, templateEnv, children :+ exprChild, None)
+      DefInfo(templateTp, children :+ exprChild, None)
     }
 
     protected def handleIf(tree: If)(implicit ctx: Context): DefInfo = {
@@ -225,7 +284,7 @@ object SymbolIndex {
       val thenEnv = traverseWithCond(tree.thenp, tree.cond, negated = false)
       val elseEnv = traverseWithCond(tree.elsep, tree.cond, negated = true)
 
-      DefInfo(templateTp, templateEnv, Seq((templateEnv, tree.cond), (thenEnv, tree.thenp), (elseEnv, tree.elsep)), None)
+      DefInfo(templateTp, Seq((templateEnv, tree.cond), (thenEnv, tree.thenp), (elseEnv, tree.elsep)), None)
     }
 
 
@@ -234,11 +293,12 @@ object SymbolIndex {
       */
 
     @inline
-    protected def traverseWithEnv(tree: Tree, newEnv: TemplateEnv = templateEnv)(implicit ctx: Context) = {
+    protected def traverseWithEnv(tree: Tree, newEnv: TemplateEnv)(implicit ctx: Context) = {
       val oldTemplateEnv = templateEnv
       templateEnv = newEnv
-      traverse(tree)
+      val result = traverseDI(tree)
       templateEnv = oldTemplateEnv
+      result
     }
 
     @inline
@@ -248,42 +308,56 @@ object SymbolIndex {
       newEnv
     }
 
-    override def traverse(tree: Tree)(implicit ctx: Context): Unit = {
+    def traverseDI(tree: Tree)(implicit ctx: Context): Option[DefInfo] = {
+      def DI(defInfo: DefInfo): Option[DefInfo] = {
+        enterDefInfo(tree, defInfo)
+        Some(defInfo)
+      }
 
       tree match {
         case tree: DefDef =>
           enterDef(tree.symbol, tree)
-          enterDefInfo(tree, handleDefDef(tree))
+          DI(handleDefDef(tree))
 
         case tree: ValDef =>
           // NOTE: We only get here for ValDefs that are neither parameters of methods nor ValDefs in a Block
           enterDef(tree.symbol, tree)
           // XXX(Georg): Do we ever want fresh to be false here?
-          enterDefInfo(tree, handleValDef(tree, fresh = true))
+          DI(handleValDef(tree, fresh = true))
 
         case tree @ Trees.TypeDef(_, templ: Template) =>
           enterDef(tree.symbol, tree)
-          enterDefInfo(tree, handleTypeDef(tree, templ))
+          DI(handleTypeDef(tree, templ))
+
+        case tree: PackageDef =>
+          enterDef(tree.symbol, tree)
+          DI(handlePackageDef(tree))
 
 
         case tree: Block =>
-          enterDefInfo(tree, handleBlock(tree))
+          DI(handleBlock(tree))
 
         case tree: If =>
-          enterDefInfo(tree, handleIf(tree))
+          DI(handleIf(tree))
 
 
         case tree: Ident if tree.isTerm =>
           enterRef(tree.symbol, tree)
+          None
 
         case tree: Select if tree.isTerm =>
           enterRef(tree.symbol, tree)
           traverseChildren(tree)
+          None
 
         case _ =>
           traverseChildren(tree)
+          None
       }
     }
+
+    override def traverse(tree: Tree)(implicit ctx: Context): Unit =
+      traverseDI(tree)
   }
 
   // A dummy symbol that owns all the synthetic param symbols (to hide them)
@@ -343,7 +417,7 @@ object SymbolIndex {
       def create(defSym: Symbol, tp: Type) = {
         val paramSymss = freshParamSymss(defSym, tp)
         val templateTp = qtypeXtor.extractMethodQType(tp, Some(defSym), Some(paramSymss),
-          TemplateEnv.empty, NoPosition,
+          TemplateEnv.Root, NoPosition,
           freshQualVars = false, extractAscriptions = false)
 
         syntheticDefTyp(defSym) = templateTp

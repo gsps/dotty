@@ -35,15 +35,26 @@ class LiquidTyper extends Phase with IdentityDenotTransformer {
     val tree    = unit.tpdTree
     val xtor    = new Extractor
 
-    val index   = SymbolIndex(xtor, xtor, tree)
+
+    /**
+      * >>> Extraction of types and trees
+      * */
+
+    val index               = SymbolIndex(xtor, xtor, tree)
+
     xtor.notifyIndexComplete()
 
-    val typing  = Typing(xtor, xtor, index, xtor.ascriptionQualMap, tree)
-
-    val constraintsRetyper = runRetyperConstraintGenerator(typing.templateEnv.apply, xtor)
+    val typing              = Typing(xtor, xtor, index, xtor.ascriptionQualMap, tree)
+    val constraintsRetyper  = runRetyperConstraintGenerator(typing.templateEnv.apply, xtor)
 
     xtor.notifyTypingComplete()
+
     typing.templateEnv.values.foreach(_.complete(xtor))
+
+    /**
+      * <<<
+      * */
+
 
     ctx.debugLiquidTyping = Some(typing)
     ctx.echo(s"result of $unit after liquid template type assignment:")
@@ -51,14 +62,23 @@ class LiquidTyper extends Phase with IdentityDenotTransformer {
 
     val constraintsBase = new ConstraintGenerator(typing).apply(NoConstraints, tree)
 
-    val consAStr      = constraintsBase.map(_.show).mkString("\n\t\t")
-    val consBStr      = constraintsRetyper.map(_.show).mkString("\n\t\t")
-    ltypr.println(s"\tGenerated constraints:\n\t\t$consAStr\n\t===== via retyper: =====\n\t$consBStr\n")
+    val consAStr        = constraintsBase.map(_.show).mkString("\n\t  ")
+    val consBStr        = constraintsRetyper.map(_.show).mkString("\n\t  ")
+    ltypr.println(s"\tGenerated constraints:\n\t  $consAStr\n\n\t===== via retyper: =====\n\t  $consBStr\n")
+
+
+    /**
+      * >>> Inference
+      */
 
     def idTemplateTyp(id: Identifier): QType = index.symTemplateTyp(xtor.lookupIdentifier(id)).get
     val inferenceRes  = new PreciseInference(xtor.extractionInfo, idTemplateTyp(_), typing)
       .apply((constraintsBase union constraintsRetyper).toList)
 //    ltypr.println(s"\tPreciseInference result: $inferenceRes")
+
+    /**
+      * <<<
+      */
 
     if (!inferenceRes)
       ctx.echo("Liquid type check failed!")
@@ -311,9 +331,9 @@ object LiquidTyper {
     import ast.untpd
     import scala.collection.mutable
 
-    var templateEnv = TemplateEnv.empty
-    var pos = util.Positions.NoPosition
-    val recordedConstraints = new mutable.ArrayBuffer[SubtypConstraint]
+    var templateEnv: TemplateEnv                      = TemplateEnv.Root
+    var pos                                           = util.Positions.NoPosition
+    val recordedConstraints                           = new mutable.ArrayBuffer[SubtypConstraint]
     var uncommitedConstraints: List[SubtypConstraint] = Nil
 
     class RecordingTypeComparer(tree: tpd.Tree, initCtx: Context) extends TypeComparer(initCtx) {
@@ -353,7 +373,7 @@ object LiquidTyper {
                 inParam = true, extractAscriptions = true)
               val qtp2 = qtypeXtor.extractQType(tp2, None, templateEnv, pos, freshQualVars = true,
                 inParam = true, extractAscriptions = true)
-              println(i"\t $wtp1 / $qtp1  <:  $wtp2 / $qtp2")
+//              println(i"\t $wtp1 / $qtp1  <:  $wtp2 / $qtp2")
 
               uncommitedConstraints = uncommitedConstraints :+ SubtypConstraint(treeToEnv(tree), qtp1, qtp2, tree.pos)
             }

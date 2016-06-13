@@ -27,11 +27,17 @@ case class UninterpretedLeonType(original: DottyType, prettyName: String) extend
   }
 }
 
-case class ObjectLiteral(value: Identifier, tpe: LeonType) extends LeonExpr with LeonTerminal with LeonPrettyPrintable {
-  val getType = tpe
+case class ObjectLiteral(ref: Identifier, fieldExprs: Map[Identifier, LeonExpr])
+    extends LeonExpr with LeonTerminal with LeonPrettyPrintable {
+  require(ref.getType.isInstanceOf[UninterpretedLeonType])
+  val getType = ref.getType
+
+  // TODO(Georg): A bit messy; can we clean this up?
+  protected val uType = ref.getType.asInstanceOf[UninterpretedLeonType]
 
   def printWith(implicit pctx: LeonPrinterContext): Unit = {
-    p"$value"
+    val fieldsStr = fieldExprs.map { case (field, expr) => s"$field:=$expr" } .mkString(", ")
+    p"($ref:${uType.prettyName}{$fieldsStr})"
   }
 }
 
@@ -137,8 +143,8 @@ object QType {
 
   // Complex QType:
   final case class FunType(params: Map[Identifier, QType], result: QType) extends QType {
-    def resultEnv(outerEnv: TemplateEnv = TemplateEnv.empty) =
-      outerEnv.withBindings(params map { case (id, qtp) => TemplateEnv.Binding(id, qtp, mutable = false) })
+    def resultEnv(parentEnv: TemplateEnv) =
+      parentEnv.withBindings(params map { case (id, qtp) => TemplateEnv.Binding(id, qtp, mutable = false) })
   }
 
   // Extractor for simple QTypes that have a non-trivial qualifier
@@ -155,65 +161,152 @@ object QType {
   * along with a number of boolean expressions, representing the path condition.
   * */
 
-case class TemplateEnv(bindings: Map[Identifier, TemplateEnv.Binding], conditionTrees: List[(DottyTree, Boolean)])
-    extends Showable
+abstract class TemplateEnv extends Showable
 {
+  import extraction.Extractor
   import TemplateEnv.Binding
 
   def toText(printer: Printer): Text = printer.toText(this)
 
+  val name: String
+  val fullName: String
+
+  def bindings: Map[Identifier, Binding]
+  def conditions: List[LeonExpr]
+
+  protected def isComplete: Boolean
+  def complete(xtor: Extractor): Unit
+
+
   def isVariable(id: Identifier): Boolean =
     bindings contains id
 
-  lazy val variables: Set[Identifier] =
+  def variables: Set[Identifier] =
     bindings.keySet
 
+
+  def fresh(name: String): TemplateEnv =
+    new TemplateEnv.NamedEnv(this, name)
+
+  def freshTypeDefBody(name: String): TemplateEnv.TypeDefBody =
+    new TemplateEnv.TypeDefBody(this, name)
+
+
   def withBinding(newBinding: Binding): TemplateEnv =
-    copy(bindings = bindings + (newBinding.identifier -> newBinding))
+    new TemplateEnv.AddBindings(this, Seq(newBinding))
 
   def withBindings(newBindings: Traversable[Binding]): TemplateEnv =
-    copy(bindings = bindings ++ newBindings.map(b => b.identifier -> b))
+    new TemplateEnv.AddBindings(this, newBindings)
 
-  def withCondition(newCondTree: DottyTree, negated: Boolean): TemplateEnv = {
-    copy(conditionTrees = (newCondTree, negated) :: conditionTrees)
-  }
-
-
-  // Conditions are extracted lazily
-
-  import extraction.Extractor
-
-  // Have the conditions been extracted yet?
-  private var isComplete_ = false
-  private var conditions_ : List[LeonExpr] = _
-  def conditions = conditions_
-
-  def complete(xtor: Extractor): Unit =
-    if (!isComplete_) {
-      if (!xtor.isComplete)
-        throw new IllegalStateException("Cannot complete TemplateEnv unless all symbols are known to LeonExtractor.")
-      isComplete_ = true
-      conditions_ = conditionTrees.map { case (tree, negated) =>
-        // NOTE: *this* might actually be an extension of the template environment in which the condition occurred
-        val expr = xtor.extractCondition(this, tree)
-        if (negated) Constructors.not(expr) else expr
-      }
-    }
-
-  // FIXME(Georg): The complete-behavior above breaks copy()
-  // Here's an ad-hoc alternative
-  def copyExceptBindings(newBindings: Map[Identifier, TemplateEnv.Binding]): TemplateEnv = {
-    val source = this
-    new TemplateEnv(newBindings, conditionTrees) {
-      var isComplete_ = source.isComplete_
-      var conditions_ = source.conditions_
-      override def conditions = conditions_
-    }
-  }
+  def withCondition(newCondTree: DottyTree, negated: Boolean): TemplateEnv =
+    new TemplateEnv.AddCondition(this, newCondTree, negated)
 }
 
 object TemplateEnv {
-  val empty = TemplateEnv(Map.empty, List.empty)
+  import extraction.Extractor
+  import scala.collection.mutable
+
+  object Root extends TemplateEnv {
+    val name = "<RootEnv>"
+    val fullName = name
+    def bindings = Map.empty
+    def conditions = List.empty
+    protected def isComplete = true
+    def complete(xtor: Extractor): Unit = {}
+  }
+
+  abstract class ChainedTemplateEnv(val parent: TemplateEnv) extends TemplateEnv {
+    val name = parent.name
+    val fullName = parent.fullName
+
+    def bindings    = parent.bindings
+    def conditions  = parent.conditions
+
+    def localBindings: Map[Identifier, Binding] = Map.empty
+
+    // Conditions are extracted lazily
+
+    // Have the conditions been extracted yet?
+    protected var isComplete_ = false
+    protected def isComplete = isComplete_
+
+    protected def completeConditions_(xtor: Extractor): Unit = {}
+    protected def completeBindings_(): Unit = {}
+
+    def complete(xtor: Extractor): Unit =
+      if (!isComplete_) {
+        if (!xtor.allSymbolsKnown)
+          throw new IllegalStateException("Cannot complete TemplateEnv until all symbols are known to LeonExtractor.")
+        parent.complete(xtor)
+        completeBindings_()
+        completeConditions_(xtor)
+        isComplete_ = true
+      }
+  }
+
+  trait WithBindings { self: ChainedTemplateEnv =>
+    /** New bindings */
+    protected val newBindings: Traversable[Binding]
+
+    override def localBindings = newBindings.map(binding => binding.identifier -> binding).toMap
+
+    protected var bindings_ : Map[Identifier, Binding] = null
+
+    override def bindings =
+      if (bindings_ == null) throw new IllegalStateException("Bindings are only available after completion.")
+      else bindings_
+
+    override protected def completeBindings_(): Unit = {
+      bindings_ = parent.bindings ++ localBindings
+    }
+  }
+
+  trait WithCondition { self: ChainedTemplateEnv =>
+    /** New condition */
+    protected val newCondTree: DottyTree
+    protected val negated: Boolean
+
+    protected var conditions_ : List[LeonExpr] = null
+
+    override def conditions =
+      if (conditions_ == null) throw new IllegalStateException("Conditions are only available after chaining and " +
+        "completion.")
+      else conditions_
+
+    override protected def completeConditions_(xtor: Extractor): Unit = {
+      // NOTE: *this* might actually be an extension of the template environment in which the condition occurred
+      val exprInner = xtor.extractCondition(newCondTree)
+      val expr = if (negated) Constructors.not(exprInner) else exprInner
+      conditions_ = parent.conditions :+ expr
+    }
+  }
+
+  sealed class AddBindings(parent: TemplateEnv, protected val newBindings: Traversable[Binding])
+    extends ChainedTemplateEnv(parent) with WithBindings
+  {
+    // Useful for bindings added onto already complete TemplateEnvs after the initial extraction phase:
+    if (parent.isComplete) {
+      completeBindings_()
+      isComplete_ = true
+    }
+  }
+
+  class AddCondition(parent: TemplateEnv, protected val newCondTree: DottyTree, protected val negated: Boolean)
+    extends ChainedTemplateEnv(parent) with WithCondition
+
+  class NamedEnv(parent: TemplateEnv, override val name: String) extends ChainedTemplateEnv(parent) {
+    override val fullName = s"${parent.fullName}.$name"
+  }
+
+  class TypeDefBody(parent: TemplateEnv, name: String) extends NamedEnv(parent, name) with WithBindings
+  {
+    // As opposed to TemplatEnv.AddBindings, here we don't know the bindings ahead of time, but add them after
+    //  instantiation. This is necessary, as the bindings in TypeDefs can only be added once the respective definitions
+    //  have been traversed.
+    protected val newBindings: mutable.ArrayBuffer[Binding] = mutable.ArrayBuffer[Binding]()
+
+    def addBinding(binding: Binding): Unit = newBindings += binding
+  }
 
   // symbol comes from Scala/Dotty, identifier lives in the extracted (Leon) universe
   case class Binding(identifier: Identifier, templateTp: QType, mutable: Boolean, symbolOpt: Option[Symbol] = None) {
@@ -221,7 +314,6 @@ object TemplateEnv {
       case that: Binding  => this.identifier.equals(that.identifier)
       case _              => false
     }
-
     override def hashCode() = identifier.hashCode()
   }
 }
