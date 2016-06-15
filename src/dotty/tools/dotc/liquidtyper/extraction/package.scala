@@ -22,8 +22,9 @@ package object extraction {
       if (!isComplete_) {
         if (!xtor.allSymbolsKnown)
           throw new IllegalStateException("Cannot complete QualVarInfo unless all symbols are known to LeonExtractor.")
-        isComplete_ = true
+        env.complete(xtor)
         optAscription_ = optAscriptionTree.map(xtor.extractAscription)
+        isComplete_ = true
       }
   }
 

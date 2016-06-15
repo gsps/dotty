@@ -2,7 +2,7 @@ package dotty.tools
 package dotc.liquidtyper
 
 import dotc.ast.tpd.{Tree => DottyTree}
-import dotc.core.Symbols.Symbol
+import dotc.core.Symbols.{ClassSymbol, Symbol}
 import dotc.core.Types.{Type => DottyType}
 import dotc.printing.Texts.Text
 import dotc.printing.{Printer, Showable}
@@ -21,24 +21,29 @@ import leon.purescala.Types.{TypeTree => LeonType}
 /** Ad-hoc extension to Leon's Expressions and TypeTrees */
 
 // FIXME(Georg): Due to the nature of DottyType we apparently can't rely on equality -- find a workaround for this
-case class UninterpretedLeonType(original: DottyType, prettyName: String) extends LeonType with LeonPrettyPrintable {
+case class LeonObjectType(classSymbol: ClassSymbol) extends LeonType with LeonPrettyPrintable {
   def printWith(implicit pctx: LeonPrinterContext): Unit = {
-    p"UninterpLeon<$prettyName>"
+    p"O<$classSymbol>"
+  }
+}
+
+case class UnsupportedLeonType(name: String) extends LeonType with LeonPrettyPrintable {
+  def printWith(implicit pctx: LeonPrinterContext): Unit = {
+    p"UnsupL<$name>"
   }
 }
 
 case class ObjectLiteral(ref: Identifier, fieldExprs: Map[Identifier, LeonExpr])
     extends LeonExpr with LeonTerminal with LeonPrettyPrintable {
-  require(ref.getType.isInstanceOf[UninterpretedLeonType])
+  require(ref.getType.isInstanceOf[LeonObjectType])
   val getType = ref.getType
-
-  // TODO(Georg): A bit messy; can we clean this up?
-  protected val uType = ref.getType.asInstanceOf[UninterpretedLeonType]
+  protected val classSymbol = ref.getType.asInstanceOf[LeonObjectType].classSymbol
 
   def printWith(implicit pctx: LeonPrinterContext): Unit = {
     val fieldsStr = fieldExprs.map { case (field, expr) => s"$field:=$expr" } .mkString(", ")
-    p"($ref:${uType.prettyName}{$fieldsStr})"
+    p"(new $classSymbol [$fieldsStr])"
   }
+  override def isSimpleExpr: Boolean = true
 }
 
 case class FieldGetter(recv: LeonExpr, field: Identifier)
@@ -69,7 +74,7 @@ sealed abstract class QType
       case BaseType(underlying, qualVar: Qualifier.Var) =>
         qualVar.qualifierVars
 
-      case tpe: UninterpretedType =>
+      case tpe: UnsupportedType =>
         Set.empty
 
       case _ =>
@@ -84,9 +89,8 @@ sealed abstract class QType
       case BaseType(underlying, _) =>
         underlying
 
-      case UninterpretedType(dottyTpe, prettyName) =>
-//        throw new IllegalArgumentException(s"Cannot translate QType.UnsupportedType( $dottyTpe ) to LeonType!")
-        UninterpretedLeonType(dottyTpe, prettyName)
+      case UnsupportedType(name) =>
+        UnsupportedLeonType(name)
     }
 
   // Introduces PendingSubstitutions for each pair in substs that might apply to some free variables in a qualifier.
@@ -110,7 +114,7 @@ sealed abstract class QType
         val relevant = substs.filter { case (id,_) => freeVars.contains(id) }
         if (relevant.isEmpty) tpe else BaseType(underlying, oldQual.substTerms(relevant))
 
-      case tpe: UninterpretedType =>
+      case tpe: UnsupportedType =>
         tpe
     }
 
@@ -129,15 +133,20 @@ sealed abstract class QType
   // The result type at level `level`; i.o.w., strip away a number of FunTypes
   def resultType(level: Int = 1): QType = this match {
     case FunType(_, result) if level > 0 => result.resultType(level-1)
-    case _ if level > 0 => throw new IllegalArgumentException("Cannot strip away parameter group from non-FunType!")
+    case _ if level > 0 =>
+      throw new IllegalArgumentException(s"Cannot strip away parameter group from non-FunType $this!")
     case _ => this
   }
 }
 
 object QType {
   // Simple QTypes:
-  // FIXME(Georg): Due to the nature of DottyType we apparently can't rely on equality -- find a workaround for this
-  final case class UninterpretedType(original: DottyType, prettyName: String) extends QType
+  // NOTE: Migrating UntinterpretedType to BaseType (UninterpretedLeonType remains and is used as underlying type)
+  // TODO(Georg): Should we reintroduce UninterpretedType? -- UnsupportedType is conceptually for NoType and similar
+  //  cases, UninterpretedType could be used for non-locally defined Types (standard library, collections, etc.)
+//  final case class UninterpretedType(original: DottyType, prettyName: String) extends QType
+
+  final case class UnsupportedType(name: String) extends QType
 
   final case class BaseType(underlying: LeonType, qualifier: Qualifier) extends QType
 
@@ -298,6 +307,7 @@ object TemplateEnv {
     override val fullName = s"${parent.fullName}.$name"
   }
 
+  // FIXME(Georg): TypeDefBody is not a great name; It's used for TypeDefs, PackageDefs and Blocks
   class TypeDefBody(parent: TemplateEnv, name: String) extends NamedEnv(parent, name) with WithBindings
   {
     // As opposed to TemplatEnv.AddBindings, here we don't know the bindings ahead of time, but add them after
@@ -331,6 +341,8 @@ sealed abstract class Qualifier extends Showable {
       in.qualifierVars
     case Qualifier.Disj(envQuals) =>
       envQuals.map(_._2.qualifierVars).reduce(_ union _)
+    case Qualifier.Conj(quals) =>
+      quals.map(_.qualifierVars).reduce(_ union _)
     case _ =>
       Set.empty
   }
@@ -343,6 +355,8 @@ sealed abstract class Qualifier extends Showable {
         (in.freeVars(qualMap, default) - varId) union variablesOf(replacement)
       case Qualifier.Disj(envQuals) =>
         envQuals.map(_._2.freeVars(qualMap, default)).reduce(_ union _)
+      case Qualifier.Conj(quals) =>
+        quals.map(_.freeVars(qualMap, default)).reduce(_ union _)
       case Qualifier.Var(qualVarId) if qualMap.nonEmpty && qualMap.contains(qualVarId) =>
         qualMap(qualVarId).freeVars(qualMap, default)
       case _ =>
@@ -376,9 +390,11 @@ object Qualifier {
   // Represents a substitution of a term-level variable with symbol `varSym` by a term `replacement`
   final case class PendingSubst(varId: Identifier, replacement: LeonExpr, in: Qualifier) extends Qualifier
 
+  // We only use Disj and Conj for precise type inference:
   // Disj((e1, q1), (e2, q2)) expresses { v : B | e1 && q1 || e2 && q2 }
-  //  (We only use Disj for precise type inference)
   final case class Disj(envQuals: Seq[(TemplateEnv, Qualifier)]) extends Qualifier
+  // Conj(q1, q2) expresses { v : B | q1 && q2 }
+  final case class Conj(quals: Seq[Qualifier]) extends Qualifier
 }
 
 

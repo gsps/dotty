@@ -91,6 +91,7 @@ object SymbolIndex {
       val paramSymss = tree.vparamss.map(_.map(_.symbol))
       val templateTp = qtypeXtor.extractMethodQType(tree.tpe, Some(tree.symbol), Some(paramSymss), templateEnv,
         tree.pos, freshQualVars = true, extractAscriptions = true)
+//      println(s"DefDef ${tree.show}\n\t* ${tree.rhs}\n\t* ${paramSymss}\n\t* ${templateTp}")
 
       val (paramChildren, rhsTemplateEnv) = templateTp match {
         case funTemplateTp: QType.FunType =>
@@ -117,7 +118,8 @@ object SymbolIndex {
             val paramGroupEnv = templateEnv.withBindings(newBindings.reverse)
             for (((id, templType), paramVd) <- zipSafe(templParams, params)) {
               assert(id.name equals paramVd.name.toString)
-              // FIXME(Georg): Missing enterDef(paramVd), no?
+              // FIXME(Georg): Missing enterDef(paramVd), no? / Verify this
+              enterDef(paramVd.symbol, paramVd)
               enterDefInfo(paramVd, DefInfo(templType, Seq.empty, Some(paramVd.symbol)))
               newBindings   = qtypeXtor.newBinding(paramVd.symbol, templType) :: newBindings
               paramChildren = (paramGroupEnv, paramVd) :: paramChildren
@@ -147,8 +149,12 @@ object SymbolIndex {
     // TODO(Georg): No idea whether this is actually in tune with Scala's semantics for initializers
     protected def handleStatsInPackageOrTypeDef(stats: List[Tree], bodyEnv: TemplateEnv.TypeDefBody,
                                                 constructorBindings: Map[TermName, TemplateEnv.Binding])
-                                               (implicit ctx: Context): List[(TemplateEnv, Tree)] = {
-      var children = List[(TemplateEnv, Tree)]()
+                                               (implicit ctx: Context):
+        (List[(TemplateEnv, Tree)], Map[Symbol, ValDef], Set[Symbol]) =
+    {
+      var children        = List[(TemplateEnv, Tree)]()
+      var derivedVparams  = Map.empty[Symbol, ValDef]   // Constructor vparam symbol -> derived vparam ValDef
+      var stableFields    = Set[Symbol]()               // ValDef symbol for which isStable == true
 
       // Handle cases where we already registered the symbol and extracted the QType as part of the constructor
       //  (This is basically just like handling a param ValDef in a DefDef.)
@@ -160,7 +166,21 @@ object SymbolIndex {
           val rhs     = vd.rhs
           val rhsEnv  = statEnv.fresh(rhs.symbol.name.toString)
           traverseWithEnv(rhs, rhsEnv)(localCtx(vd))
+
+          // NOTE: The symbol of the ValDef and its corresponding constructor parameter differ, which is why we need
+          //  to go through this whole ordeal. We also need a separate id for this new symbol, although it gets the
+          //  same leon type.
+          val derivedBinding = qtypeXtor.newBinding(vd.symbol, binding.templateTp)
+          bodyEnv.addBinding(derivedBinding)
+//          println(s"ENTERING DEF INFO FOR SYNCED VALDEF ${vd.show} / ${vd.symbol} /" +
+//            s" ${derivedBinding.identifier.uniqueName} => ${binding.templateTp}")
+          enterDef(vd.symbol, vd)
           enterDefInfo(vd, DefInfo(binding.templateTp, Seq((rhsEnv, rhs)), Some(vd.symbol)))
+
+          derivedVparams  += binding.symbolOpt.get -> vd
+          assert(vd.symbol.isStable)
+          stableFields    += vd.symbol
+
           true
 
         case _ =>
@@ -169,17 +189,20 @@ object SymbolIndex {
 
       for (stat <- stats) {
         val statEnv = bodyEnv.fresh(stat.symbol.name.toString)
-        if (!tryHandleDerivedVparam(stat, statEnv)) {
+        if (constructorBindings.isEmpty || !tryHandleDerivedVparam(stat, statEnv)) {
           traverseWithEnv(stat, statEnv) match {
             case Some(DefInfo(qtp, _, Some(sym))) if stat.isInstanceOf[MemberDef] =>
               bodyEnv.addBinding(qtypeXtor.newBinding(sym, qtp))
+              if (stat.isInstanceOf[ValDef] && stat.symbol.isStable)
+                stableFields += stat.symbol
+
             case _ => //
           }
         }
         children = statEnv -> stat :: children
       }
 
-      children
+      (children.reverse, derivedVparams, stableFields)
     }
 
     protected def handleTypeDef(td: TypeDef, templ: Template)(implicit ctx: Context): DefInfo = {
@@ -188,39 +211,52 @@ object SymbolIndex {
       val bodyEnv    = templateEnv.freshTypeDefBody("<Body>")
       val body       = templ.body
 
+      @inline
+      def handle(implicit ctx: Context) = {
+        // Constructor
+        val (constrBindings, paramSyms) = {
+          val Some(ditmp @ DefInfo(_, constrChildren, _)) = traverseDI(constr)
+
+          // NOTE: This is somewhat brittle, as it relies on the fact that the rhsEnc is constructed with a single call
+          //  to .withBindings(...) and the implementation of TemplateEnv, which allows access to a single TemplateEnv's
+          //  localBindings even before the entire Indexing run is done.
+
+          val paramSyms       = constrChildren.init.map(_._2.symbol)
+
+          val localBindings   = constrChildren.last._1.asInstanceOf[TemplateEnv.AddBindings].localBindings
+          val constrBindings  = constrChildren.init.map { case (_, vd: ValDef) =>
+            vd.name -> localBindings(leonXtor.lookupSymbol(vd.symbol))
+          }
+
+          (constrBindings.toMap, paramSyms)
+        }
+
+        // Parents (extends ...)
+        // TODO(Georg): Traverse parents and self with a template env that contains the constructor parameters
+        for (parent <- parents)
+          traverse(parent)
+
+        // Explicit self reference
+        // TODO(Georg): Derive thisBinding from "self" (instead of ignoring it)
+        traverse(self)
+
+        // Body
+        val (bodyChildren, derivedVparams, stableFields) = handleStatsInPackageOrTypeDef(body, bodyEnv, constrBindings)
+
+        // Register the class, now that we have the accessor ValDefs for the constructor params
+        val constrFields = paramSyms.map(derivedVparams(_).symbol)
+        leonXtor.registerClass(td.symbol.asClass, constrFields, stableFields)
+
+        bodyChildren
+      }
+      val bodyChildren = handle(localCtx(td))
+
+      // Add the this binding (need to do this after registerClass, as thisVarIs only legal for registered classes)
       // XXX(Georg): Does thisTemplTp really need to be separate from templateTp?
       val thisTemplTp = qtypeXtor.extractQType(td.tpe, None, templateEnv, td.pos)
       val thisBinding = qtypeXtor.newBinding(
         LeonExtractor.thisVarId(td.symbol, thisTemplTp.toUnqualifiedLeonType), thisTemplTp, mutable = true)
       bodyEnv.addBinding(thisBinding)
-
-      @inline
-      def handle(implicit ctx: Context) = {
-        val constrBindings = {
-          val Some(DefInfo(_, constrChildren, _)) = traverseDI(constr)
-
-          // NOTE: This is somewhat brittle, as it relies on the fact that the rhsEnc is constructed with a single call
-          //  to .withBindings(...) and the implementation of TemplateEnv, which allows access to a single TemplateEnv's
-          //  localBindings even before the entire Indexing run is done.
-          val paramSyms       = constrChildren.init.map(_._2.symbol)
-          leonXtor.registerClass(td.symbol.asClass, paramSyms)
-
-          val localBindings   = constrChildren.last._1.asInstanceOf[TemplateEnv.AddBindings].localBindings
-          constrChildren.init.map { case (_, vd: ValDef) =>
-            vd.name -> localBindings(leonXtor.lookupSymbol(vd.symbol))
-          } .toMap
-        }
-
-        // TODO(Georg): Traverse parents and self with a template env that contains the constructor parameters
-        for (parent <- parents)
-          traverse(parent)
-
-        // TODO(Georg): Derive thisBinding from "self" (instead of ignoring it)
-        traverse(self)
-
-        handleStatsInPackageOrTypeDef(body, bodyEnv, constrBindings)
-      }
-      val bodyChildren = handle(localCtx(td))
 
       val children = Seq((templateEnv, constr)) ++ parents.map((templateEnv, _)) ++
         Seq((templateEnv, self)) ++ bodyChildren
@@ -228,15 +264,16 @@ object SymbolIndex {
     }
 
     protected def handlePackageDef(pd: PackageDef)(implicit ctx: Context): DefInfo = {
-      val templateTp  = qtypeXtor.extractQType(pd.tpe, Some(pd.symbol), templateEnv, pd.pos, freshQualVars = false)
+      val templateTp        = qtypeXtor.extractQType(pd.tpe, Some(pd.symbol), templateEnv, pd.pos, freshQualVars = false)
 
-      val bodyEnv  = templateEnv.freshTypeDefBody("<Body>")
-      val children = handleStatsInPackageOrTypeDef(pd.stats, bodyEnv, Map.empty)
+      val bodyEnv           = templateEnv.freshTypeDefBody("<Body>")
+      val (children, _, _)  = handleStatsInPackageOrTypeDef(pd.stats, bodyEnv, Map.empty)
 
       DefInfo(templateTp, children, Some(pd.symbol))
     }
 
 
+    // FIXME(Georg): Should disallow returns within Blocks
     protected def handleBlock(tree: Block)(implicit ctx: Context): DefInfo = {
       val oldTemplateEnv = templateEnv
       val blockEnv = templateEnv.freshTypeDefBody("<Block>")
@@ -286,6 +323,22 @@ object SymbolIndex {
 
       DefInfo(templateTp, Seq((templateEnv, tree.cond), (thenEnv, tree.thenp), (elseEnv, tree.elsep)), None)
     }
+
+//    // TODO(Georg): Implement
+//    protected def handleClosure(tree: Closure)(implicit ctx: Context): DefInfo = {
+//      println(s"@ closure $tree")
+//      traverseChildren(tree)
+//
+//      // We'll retrace the steps the Dotty Typer would have taken if the closure was "absolutely standard"
+//      //  If this succeeds, we can just reuse the qualifiers of the MethodType
+//      val defaultFunTpe = tree.meth.tpe.widen.toFunctionType(tree.env.length)
+//      println(s"RECOVERING?\n\t* ${tree.tpe}\n\t* $defaultFunTpe")
+//      if (defaultFunTpe =:= tree.tpe) {
+//        // Rebuild the QType.FunType while matching the type and qualifiers of meth.tpe
+//      } else {
+//        // Just use a freshly extracted QType
+//      }
+//    }
 
 
     /**
@@ -339,6 +392,9 @@ object SymbolIndex {
 
         case tree: If =>
           DI(handleIf(tree))
+
+//        case tree: Closure =>
+//          DI(handleClosure(tree))
 
 
         case tree: Ident if tree.isTerm =>
@@ -442,7 +498,9 @@ object SymbolIndex {
 //    println(s"SYMBOLDEFS:\n$defn")
 //    println(s"SYMBOLREFS:\n$refs")
 //    println(s"SYNTH SYMBOLS:\n$syntheticParams")
-//    println(s"SCOPE:"); for ((tree, treeScope) <- defInfo) println(i"\t$tree ---> ${treeScope.tp}")
+//    println(s"SCOPE:");
+//    for ((tree, treeScope) <- defInfo.toSeq.sortBy(p => if (p._1.pos.exists) p._1.pos.start else 0))
+//      println(i"\t\u001B[1m${tree}\u001B[21m --> ${treeScope.tp}\n")
 
     // TODO(Georg): Remove defn, refs and syntheticParams from the result
     new SymbolIndex(

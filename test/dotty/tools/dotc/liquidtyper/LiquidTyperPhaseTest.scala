@@ -76,11 +76,12 @@ class LiquidTyperPhaseTest extends DottyTest {
   def testPassesMax() =
     acceptedByLt(
       """object Foo {
-        |def max(x: Int, y: Int): { v: Int if v >= x && v >= y } =
+        |def max(x: Int, y: Int): { v: Int if v >= x && v >= y && (v == x || v == y) } =
         |  if (x > y) x else y
         |}""".stripMargin
     )
 
+  // FIXME(Georg): Discard the repetition of "n > 0" in K$7: n$5 > 0 && n$5 > 0 && v$1 >= 0 || n$5 <= 0 && v$1 == 0
   @Test
   def testPassesRecAdd() =
     acceptedByLt(

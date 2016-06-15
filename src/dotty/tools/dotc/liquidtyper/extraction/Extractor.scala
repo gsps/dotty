@@ -69,7 +69,8 @@ class Extractor(implicit protected val ctx: Context) extends LeonExtractor with 
 
   def extractionInfo =
     if (isComplete)
-      ExtractionInfo(qualVarInfo_.toMap, state.symsToIds.bSet.toSet, state.bindingIds.toSet, state.unboundIds.toSet)
+      ExtractionInfo(qualVarInfo_.toMap, state.symsToIds.bSet.toSet, state.unboundIds.toSet,
+        state.classDefs.toSeq.map(_._2))
     else
       throw new IllegalStateException("Can only compute extraction info once the extractor knows all symbols and " +
         "qualifier variables.")
@@ -77,7 +78,7 @@ class Extractor(implicit protected val ctx: Context) extends LeonExtractor with 
 
 case class ExtractionInfo(qualVarInfo: Map[Qualifier.Var, QualVarInfo],
                           boundIds: Set[Identifier],
-                          bindingIds: Set[Identifier],
-                          unboundIds: Set[Identifier]) {
+                          unboundIds: Set[Identifier],
+                          classDefs: Seq[LeonExtractor.ClassDef]) {
   lazy val qualVars = qualVarInfo.keySet
 }

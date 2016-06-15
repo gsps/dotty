@@ -428,24 +428,31 @@ class PlainPrinter(_ctx: Context) extends Printer {
 
   def envBindingsTxt(env: TemplateEnv, verbose: Boolean = true): Text = {
     env match {
-      case env: TemplateEnv.TypeDefBody => envBindingsTxt(env.parent, verbose = false)
+      case env: TemplateEnv.TypeDefBody =>
+        envBindingsTxt(env.parent, verbose = false)
 
-      case _ if verbose =>
+      case _ =>
         val (prefix, addBindings) = env match {
-          case env: TemplateEnv.ChainedTemplateEnv  => (envBindingsTxt(env.parent, verbose = true), env.localBindings)
-          case _                                    => (Text(), env.bindings)
+          case env: TemplateEnv.NamedEnv =>
+            val noBindings = Map.empty[liquidtyper.Identifier, TemplateEnv.Binding]
+            (Text(Seq(envBindingsTxt(env.parent, verbose), env.name), "; "), noBindings)
+          case env: TemplateEnv.ChainedTemplateEnv =>
+            (envBindingsTxt(env.parent, verbose), env.localBindings)
+          case _ =>
+            (Text(), env.bindings)
         }
-        val txts = addBindings.toSeq map { case (id, binding) => id.uniqueName ~ ": " ~ toText(binding.templateTp) }
-        Text(prefix +: txts, "; ")
-
-      case env: TemplateEnv.NamedEnv  => Text(Seq(envBindingsTxt(env.parent, verbose = false), env.name), "; ")
-      case _                          => Text()
+        if (verbose) {
+          val txts = addBindings.toSeq map { case (id, binding) => id.uniqueName ~ ": " ~ toText(binding.templateTp) }
+          Text(prefix +: txts, "; ")
+        } else {
+          prefix
+        }
     }
   }
 
   def envText(env: TemplateEnv): Text = {
     val pcTxts = env.conditions map toText
-    envBindingsTxt(env) ~ Text(pcTxts , "; ")
+    Text(envBindingsTxt(env) +: pcTxts, "; ")
   }
 
   def toText(env: TemplateEnv): Text =
@@ -467,12 +474,14 @@ class PlainPrinter(_ctx: Context) extends Printer {
     case Qualifier.ExtractedExpr(expr) =>
       toText(expr)
     case Qualifier.Disj(envQuals) =>
-      Text(envQuals map disjClauseText, " || ")
+      "(" ~ Text(envQuals map disjClauseText, " || ") ~ ")"
+    case Qualifier.Conj(quals) =>
+      "(" ~ Text(quals map toText, " && ") ~ ")"
   }
 
   def toText(leonTp: LeonType): Text = leonTp match {
-    case liquidtyper.UninterpretedLeonType(original, _) =>
-      ("UL<" ~ toText(original) ~ ">").close
+    case liquidtyper.LeonObjectType(sym) =>
+      ("LO<" ~ toText(sym) ~ ">").close
     case _ =>
       leonTp.toString.close
   }
@@ -490,8 +499,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
           (toText(pName) ~ ": " ~ toText(pQtp)).close
       }
       (Text(paramTxts, " => ") ~ " => " ~ toText(result)).close
-    case QType.UninterpretedType(original, _) =>
-      ("U<" ~ toText(original) ~ ">").close
+    case QType.UnsupportedType(name) =>
+      ("Unsup<" ~ name ~ ">").close
   }
 
   def toText(constraint: Constraint): Text = constraint match {

@@ -27,7 +27,9 @@ trait LiquidContext { this: Context =>
 
   // Returns whether the given type is a valid baseType of a LiquidType
   def canBuildLtFrom(tp: Type): Boolean =
-    ltBaseTypes.exists(tp <:< _)
+//    ltBaseTypes.exists(tp <:< _)
+    // TODO(Georg): Check whether it is safe to allow basically any class here
+    ltBaseTypes.exists(tp <:< _) || tp <:< ctx.definitions.AnyRefType
 
 
   var debugLiquidTyping: Option[Typing] = None

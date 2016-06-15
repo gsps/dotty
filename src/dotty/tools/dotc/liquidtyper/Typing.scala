@@ -6,17 +6,14 @@ import ast.tpd._
 import config.Printers.ltypr
 import core.Contexts._
 import core.Decorators._
-import core.Flags.Mutable
+import core.StdNames.nme
 import core.Symbols._
-import core.Types.{Type => DottyType, MethodType => DottyMethodType, TermRef, TypeRef}
-import util.Positions.{NoPosition, Position}
 
 import extraction.{LeonExtractor, QTypeExtractor}
-import leon.purescala.Expressions.{Expr => LeonExpr}
-import leon.purescala.Types.{Untyped => LeonUntyped}
 
-import scala.annotation.tailrec
 import scala.collection.mutable
+
+// TODO(Georg): Should we disable primitive extraction if we already did further up?
 
 
 //
@@ -70,6 +67,17 @@ object Typing {
           case tree: TypeDef if tree.rhs.isInstanceOf[Template] => fetch(tree)
           case _                                                => None
         }
+      }
+    }
+
+    object PreciseObjectQualifier {
+      import leon.purescala.Expressions.{Equals, Variable}
+      def unapply(qual: Qualifier)(implicit ctx: Context): Option[ObjectLiteral] = qual match {
+        case Qualifier.ExtractedExpr(Equals(Variable(varId), obj: ObjectLiteral))
+            if LeonExtractor.subjectVarIds contains varId =>
+          Some(obj)
+        case _ =>
+          None
       }
     }
 
@@ -131,16 +139,17 @@ object Typing {
           Some(templateTp)
 
         case tree: Select =>
+          val recvTree      = tree.qualifier
+          val Some(recvTp)  = traverse(recvTree, forceTemplateType = true)
+          val selectedName  = tree.name
+
           // First try: Primitives (e.g. unary operations on base types, field getters)
           leonXtor.maybeExtractPrimitive(templateEnv, tree.tpe.widenDealias, tree) match {
             case Some(extractedQType) =>
               Some(extractedQType)
 
             case None =>
-              // Second try: Get a method's template type and substitute the receiver
-              val recvTree      = tree.qualifier
-              val Some(recvTp)  = traverse(recvTree, forceTemplateType = true)
-
+              // Second try: Get a method's template type and maybe substitute the receiver
               index.symTemplateTyp(tree.symbol) match {
 //                case Some(templateTp: QType.UninterpretedType) =>
 //                  val thisVarId       = LeonExtractor.thisVarId(recvTree.tpe.widen.classSymbol,
@@ -151,22 +160,36 @@ object Typing {
 
                 case Some(templateTp) =>
                   recvTp match {
-                    case _: QType.UninterpretedType =>
+                    case _ if recvTree.isInstanceOf[New] =>
+                      // No need to extract anything here, just make sure the constructor function signature gets out
+                      //  so we can constrain argument with parameter types later
+                      Some(templateTp)
+
+                    case QType.BaseType(_: LeonObjectType, recvQualifier) =>
+                      // Method call -- Substitute the receiver
                       val thisVarId       = LeonExtractor.thisVarId(recvTree.tpe.widen.classSymbol,
                         recvTp.toUnqualifiedLeonType)
-                      val extractedRecv   = leonXtor.extractSubstitution(recvTree)
+                      val extractedRecv   = recvQualifier match {
+                        case PreciseObjectQualifier(obj)  => obj
+                        case _                            => leonXtor.extractSubstitution(recvTree)
+                      }
                       val substTemplateTp = templateTp.substTerms(Seq(thisVarId -> extractedRecv), ascriptionQualMap)
                       Some(substTemplateTp)
 
+                    case recvTp: QType.FunType if selectedName == nme.apply =>
+                      // Function call
+                      // FIXME(Georg): The actual param symbols used in the end by the Apply handling code do not
+                      //  correspond to the params of this QType.FunType -- this is due to the overall apply.fun.symbol
+                      //  still being scala.FunctionN.apply, which by now has some synthetic symbols.
+                      //  Might be a problem later.
+                      Some(recvTp)
+
                     case _ =>
+                      // TODO(Georg): Is this case impossible?
                       Some(templateTp)
                   }
 
                 case _ =>
-                  // TODO(Georg): Add a special case for Select(New(*type*), CONSTRUCTOR) (see failing tests)
-                  // TODO(Georg): Unrelated: Should we disable primitive extraction if we already did further up?
-                  // TODO(Georg): Unrelated: Add qualifiers to UninterpretedTypes
-
                   // Default: Fall back to extracting the template type ... in high fidelity
                   // TODO(Georg): In case of type vars, We should actually force their qualifiers to be consistent
                   //  for each occurrence of the type var (rather than assigning fresh qual vars to each)
@@ -183,15 +206,11 @@ object Typing {
           val optFunTp = traverse(tree.fun, forceTemplateType = true)
           tree.args.foreach(traverse(_, forceTemplateType = true))
 
-          println(s"APPLY $tree")
-
           leonXtor.maybeExtractPrimitive(templateEnv, tree.tpe.widenDealias, tree) match {
             case Some(extractedQType) =>
-              println(s"\tprimitive! -> $extractedQType")
               Some(extractedQType)
 
             case None =>
-              println(s"\tnon-primitive.")
               val Some(funTp) = optFunTp
 //              println(s"\nNon-primitive Apply:\n\tTREE $tree\n\tFUN  ${tree.fun}\n\tFUN SYMBOL ${tree.fun.symbol}" +
 //                s"\n\tFUN TPE ${tree.fun.tpe}\n")
@@ -237,11 +256,20 @@ object Typing {
               val extractedArgs = tree.args.map(leonXtor.extractSubstitution)
               val resTemplTp    = funTp.resultType().substTerms(paramIds zip extractedArgs, ascriptionQualMap)
 
+//              println(s"Apply ${tree.show}\n\t* ${tree.fun}\n\t* ${paramSymss}\n\t* ${funTp}\n\t* ${resTemplTp}")
 //              println(i"\tparamIds = $paramIds\n\textractedArgs = $extractedArgs")
 //              println(i"\tfunTp = $funTp")
 //              println(i"\tresTemplTp = $resTemplTp")
               Some(resTemplTp)
           }
+
+        case tree: TypeApply =>
+          traverse(tree.fun)
+          tree.args.foreach(traverse)
+
+          val templateTp = qtypeXtor.extractQType(tree.tpe, None, templateEnv, tree.pos,
+            freshQualVars = true, extractAscriptions = true)
+          Some(templateTp)
 
         case _ =>
           traverseChildren(tree)

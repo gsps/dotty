@@ -2,6 +2,7 @@ package dotty.tools
 package dotc.liquidtyper.extraction
 
 import dotc.core.Contexts._
+import dotc.core.Flags._
 import dotc.core.Symbols._
 import dotc.core.StdNames.nme
 import dotc.core.Types.{Type => DottyType}
@@ -28,6 +29,7 @@ import scala.util.{Try, Success, Failure}
 trait LeonExtractor extends ASTExtractors {
 
   import ExpressionExtractors._
+  import LeonExtractor.ClassDef
 
   implicit protected val ctx: Context
 
@@ -70,9 +72,6 @@ trait LeonExtractor extends ASTExtractors {
   }
 
 
-
-  case class ClassDef(symbol: ClassSymbol, id: Identifier, fields: List[Identifier])
-
   // TODO(Georg): Remove bindingIds, we don't use them, do we?
   case class ExtractionState(symsToIds: Bijection[Symbol, Identifier], bindingIds: mutable.Set[Identifier],
                              classDefs: Bijection[Identifier, ClassDef],
@@ -87,11 +86,13 @@ trait LeonExtractor extends ASTExtractors {
       }
     }
 
-    def registerClass(sym: ClassSymbol, fields: Seq[Symbol]) = {
-      val classId = symsToIds.toB(sym)
-      val fieldIds = fields.map(symsToIds.toB)
+    def registerClass(sym: ClassSymbol, constrFields: Seq[Symbol], stableFields: Set[Symbol]) = {
+      require(constrFields.toSet subsetOf stableFields)
+      val classId         = symsToIds.toB(sym)
+      val constrFieldIds  = constrFields.map(symsToIds.toB)
+      val stableFieldIds  = stableFields.map(symsToIds.toB)
       classDefs.cachedB(classId) {
-        ClassDef(sym, classId, fieldIds.toList)
+        ClassDef(sym, classId, constrFieldIds, stableFieldIds)
       }
     }
 
@@ -195,11 +196,12 @@ trait LeonExtractor extends ASTExtractors {
 
     @inline
     protected def extractThis(tree0: DottyTree, sym: Symbol)
-                             (implicit state: ExtractionState, env: TemplateEnv): Try[LeonExpr] =
+                             (implicit state: ExtractionState, env: TemplateEnv): Try[LeonExpr] = {
       extractAnyType(tree0, sym.info)(state, tree0.pos).flatMap {
-        case leonTp: UninterpretedLeonType => Try(Variable(LeonExtractor.thisVarId(sym, leonTp)).setPos(tree0.pos))
+        case leonTp: LeonObjectType => Try(Variable(LeonExtractor.thisVarId(sym, leonTp)).setPos(tree0.pos))
         case leonTp => failExpr(tree0, s"Cannot extract this for type $leonTp")
       }
+    }
 
     @inline
     protected def extractLiteral(tree0: DottyTree)
@@ -319,9 +321,16 @@ trait LeonExtractor extends ASTExtractors {
 
 
         case _ => (recv, sym, args) match {
-          case (IsTyped(recv, UninterpretedLeonType(dottyRecvTpe, _)), fieldSym, Nil) if fieldSym.isStable =>
+          case (IsTyped(recv, LeonObjectType(classSym)), fieldSym, Nil) =>
+            val classId = state.symsToIds.toB(classSym)
+            val fieldId = state.symsToIds.toB(fieldSym)
+            // Here we basically check whether the given class has a registered (and thus stable) field "fieldSym"
             // TODO(Georg): Add a check that fieldSym's class is a subtype of AnyRef?
-            FieldGetter(recv, state.symsToIds.toB(fieldSym))
+            if (state.classDefs.toB(classId).stableFields contains fieldId) {
+              FieldGetter(recv, state.symsToIds.toB(fieldSym))
+            } else {
+              Try(outOfSubsetError(tree0, s"Class $classId does not have stable field $fieldId"))
+            }
 
           case _ =>
             Try(outOfSubsetError(tree0, "Not a primitive a primitive call (or not implemented yet)"))
@@ -332,22 +341,42 @@ trait LeonExtractor extends ASTExtractors {
     protected def extractInstantiation(tree0: DottyTree, tpe: DottyType, args: Seq[DottyTree])
                                       (implicit state: ExtractionState, env: TemplateEnv): Try[LeonExpr] =
       for (leonTp <- extractAnyType(tree0, tpe)(state, NoPosition)
-           if leonTp.isInstanceOf[UninterpretedLeonType];
+           if leonTp.isInstanceOf[LeonObjectType];
            classId = state.symsToIds.toB(tpe.classSymbol);
            classDef = state.classDefs.toB(classId);
-           ref = FreshIdentifier(s"<${leonTp.asInstanceOf[UninterpretedLeonType].prettyName}$$inst>", leonTp);
+           ref = FreshIdentifier(s"<${leonTp.asInstanceOf[LeonObjectType].classSymbol}#inst>", leonTp);
            argExprs <- Try(args.map(extractTree(_).get));
-           _ = assert(argExprs.length == classDef.fields.length))
-        yield ObjectLiteral(ref, (classDef.fields zip argExprs).toMap)
+           _ = assert(argExprs.length == classDef.constrFields.length))
+        yield ObjectLiteral(ref, (classDef.constrFields zip argExprs).toMap)
 
 
     @inline
     protected def extractAnyType(t: DottyTree)(implicit state: ExtractionState): Try[LeonType] =
       extractAnyType(t, t.tpe)(state, t.pos)
 
+    // TODO(Georg): Lift the restriction on other valid classes
+    // TODO(Georg): Since class types may be extracted before they are registered (if the class type is mentioned
+    //  before the corresponding TypeDef), it might currently happen that an UnsupportedType is inserted when it really
+    //  shouldnt. For now, a partial manual workaround is to defined classes in a stratified manner.
+    protected def isSupportedClass(tpe: DottyType): Boolean = {
+      val isRegisteredClass = state.symsToIds.getB(tpe.classSymbol).exists(state.classDefs.containsA)
+      val isSeqClass = tpe <:< ctx.definitions.SeqType
+      val isModule = tpe.classSymbol is Module
+      (isRegisteredClass || isSeqClass) && !isModule
+    }
+
     protected def extractAnyType(tree0: DottyTree, tpe: DottyType)
                                 (implicit state: ExtractionState, pos: Position): Try[LeonType] =
-      extractType(tree0, tpe) recover { case _ => UninterpretedLeonType(tpe, tpe.show) }
+      extractType(tree0, tpe) recover { case _ =>
+        val tpe1 = tpe match {
+          case tpe: dotc.core.Types.ClassInfo => tpe.typeRef
+          case _ => tpe
+        }
+        if (tpe.classSymbol.exists && tpe1 <:< ctx.definitions.AnyRefType && isSupportedClass(tpe1))
+          LeonObjectType(tpe.classSymbol.asClass)
+        else
+          UnsupportedLeonType(tpe.show)
+      }
 
 
     @inline
@@ -406,7 +435,7 @@ trait LeonExtractor extends ASTExtractors {
   object OptionalTypeExtraction extends TypeExtraction with ExtractionMode.Optional {
     // NOTE: We only extract base types here (no uninterpreted ones)
     def extract(state: ExtractionState, env: TemplateEnv, tpe: DottyType): Option[LeonType] =
-      extractType(EmptyDottyTree, tpe)(state, NoPosition)
+      extractAnyType(EmptyDottyTree, tpe)(state, NoPosition)
   }
 
   object SubstitutionExtraction extends TermExtraction with ExtractionMode.Weak
@@ -420,7 +449,7 @@ trait LeonExtractor extends ASTExtractors {
                                             (implicit state: ExtractionState, env: TemplateEnv) =
       tree0 match {
         case dotc.ast.Trees.Ident(dotc.liquidtyper.SubjectVarName) =>
-          val leonType      = extractType(tree0, tree0.tpe.widen)(state, tree0.pos)
+          val leonType = extractAnyType(tree0, tree0.tpe.widenDealias)(state, tree0.pos)
           Variable(LeonExtractor.subjectVarId(leonType)).setPos(tree0.pos)
 
         case _ =>
@@ -482,29 +511,30 @@ trait LeonExtractor extends ASTExtractors {
 
   // Primitive, reference and constant extractions
 
-  private def simpleLeonTypeToQType(leonType: LeonType, qualifier: Qualifier): QType = leonType match {
+  private def simpleLeonTypeToQType(leonType: LeonType, qualifier: Qualifier): Try[QType] = Try(leonType match {
     case CharType | Int32Type | BooleanType | UnitType  => QType.BaseType(leonType, qualifier)
-    case UninterpretedLeonType(original, prettyName)    => QType.UninterpretedType(original, prettyName)
+    case loTp: LeonObjectType                           => QType.BaseType(loTp, qualifier)
     case _                                              =>
       throw new IllegalArgumentException(s"Leon type $leonType is not simple.")
-  }
+  })
 
-  private def preciseQType(tpe: DottyType, rhsExpr: LeonExpr): QType = {
+  private def preciseQType(tpe: DottyType, rhsExpr: LeonExpr): Option[QType] = {
     val expectedTpe = AnyTypeExtraction.extract(state, TemplateEnv.Root, tpe)
     assert(expectedTpe == rhsExpr.getType,
       s"Expected type $expectedTpe didn't match the extracted type ${rhsExpr.getType}")
     val preciseExpr = Equals(Variable(LeonExtractor.subjectVarId(expectedTpe)), rhsExpr)
-    simpleLeonTypeToQType(expectedTpe, Qualifier.ExtractedExpr(preciseExpr))
+    simpleLeonTypeToQType(expectedTpe, Qualifier.ExtractedExpr(preciseExpr)).toOption
   }
 
   def maybeExtractPrimitive(env: TemplateEnv, tpe: => DottyType, tree: DottyTree): Option[QType] =
-    PrimitiveExtraction.extract(state, env, tree).map(preciseQType(tpe, _))
+    PrimitiveExtraction.extract(state, env, tree).flatMap(preciseQType(tpe, _))
 
   def maybeExtractSimpleIdent(env: TemplateEnv, tpe: => DottyType, tree: DottyTree): Option[QType] =
-    SimpleIdentExtraction.extract(state, env, tree).map(preciseQType(tpe, _))
+    SimpleIdentExtraction.extract(state, env, tree).flatMap(preciseQType(tpe, _))
 
   def extractLiteral(env: TemplateEnv, tpe: DottyType, tree: DottyTree): QType =
     preciseQType(tpe, LiteralExtraction.extract(state, env, tree))
+      .getOrElse(throw new AssertionError(s"Couldn't establish precise QType of Literal $tree. Complex Literal type?!"))
 
 
   def registerSymbol(sym: Symbol, tpe: LeonType, isBinding: Boolean): Identifier =
@@ -516,12 +546,19 @@ trait LeonExtractor extends ASTExtractors {
   def lookupIdentifier(id: Identifier): Symbol =
     state.symsToIds.toA(id)
 
-  def registerClass(sym: ClassSymbol, fields: Seq[Symbol]): ClassDef =
-    state.registerClass(sym, fields)
+  def registerClass(sym: ClassSymbol, constrFields: Seq[Symbol], stableFields: Set[Symbol]): ClassDef = {
+    val classDef = state.registerClass(sym, constrFields, stableFields)
+    LeonExtractor.subjectVarId(LeonObjectType(sym))
+    LeonExtractor.thisVarId(sym, LeonObjectType(sym))
+    classDef
+  }
 }
 
 
 object LeonExtractor {
+
+  case class ClassDef(symbol: ClassSymbol, id: Identifier, constrFields: Seq[Identifier], stableFields: Set[Identifier])
+
 
   private def newSubjectVarId(leonTp: LeonType) = FreshIdentifier(SubjectVarName.toString, leonTp)
 
@@ -533,9 +570,11 @@ object LeonExtractor {
   def subjectVarId(leonTp: LeonType): Identifier = (leonTp, _subjectVarId.get(leonTp)) match {
     case (_, Some(varId)) =>
       varId
-    case (ult: UninterpretedLeonType, None) =>
-      val varId = newSubjectVarId(ult)
-      _subjectVarId(ult) = varId
+//    case (loTp: LeonObjectType, None) =>
+    case (tp: LeonType, None) =>
+      // FIXME(Georg): Questionable whether we should really let all types (including UnsupportedLeonType) pass
+      val varId = newSubjectVarId(tp)
+      _subjectVarId(tp) = varId
       varId
     case _ =>
       throw new IllegalArgumentException(s"Subject variables for type $leonTp are unsupported.")
@@ -549,11 +588,12 @@ object LeonExtractor {
   def thisVarIds: Set[Identifier] = _thisVarId.values.toSet
 
   // TODO(Georg): Get rid of the typeSym here once we have equality for UninterpretedLeonType
+  // ^^^ We can do this now!
   def thisVarId(typeSym: Symbol, leonTp: LeonType): Identifier = (leonTp, _thisVarId.get(typeSym)) match {
     case (_, Some(varId)) =>
       varId
-    case (ult: UninterpretedLeonType, None) =>
-      val varId = newThisVarId(ult)
+    case (loTp: LeonObjectType, None) =>
+      val varId = newThisVarId(loTp)
       _thisVarId(typeSym) = varId
       varId
     case _ =>

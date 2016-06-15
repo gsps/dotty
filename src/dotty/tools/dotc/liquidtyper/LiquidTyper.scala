@@ -30,10 +30,24 @@ class LiquidTyper extends Phase with IdentityDenotTransformer {
 
   override def phaseName: String = "liquidtyper"
 
+//  // XXX(Georg): The outer PackageDef is pretty uninteresting and causes a lot of verbosity, so we skip it for now.
+//  protected def getRootTree(unit: CompilationUnit): tpd.Tree = {
+//    unit.tpdTree match {
+//      case PackageDef(_, importTree :: valDefTree :: typeDefTree :: Nil ) =>
+//        typeDefTree
+//      case _ =>
+//        throw new AssertionError("Couldn't get the root tree.")
+//    }
+//  }
+//  // XXX(Georg): Also kind of a hack, but again, for the sake of presentation, we cut away all the uninteresting bits
+//  protected def getProgramTrees(unit: CompilationUnit)(implicit ctx: Context): List[tpd.Tree] =
+//    getRootTree(unit).asInstanceOf[tpd.TypeDef].rhs.asInstanceOf[tpd.Template].body
+
   override def run(implicit ctx: Context): Unit = {
     val unit    = ctx.compilationUnit
     val tree    = unit.tpdTree
     val xtor    = new Extractor
+//    println(tree)
 
 
     /**
@@ -57,13 +71,15 @@ class LiquidTyper extends Phase with IdentityDenotTransformer {
 
 
     ctx.debugLiquidTyping = Some(typing)
-    ctx.echo(s"result of $unit after liquid template type assignment:")
-    ctx.echo(unit.tpdTree.show(ctx) + "\n")
+    ctx.echo(s"result of $unit after liquid template type assignment:\n\u001B[1m")
+    ctx.echo(unit.tpdTree.show(ctx))
+//    getProgramTrees(unit).foreach(t => ctx.echo(t.show(ctx)))
+    ctx.echo("\u001B[21m")
 
     val constraintsBase = new ConstraintGenerator(typing).apply(NoConstraints, tree)
 
-    val consAStr        = constraintsBase.map(_.show).mkString("\n\t  ")
-    val consBStr        = constraintsRetyper.map(_.show).mkString("\n\t  ")
+    val consAStr        = constraintsBase.toList.sortBy(_.pos.start).map(_.show).mkString("\n\t  ")
+    val consBStr        = constraintsRetyper.toList.sortBy(_.pos.start).map(_.show).mkString("\n\t  ")
     ltypr.println(s"\tGenerated constraints:\n\t  $consAStr\n\n\t===== via retyper: =====\n\t  $consBStr\n")
 
 
@@ -216,13 +232,14 @@ object LiquidTyper {
     // NOTE: doValDef is only called for ValDefs outside of DefDef parameter lists
     def doValDef(tree: ValDef)(implicit ctx: Context): ConstraintSet = {
       if (!tree.rhs.tpe.exists) {
-        ctx.warning("rhs is untyped, skipping", tree.rhs.pos)
+        ctx.debugwarn("rhs is untyped, skipping", tree.rhs.pos)
         return NoConstraints
       }
 
       val env = templateEnv(tree)
       val templTp = templateType(tree)
       val LiquidTypeInfo(rhsTemplTp, rhsCs, _) = typeInfo(tree.rhs)
+
       rhsCs +
         WfConstraint(env, templTp, tree.pos) +
         SubtypConstraint(env, rhsTemplTp, templTp, tree.pos)

@@ -4,8 +4,9 @@ package extraction
 
 import ast.tpd.{Tree => DottyTree}
 import core.Contexts.Context
+import core.Names
 import core.Symbols.Symbol
-import core.Types.{Type, MethodType, LiquidType}
+import core.Types.{Type, LiquidType, MethodType, PolyType, RefinedType, TypeBounds, TypeRef}
 import util.Positions.Position
 
 import TemplateEnv.Binding
@@ -19,7 +20,7 @@ trait QTypeExtractor {
                              originalTp: Type, pos: Position): Qualifier.Var
 
   /**
-    * Helpers
+    * Binding helpers
     */
 
   // For bindings for which we don't have any symbols at all
@@ -48,12 +49,24 @@ trait QTypeExtractor {
     qtp
   }
 
+  /**
+    * Helpers
+    */
+
+  protected def stripPolyType(tpe: Type): Type = tpe match {
+    case tpe: PolyType  => tpe.resultType
+    case _              => tpe
+  }
+
   def extractMethodQType(tpe: Type, optSym: Option[Symbol],
                          optParamSymss: Option[Seq[Seq[Symbol]]], env: TemplateEnv, pos: Position,
                          freshQualVars: Boolean = false,
                          inParam: Boolean = false,
                          extractAscriptions: Boolean = false): QType =
-    tpe.widen match {
+    stripPolyType(tpe.widen) match {
+      case FunctionAsMethodType(methTpe) =>
+        extractMethodQType(methTpe, optSym, optParamSymss, env, pos, freshQualVars, inParam, extractAscriptions)
+
       case methTpe: MethodType =>
         val (bindings, optParamSymss1) = optParamSymss match {
           case Some(paramSyms :: paramSymss) =>
@@ -87,15 +100,11 @@ trait QTypeExtractor {
                    freshQualVars: Boolean = false,
                    inParam: Boolean = false,
                    extractAscriptions: Boolean = false): QType =
-    tpe.widenDealias match {
+    tpe.followTypeAlias.widenDealias match {
+      case FunctionAsMethodType(methTpe) =>
+        extractMethodQType(methTpe, None, None, env, pos, freshQualVars, inParam, extractAscriptions)
+
       case methTpe: MethodType =>
-//        val params = (methTpe.paramNames zip methTpe.paramTypes).map { case (pName, pTpe) =>
-//          val paramQType = extractQType(pTpe, env, freshQualVars, inParam = true, extractAscriptions)
-//          (FreshIdentifier(pName.toString), paramQType)
-//        } .toMap
-//        val newEnv      = env.withBindings(params map { case (id, qtp) => newBinding(id, qtp, mutable = false) })
-//        val resultQType = extractQType(methTpe.resultType, newEnv, freshQualVars, inParam, extractAscriptions)
-//        QType.FunType(params, resultQType)
         extractMethodQType(methTpe, None, None, env, pos, freshQualVars, inParam, extractAscriptions)
 
       case tpe =>
@@ -105,6 +114,11 @@ trait QTypeExtractor {
         }
 
         val qtp = leonXtor.maybeExtractType(tpe) match {
+          case Some(_: UnsupportedLeonType) =>
+            if (optAscription.isDefined)
+              println(s"WARNING: Ignoring ascription of unsupported type $tpe")
+            QType.UnsupportedType(tpe.show)
+
           case Some(leonType) =>
             val qualifier =
               if (freshQualVars)  freshQualVar(env, inParam, optAscription, tpe, pos)
@@ -112,11 +126,45 @@ trait QTypeExtractor {
             QType.BaseType(leonType, qualifier)
 
           case _ =>
-            if (optAscription.isDefined)
-              println(s"WARNING: Ignoring ascription of unsupported type $tpe")
-            QType.UninterpretedType(tpe, tpe.show)
+            // FIXME(Georg): None is now impossible -- change the maybeExtractType call to something more sensical
+            throw new AssertionError("Won't be reached")
         }
 
         ensureRegistered(optSym, qtp)
     }
+}
+
+
+object FunctionAsMethodType {
+  val FunctionNamePrefix = "scala$Function"
+
+  @inline
+  private def isFunTypeRef(ref: TypeRef)(implicit ctx: Context): Boolean = ctx.definitions.FunctionType contains ref
+
+  @inline
+  private def looksLikeFunParamName(name: Names.Name, suffix: String): Boolean = {
+    val str = name.toString
+    str.startsWith(FunctionNamePrefix) && str.endsWith(suffix)
+  }
+
+  private def extractParams(tpe: RefinedType)(implicit ctx: Context): Option[List[Type]] = tpe match {
+    case tpe @ RefinedType(ref: TypeRef, name) if isFunTypeRef(ref) && looksLikeFunParamName(name, "$T1") =>
+      Some(List(tpe.refinedInfo))
+
+    case tpe @ RefinedType(parent: RefinedType, _) =>
+      extractParams(parent).map(tpe.refinedInfo :: _)
+
+    case _ =>
+      None
+  }
+
+  def unapply(tpe: Type)(implicit ctx: Context): Option[MethodType] = tpe match {
+    case tpe @ RefinedType(parent: RefinedType, name) if looksLikeFunParamName(name, "$R") =>
+      extractParams(parent).map { params =>
+        MethodType(params.reverse, tpe.refinedInfo)
+      }
+
+    case _ =>
+      None
+  }
 }
