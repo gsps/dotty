@@ -33,7 +33,7 @@ trait LeonExtractor extends ASTExtractors {
 
   implicit protected val ctx: Context
 
-  protected val state = ExtractionState(Bijection(), mutable.Set(), Bijection(), mutable.Set())
+  protected val state = ExtractionState(Bijection(), Bijection(), mutable.Set())
 
 
   /** Conversion from Dotty to PureScala positions */
@@ -73,16 +73,14 @@ trait LeonExtractor extends ASTExtractors {
 
 
   // TODO(Georg): Remove bindingIds, we don't use them, do we?
-  case class ExtractionState(symsToIds: Bijection[Symbol, Identifier], bindingIds: mutable.Set[Identifier],
+  case class ExtractionState(symsToIds: Bijection[Symbol, Identifier],
                              classDefs: Bijection[Identifier, ClassDef],
                              unboundIds: mutable.Set[Identifier])
   {
     def registerSym(sym: Symbol, tpe: LeonType = Untyped, isBinding: Boolean) = {
       symsToIds.cachedB(sym) {
         // trim because sometimes Scala names end with a trailing space, looks nicer without the space
-        val id = FreshIdentifier(sym.name.toString.trim, tpe).setPos(sym.pos)
-        if (isBinding) bindingIds += id
-        id
+        FreshIdentifier(sym.name.toString.trim, tpe).setPos(sym.pos)
       }
     }
 
@@ -552,6 +550,9 @@ trait LeonExtractor extends ASTExtractors {
     LeonExtractor.thisVarId(sym, LeonObjectType(sym))
     classDef
   }
+
+  def freshUnbound(tpe: LeonType): Identifier =
+    state.freshUnbound(tpe)
 }
 
 

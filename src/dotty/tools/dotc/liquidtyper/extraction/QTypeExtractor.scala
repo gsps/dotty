@@ -29,7 +29,7 @@ trait QTypeExtractor {
 
   // For bindings for which we have a symbol and an identifier that needs to be kept in sync with something else
   def newBinding(id: Identifier, sym: Symbol, templateTp: QType)(implicit ctx: Context): Binding = {
-    Binding(id, templateTp, mutable = sym.isStable, Some(sym))
+    Binding(id, templateTp, mutable = !sym.isStable, Some(sym))
   }
 
   // For binding for which we have a symbol and don't need to know about the identifier for the remaining typing
@@ -79,7 +79,7 @@ trait QTypeExtractor {
           case _ =>
             val bs = (methTpe.paramNames zip methTpe.paramTypes).map { case (pName, pTpe) =>
               val paramQType = extractQType(pTpe, None, env, pos, freshQualVars, inParam = true, extractAscriptions)
-              newBinding(FreshIdentifier(pName.toString), paramQType, mutable = false)
+              newBinding(leonXtor.freshUnbound(paramQType.toUnqualifiedLeonType), paramQType, mutable = false)
             }
             (bs, None)
         }
