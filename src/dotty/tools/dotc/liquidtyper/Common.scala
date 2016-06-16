@@ -183,6 +183,9 @@ abstract class TemplateEnv extends Showable
   def bindings: Map[Identifier, Binding]
   def conditions: List[LeonExpr]
 
+  def localBindings: Map[Identifier, Binding] = Map.empty
+  def localCondition: Option[LeonExpr] = None
+
   protected def isComplete: Boolean
   def complete(xtor: Extractor): Unit
 
@@ -231,8 +234,6 @@ object TemplateEnv {
     def bindings    = parent.bindings
     def conditions  = parent.conditions
 
-    def localBindings: Map[Identifier, Binding] = Map.empty
-
     // Conditions are extracted lazily
 
     // Have the conditions been extracted yet?
@@ -260,7 +261,6 @@ object TemplateEnv {
     override def localBindings = newBindings.map(binding => binding.identifier -> binding).toMap
 
     protected var bindings_ : Map[Identifier, Binding] = null
-
     override def bindings =
       if (bindings_ == null) throw new IllegalStateException("Bindings are only available after completion.")
       else bindings_
@@ -275,8 +275,13 @@ object TemplateEnv {
     protected val newCondTree: DottyTree
     protected val negated: Boolean
 
-    protected var conditions_ : List[LeonExpr] = null
+    protected var localCondition_ : LeonExpr = null
+    override def localCondition =
+      if (conditions_ == null) throw new IllegalStateException("Conditions are only available after chaining and " +
+        "completion.")
+      else Some(localCondition_)
 
+    protected var conditions_ : List[LeonExpr] = null
     override def conditions =
       if (conditions_ == null) throw new IllegalStateException("Conditions are only available after chaining and " +
         "completion.")
@@ -284,9 +289,9 @@ object TemplateEnv {
 
     override protected def completeConditions_(xtor: Extractor): Unit = {
       // NOTE: *this* might actually be an extension of the template environment in which the condition occurred
-      val exprInner = xtor.extractCondition(newCondTree)
-      val expr = if (negated) Constructors.not(exprInner) else exprInner
-      conditions_ = parent.conditions :+ expr
+      val exprInner   = xtor.extractCondition(newCondTree)
+      localCondition_ = if (negated) Constructors.not(exprInner) else exprInner
+      conditions_     = parent.conditions :+ localCondition_
     }
   }
 
@@ -339,8 +344,8 @@ sealed abstract class Qualifier extends Showable {
       Set(id)
     case Qualifier.PendingSubst(_, _, in) =>
       in.qualifierVars
-    case Qualifier.Disj(envQuals) =>
-      envQuals.map(_._2.qualifierVars).reduce(_ union _)
+    case Qualifier.Disj(condQuals) =>
+      condQuals.map(_._2.qualifierVars).reduce(_ union _)
     case Qualifier.Conj(quals) =>
       quals.map(_.qualifierVars).reduce(_ union _)
     case _ =>
@@ -352,9 +357,11 @@ sealed abstract class Qualifier extends Showable {
       case Qualifier.ExtractedExpr(expr) =>
         variablesOf(expr)
       case Qualifier.PendingSubst(varId, replacement, in) =>
-        (in.freeVars(qualMap, default) - varId) union variablesOf(replacement)
-      case Qualifier.Disj(envQuals) =>
-        envQuals.map(_._2.freeVars(qualMap, default)).reduce(_ union _)
+        val inFreeVars = in.freeVars(qualMap, default)
+        if (inFreeVars contains varId) (inFreeVars - varId) union variablesOf(replacement)
+        else                           inFreeVars
+      case Qualifier.Disj(condQuals) =>
+        condQuals.map(_._2.freeVars(qualMap, default)).reduce(_ union _)
       case Qualifier.Conj(quals) =>
         quals.map(_.freeVars(qualMap, default)).reduce(_ union _)
       case Qualifier.Var(qualVarId) if qualMap.nonEmpty && qualMap.contains(qualVarId) =>
@@ -378,6 +385,8 @@ sealed abstract class Qualifier extends Showable {
 }
 
 object Qualifier {
+  private val TrueLit = LeonBooleanLiteral(true)
+
   // A qualifier variable, used as a placeholder for yet to be determined (strongest?) qualifiers
   final case class Var(id: Identifier) extends Qualifier
 
@@ -385,16 +394,37 @@ object Qualifier {
   sealed case class ExtractedExpr(expr: LeonExpr) extends Qualifier
 
   // A trivial qualifier; [[ True ]] := { v : B | true }
-  val True = ExtractedExpr(LeonBooleanLiteral(true))
+  val True = ExtractedExpr(TrueLit)
 
   // Represents a substitution of a term-level variable with symbol `varSym` by a term `replacement`
   final case class PendingSubst(varId: Identifier, replacement: LeonExpr, in: Qualifier) extends Qualifier
 
   // We only use Disj and Conj for precise type inference:
   // Disj((e1, q1), (e2, q2)) expresses { v : B | e1 && q1 || e2 && q2 }
-  final case class Disj(envQuals: Seq[(TemplateEnv, Qualifier)]) extends Qualifier
+  final case class Disj(condQuals: Seq[(Option[LeonExpr], Qualifier)]) extends Qualifier
   // Conj(q1, q2) expresses { v : B | q1 && q2 }
   final case class Conj(quals: Seq[Qualifier]) extends Qualifier
+
+  // Simplifying constructors
+  def disj(condQuals: Seq[(Option[LeonExpr], Qualifier)]): Qualifier = {
+    condQuals.collect {
+      case (None, qual) if qual != True =>
+        (None, qual)
+      case (Some(cond), qual) if cond != TrueLit || qual != True =>
+        (if (cond != TrueLit) Some(cond) else None, qual)
+    } match {
+      case Nil                  => True
+      case (None, qual) :: Nil  => qual
+      case condQuals1           => Disj(condQuals1)
+    }
+  }
+
+  def conj(quals: Seq[Qualifier]): Qualifier = {
+    quals.filter(_ != True) match {
+      case Nil    => True
+      case quals1 => new Conj(quals1)
+    }
+  }
 }
 
 

@@ -105,6 +105,10 @@ object SymbolIndex {
                 unfoldParams(result, params.toList :: acc)
               case _ => acc.reverse
             }
+          def zipRightSafe[S, T](xs: List[S], ys: List[T]) = {
+            assert(xs.length >= ys.length)
+            xs zip ys
+          }
           def zipSafe[S, T](xs: List[S], ys: List[T]) = {
             assert(xs.length == ys.length)
             xs zip ys
@@ -114,11 +118,10 @@ object SymbolIndex {
           var newBindings     = List.empty[Binding]
           var paramChildren   = List.empty[(TemplateEnv, Tree)]
 
-          for ((templParams, params) <- zipSafe(templateParamss, tree.vparamss)) {
+          for ((templParams, params) <- zipRightSafe(templateParamss, tree.vparamss)) {
             val paramGroupEnv = templateEnv.withBindings(newBindings.reverse)
             for (((id, templType), paramVd) <- zipSafe(templParams, params)) {
               assert(id.name equals paramVd.name.toString)
-              // FIXME(Georg): Missing enterDef(paramVd), no? / Verify this
               enterDef(paramVd.symbol, paramVd)
               enterDefInfo(paramVd, DefInfo(templType, Seq.empty, Some(paramVd.symbol)))
               newBindings   = qtypeXtor.newBinding(paramVd.symbol, templType) :: newBindings
@@ -309,7 +312,7 @@ object SymbolIndex {
       templateEnv = oldTemplateEnv
 
       val templateTp = qtypeXtor.extractQType(tree.tpe, None, templateEnv, tree.pos,
-        freshQualVars = true, extractAscriptions = false)
+        freshQualVars = true, extractAscriptions = true)
       DefInfo(templateTp, children :+ exprChild, None)
     }
 
@@ -323,22 +326,6 @@ object SymbolIndex {
 
       DefInfo(templateTp, Seq((templateEnv, tree.cond), (thenEnv, tree.thenp), (elseEnv, tree.elsep)), None)
     }
-
-//    // TODO(Georg): Implement
-//    protected def handleClosure(tree: Closure)(implicit ctx: Context): DefInfo = {
-//      println(s"@ closure $tree")
-//      traverseChildren(tree)
-//
-//      // We'll retrace the steps the Dotty Typer would have taken if the closure was "absolutely standard"
-//      //  If this succeeds, we can just reuse the qualifiers of the MethodType
-//      val defaultFunTpe = tree.meth.tpe.widen.toFunctionType(tree.env.length)
-//      println(s"RECOVERING?\n\t* ${tree.tpe}\n\t* $defaultFunTpe")
-//      if (defaultFunTpe =:= tree.tpe) {
-//        // Rebuild the QType.FunType while matching the type and qualifiers of meth.tpe
-//      } else {
-//        // Just use a freshly extracted QType
-//      }
-//    }
 
 
     /**
@@ -392,9 +379,6 @@ object SymbolIndex {
 
         case tree: If =>
           DI(handleIf(tree))
-
-//        case tree: Closure =>
-//          DI(handleClosure(tree))
 
 
         case tree: Ident if tree.isTerm =>

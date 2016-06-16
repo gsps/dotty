@@ -10,6 +10,7 @@ import java.lang.Integer.toOctalString
 import config.Config.summarizeDepth
 import scala.annotation.switch
 import liquidtyper.{TemplateEnv, Qualifier, Constraint, QType}
+import leon.purescala.Expressions.{Expr => LeonExpr}
 import leon.purescala.Types.{TypeTree => LeonType}
 
 class PlainPrinter(_ctx: Context) extends Printer {
@@ -458,10 +459,10 @@ class PlainPrinter(_ctx: Context) extends Printer {
   def toText(env: TemplateEnv): Text =
     ("(Γ= " ~ envText(env) ~ ")").close
 
-  def disjClauseText(envQual: (TemplateEnv, Qualifier)): Text = {
-    val (env, qual) = envQual
-    val pcTxts = env.conditions map toText
-    Text(pcTxts :+ toText(qual), " && ")
+  def disjClauseText(condQual: (Option[LeonExpr], Qualifier)): Text = {
+    val (condOpt, qual) = condQual
+    val condTxt = condOpt.map(toText(_) ~ " && ").getOrElse(Text())
+    condTxt ~ toText(qual)
   }
 
   def toText(qual: Qualifier): Text = qual match {
@@ -473,10 +474,12 @@ class PlainPrinter(_ctx: Context) extends Printer {
       "true".close
     case Qualifier.ExtractedExpr(expr) =>
       toText(expr)
-    case Qualifier.Disj(envQuals) =>
-      "(" ~ Text(envQuals map disjClauseText, " || ") ~ ")"
+    case Qualifier.Disj(condQuals) =>
+      val inner = Text(condQuals map disjClauseText, " || ")
+      if (condQuals.length > 1) "(" ~ inner ~ ")" else inner
     case Qualifier.Conj(quals) =>
-      "(" ~ Text(quals map toText, " && ") ~ ")"
+      val inner = Text(quals map toText, " && ")
+      if (quals.length > 1) "(" ~ inner ~ ")" else inner
   }
 
   def toText(leonTp: LeonType): Text = leonTp match {

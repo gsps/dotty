@@ -121,14 +121,14 @@ class Solver(lctx: LeonContext, idTemplateTyp: Identifier => QType, qualMap: Inf
       case Qualifier.PendingSubst(varId, replacement, in) =>
         Set(varId) union variablesOf(replacement) union variablesOf(in)
 
-      case Qualifier.Disj(envQuals) =>
-        (Set.empty[Identifier] /: envQuals) { case (vars0, (env, qual)) =>
-          val envVars = (vars0 /: env.conditions) { case (vars1, cond) => vars1 union variablesOf(cond) }
-          envVars union variablesOf(qual)
-        }
+      case Qualifier.Disj(condQuals) =>
+        condQuals.map {
+          case (None, qual)       => variablesOf(qual)
+          case (Some(cond), qual) => variablesOf(cond) union variablesOf(qual)
+        } .reduce(_ union _)
 
       case Qualifier.Conj(quals) =>
-        (Set.empty[Identifier] /: quals) { case (vars0, qual) => vars0 union variablesOf(qual) }
+        quals.map(variablesOf).reduce(_ union _)
     }
 
 
@@ -161,9 +161,10 @@ class Solver(lctx: LeonContext, idTemplateTyp: Identifier => QType, qualMap: Inf
       case Qualifier.PendingSubst(varId, replacement, in) =>
         SMTLet(VarBinding(id2sym(varId), toSMT(replacement)), Seq(), toSMT(in))
 
-      case Qualifier.Disj(envQuals) =>
-        Constructors.or(envQuals map { case (env, qual) =>
-          Constructors.and(env.conditions.map(toSMT) :+ toSMT(qual))
+      case Qualifier.Disj(condQuals) =>
+        Constructors.or(condQuals map {
+          case (None, qual)       => toSMT(qual)
+          case (Some(cond), qual) => Constructors.and(toSMT(cond), toSMT(qual))
         })
 
       case Qualifier.Conj(quals) =>

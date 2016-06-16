@@ -292,94 +292,30 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
 
   /** Inference phases */
 
-  // Mutates qualMap
-//  private def assignmentAlgoForwardOnly(/* qualMap, inEdges, outEdges, ... */): Set[QualId] = {
-//    val predLeft = {
-//      val pairs = inEdges map { case (id, edges) =>
-//        id -> (edges count { case (_, _, from) => unassignedQualVar(from) })
-//      }
-//      mutable.HashMap(pairs.toSeq: _*)
-//    }
-//    val initialSources  = predLeft.collect { case (id, 0) if unassignedQualVar(id) => id } .toSeq
-//    val frontier        = mutable.Queue[QualId](initialSources: _*)
-//    val inferred        = mutable.Set[QualId]()
-//
-//    while (frontier.nonEmpty) {
-//      val id     = frontier.dequeue()
-//      inferred  += id
-//
-//      val incoming = inEdges(id)
-//      if (incoming.nonEmpty) {
-//        // TODO: Should really just add the additional path condition here rather than a separate TemplateEnv
-//        val envQuals = incoming map { case (incEnv, incSubsts, incId) =>
-//          (incEnv, getAssignedOrGroundQual(incId).substTerms(incSubsts))
-//        }
-//        for ((incEnv, incQual) <- envQuals) // Sanity check
-//          assert(incQual.qualifierVars.isEmpty,
-//            s"Incoming node $incQual of node $id to be inferred has qualifier vars: ${incQual.qualifierVars}")
-//        qualMap(id) = Qualifier.Disj(envQuals)
-//      }
-//
-//      for (outId <- outEdges(id)) {
-//        val left = predLeft(outId) - 1
-//        predLeft(outId) = left
-//        if (left == 0 && unassignedQualVar(outId))
-//          frontier.enqueue(outId)
-//      }
-//    }
-//
-//    // Sanity checks
-//    //  For all the remaining unassigned qual vars, it should be fine to just assign them the trivial qualifier
-//    //  After all, the interesting constraints have already been added to remainingCs and will be checked
-//    //    for ((id, left) <- predLeft if unassignedQualVar(id) && left > 0)
-//    //      ctx.error(s"Qualifier variable elimination couldn't handle qual var $id -- appears to be part of cycle")
-//    //    if (ctx.reporter.errorsReported)
-//    //      return (null, null)
-//
-//    for ((id, qual) <- qualMap if qual.qualifierVars.nonEmpty)
-//      throw new AssertionError(s"After qualifier variable elimination $id must not point to other qual vars: $qual")
-//
-//    // Assign True to all remaining qualifier variables
-//    {
-//      var trivialized = List.empty[QualId]
-//      for (id <- qualVarIds diff qualMap.keySet) {
-//        qualMap(id) = Qualifier.True
-//        trivialized = id :: trivialized
-//      }
-//      if (trivialized.nonEmpty)
-//        ctx.warning(s"Assigned trivial qualifier to qualifier variables ${trivialized.reverse.mkString(", ")}")
-//    }
-//
-//    // Add back constraints for qualifiers we didn't infer precisely
-//    val trivial = qualMap.collect { case (id, Qualifier.True) => id } .toSet
-//    val retainConstraintsTo = inEdges.keySet diff (inferred union trivial)
-//    //    ltypr.println(s"\tInferred: $inferred")
-//    //    ltypr.println(s"\tRetain constraints to: $retainConstraintsTo")
-//    for (c @ SubtypConstraint(_, _, HasQualId(_, idB, _, _), _) <- constraints if retainConstraintsTo(idB))
-//      remainingCs += c
-//
-//    // Check that each assignment we made doesn't violate the well-formedness constraints
-//    for ((id, availableIds) <- qualEnv) {
-//      // XXX(Georg): Should we allow free variables from outside the template environment?
-//      val validVars = availableIds union LeonExtractor.subjectVarIds
-//      // FIXME(Georg): It's questionable whether we should require qualMap to be passed to freeVars here -- after all,
-//      //  at this point qualifiers should be ground -- why make an exception for PendingSubsts?
-//      // FIXME(Georg): Converting the qualMap all the time is slow. Fix this // Do we even need to pass it here?
-//      val freeVars  = qualMap(id).freeVars(qualMap.toMap)
-//      if (!(freeVars subsetOf validVars))
-//      {
-//        ctx.warning(s"Precise qualifier for qualifier var $id would not eliminate all parameters, falling back to " +
-//          s"True\n\t(${qualMap(id)}, free variables: $freeVars, valid variables: $validVars")
-//        //        ltypr.println(s"qualMap($id) = ${qualMap(id)} // free vars: ${qualMap(id).freeVars} " +
-//        //          s"// available bindings: $availableBindings")
-//        // One last trick: If the offending node only has a single outgoing edge, we might gamble and try to adopt
-//        //  the exact qualifier we need to satisfy. This might of course lead to issues, since if
-//        qualMap(id) = Qualifier.True
-//      }
-//    }
-//
-//    inferred
-//  }
+  // (This reimplements Qualifier.freeVars while also rebuilding the Qualifier)
+  private def eliminateUnneededSubsts(qualifier: Qualifier, qualMap: QualMap): (Qualifier, Set[Identifier]) = {
+    import leon.purescala.ExprOps.variablesOf
+    qualifier match {
+      case Qualifier.PendingSubst(varId, replacement, in) =>
+        val (inQual, inFreeVars) = eliminateUnneededSubsts(in, qualMap)
+        if (inFreeVars contains varId) (qualifier, (inFreeVars - varId) union variablesOf(replacement))
+        else                           (inQual, inFreeVars)
+
+      case Qualifier.ExtractedExpr(expr) =>
+        (qualifier, variablesOf(expr))
+      case Qualifier.Disj(condQuals) =>
+        val (conds, _) = condQuals.unzip
+        val (quals1, varss1) = condQuals.map { case (_, qual) => eliminateUnneededSubsts(qual, qualMap) }.unzip
+        (Qualifier.Disj(conds zip quals1), varss1.reduce(_ union _))
+      case Qualifier.Conj(quals) =>
+        val (quals1, varss1) = quals.map(eliminateUnneededSubsts(_, qualMap)).unzip
+        (Qualifier.Conj(quals1), varss1.reduce(_ union _))
+      case Qualifier.Var(qualVarId) if qualMap.nonEmpty && qualMap.contains(qualVarId) =>
+        (qualifier, qualMap(qualVarId).freeVars(qualMap))
+      case _ =>
+        (qualifier, Set.empty)
+    }
+  }
 
   private def eliminateQualVars(qualEnv: QualEnv,
                                 constraints: List[SubtypConstraint]): (QualMap, List[SubtypConstraint]) = {
@@ -476,14 +412,13 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
 
       val incoming = inEdges(id)
       if (incoming.nonEmpty) {
-        // TODO: Should really just add the additional path condition here rather than a separate TemplateEnv
-        val envQuals  = incoming map { case (incEnv, incSubsts, incId) =>
-          (incEnv, getAssignedOrGroundQual(incId).substTerms(incSubsts))
+        val condQuals = incoming map { case (incEnv, incSubsts, incId) =>
+          (incEnv.localCondition, getAssignedOrGroundQual(incId).substTerms(incSubsts))
         }
-        for ((incEnv, incQual) <- envQuals) // Sanity check
+        for ((incCondOpt, incQual) <- condQuals) // Sanity check
           assert(incQual.qualifierVars.isEmpty,
             s"Incoming node $incQual of node $id to be inferred has qualifier vars: ${incQual.qualifierVars}")
-        qualMap(id) = Qualifier.Disj(envQuals)
+        qualMap(id) = Qualifier.disj(condQuals)
       }
 
       for (outId <- outEdges(id)) {
@@ -511,8 +446,6 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
     // Add back constraints for qualifiers we didn't infer precisely
     val trivial = qualMap.collect { case (id, Qualifier.True) => id } .toSet
     val retainConstraintsTo = inEdges.keySet diff (inferred union trivial)
-//    ltypr.println(s"\tInferred: $inferred")
-//    ltypr.println(s"\tRetain constraints to: $retainConstraintsTo")
     for (c @ SubtypConstraint(_, _, HasQualId(_, idB, _, _), _) <- constraints if retainConstraintsTo(idB))
       remainingCs += c
 
@@ -525,20 +458,37 @@ class PreciseInference(xtorInfo: ExtractionInfo, idTemplateTyp: Identifier => QT
       if (!(freeVars subsetOf validVars))
       {
         ctx.warning(s"Precise qualifier for qualifier var $id would not eliminate all parameters, falling back to " +
-          s"True\n\t(${qualMap(id)}, free variables: $freeVars, valid variables: $validVars")
+          s"True\n\t(${qualMap(id).show}, free variables: $freeVars, valid variables: $validVars")
 //        ltypr.println(s"qualMap($id) = ${qualMap(id)} // free vars: ${qualMap(id).freeVars} " +
 //          s"// available bindings: $availableBindings")
         qualMap(id) = Qualifier.True
       }
     }
 
+    // Finally, we can eliminate substitutions that were added conservatively, but don't actually apply now that
+    //  all qualifiers are ground.
+    val qualMapImmutable = qualMap.toMap
+
+    for ((id, qual) <- qualMap) {
+      val (qual1, _) = eliminateUnneededSubsts(qual, qualMapImmutable)
+      if (qual != qual1)
+        qualMap += id -> qual1
+    }
+
+    val remainingCs1 = remainingCs map {
+      case SubtypConstraint(env, QType.BaseType(underlyingA, qualA), QType.BaseType(underlyingB, qualB), pos) =>
+        val (qualA1, _) = eliminateUnneededSubsts(qualA, qualMapImmutable)
+        val (qualB1, _) = eliminateUnneededSubsts(qualB, qualMapImmutable)
+        SubtypConstraint(env, QType.BaseType(underlyingA, qualA1), QType.BaseType(underlyingB, qualB1), pos)
+    }
+
 
     dumpGraph(
       inEdges.toSeq.flatMap { case (to, froms) =>
         froms.collect { case (_, substs, from) => ((from, to), substs) } } .toMap,
-      qualMap.toMap, unsafeQualIds.toSet, inferred.toSet, ascribed.toSet)
+      qualMapImmutable, unsafeQualIds.toSet, inferred.toSet, ascribed.toSet)
 
-    (qualMap.toMap, remainingCs.toList)
+    (qualMapImmutable, remainingCs1.toList)
   }
 
 

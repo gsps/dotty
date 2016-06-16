@@ -271,6 +271,26 @@ object Typing {
             freshQualVars = true, extractAscriptions = true)
           Some(templateTp)
 
+        case tree: Closure =>
+          tree.env.foreach(traverse)
+          val Some(methQtp) = traverse(tree.meth, forceTemplateType = true)
+          traverse(tree.tpt)
+
+          // We'll retrace the steps the Dotty Typer would have taken if the closure was "absolutely standard"
+          //  If this succeeds, we can just reuse the FunType previously extracted from meth.tpe
+          val defaultFunTpe = tree.meth.tpe.widen.toFunctionType(tree.env.length)
+          val templateTp =
+            if (defaultFunTpe =:= tree.tpe) {
+              // Just reuse meth's QType
+              methQtp
+            } else {
+              // Just use a freshly extracted QType
+              qtypeXtor.extractQType(tree.tpe, None, templateEnv, tree.pos,
+                freshQualVars = true, extractAscriptions = true)
+            }
+
+          Some(templateTp)
+
         case _ =>
           traverseChildren(tree)
           None
