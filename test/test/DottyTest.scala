@@ -31,21 +31,29 @@ class DottyTest /*extends ContextEscapeDetection*/ {
     ctx = null
   }
 */
-  private def compilerWithChecker(phase: String)(assertion:(tpd.Tree, Context) => Unit) = new Compiler {
-    override def phases = {
-      val allPhases = super.phases
-      val targetPhase = allPhases.flatten.find(p => p.phaseName == phase).get
-      val groupsBefore = allPhases.takeWhile(x => !x.contains(targetPhase))
-      val lastGroup = allPhases.find(x => x.contains(targetPhase)).get.takeWhile(x => !(x eq targetPhase))
-      val checker = new Phase {
-        def phaseName = "assertionChecker"
-        override def run(implicit ctx: Context): Unit = assertion(ctx.compilationUnit.tpdTree, ctx)
-      }
-      val lastGroupAppended = List(lastGroup ::: targetPhase :: Nil)
+  type Assertion = (tpd.Tree, Context) => Unit
 
-      groupsBefore ::: lastGroupAppended ::: List(List(checker))
+  protected def compilerWithChecker(phase: String)(assertionAfter: Assertion,
+                                                   assertionBeforeOpt: Option[Assertion] = None) =
+    new Compiler {
+      override def phases = {
+        val allPhases = super.phases
+        val targetPhase = allPhases.flatten.find(p => p.phaseName == phase).get
+        val groupsBefore = allPhases.takeWhile(x => !x.contains(targetPhase))
+        val lastGroup = allPhases.find(x => x.contains(targetPhase)).get.takeWhile(x => !(x eq targetPhase))
+        def assertionPhase(name: String, f: (tpd.Tree, Context) => Unit): Phase =
+          new Phase {
+            def phaseName = s"assertionChecker$name"
+            override def run(implicit ctx: Context): Unit = f(ctx.compilationUnit.tpdTree, ctx)
+          }
+        val lastGroupsAppended = assertionBeforeOpt match {
+          case Some(f)  => List(lastGroup, assertionPhase("before", f) :: Nil, targetPhase :: Nil)
+          case None     => List(lastGroup ::: targetPhase :: Nil)
+        }
+
+        groupsBefore ::: lastGroupsAppended ::: List(List(assertionPhase("after", assertionAfter)))
+      }
     }
-  }
 
   def checkCompile(checkAfterPhase: String, source: String)(assertion: (tpd.Tree, Context) => Unit): Unit = {
     val c = compilerWithChecker(checkAfterPhase)(assertion)
