@@ -499,6 +499,8 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
         toTextTemplate(tree)
       case Annotated(arg, annot) =>
         toTextLocal(arg) ~~ annotText(annot)
+      case QualifiedTypeTree(subject, expr) =>
+        "{" ~ toText(subject.name) ~ ": " ~ toText(subject.tpt) ~ " => " ~ toText(expr) ~ "}"
       case EmptyTree =>
         "<empty>"
       case TypedSplice(t) =>

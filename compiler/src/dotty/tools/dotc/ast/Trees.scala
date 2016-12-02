@@ -717,6 +717,13 @@ object Trees {
     def forwardTo = arg
   }
 
+  /** tpt if expr */
+  case class QualifiedTypeTree[-T >: Untyped] private[ast] (subject: ValDef[T], expr: Tree[T])
+    extends ProxyTree[T] {
+    type ThisTree[-T >: Untyped] = QualifiedTypeTree[T]
+    def forwardTo = subject.tpt
+  }
+
   trait WithoutTypeOrPos[-T >: Untyped] extends Tree[T] {
     override def tpe: T @uncheckedVariance = NoType.asInstanceOf[T]
     override def withTypeUnchecked(tpe: Type) = this.asInstanceOf[ThisTree[Type]]
@@ -870,6 +877,7 @@ object Trees {
     type Import = Trees.Import[T]
     type PackageDef = Trees.PackageDef[T]
     type Annotated = Trees.Annotated[T]
+    type QualifiedTypeTree = Trees.QualifiedTypeTree[T]
     type Thicket = Trees.Thicket[T]
 
     @sharable val EmptyTree: Thicket = genericEmptyTree
@@ -1074,6 +1082,10 @@ object Trees {
         case tree: Annotated if (arg eq tree.arg) && (annot eq tree.annot) => tree
         case _ => finalize(tree, untpd.Annotated(arg, annot))
       }
+      def QualifiedTypeTree(tree: Tree)(subject: ValDef, expr: Tree): QualifiedTypeTree = tree match {
+        case tree: QualifiedTypeTree if (subject eq tree.subject) && (expr eq tree.expr) => tree
+        case _ => finalize(tree, untpd.QualifiedTypeTree(subject, expr))
+      }
       def Thicket(tree: Tree)(trees: List[Tree]): Thicket = tree match {
         case tree: Thicket if trees eq tree.trees => tree
         case _ => finalize(tree, untpd.Thicket(trees))
@@ -1206,6 +1218,8 @@ object Trees {
             cpy.PackageDef(tree)(transformSub(pid), transformStats(stats))
           case Annotated(arg, annot) =>
             cpy.Annotated(tree)(transform(arg), transform(annot))
+          case QualifiedTypeTree(subject, expr) =>
+            cpy.QualifiedTypeTree(tree)(transformSub(subject), transform(expr))
           case Thicket(trees) =>
             val trees1 = transform(trees)
             if (trees1 eq trees) tree else Thicket(trees1)
@@ -1317,6 +1331,8 @@ object Trees {
             this(this(x, pid), stats)(localCtx)
           case Annotated(arg, annot) =>
             this(this(x, arg), annot)
+          case QualifiedTypeTree(subject, expr) =>
+            this(this(x, subject), expr)
           case Thicket(ts) =>
             this(x, ts)
           case _ if ctx.mode.is(Mode.Interactive) =>

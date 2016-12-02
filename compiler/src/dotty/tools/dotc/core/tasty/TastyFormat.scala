@@ -395,6 +395,8 @@ object TastyFormat {
   final val TYPEARGtype = 176
   final val TERMREFin = 177
   final val TYPEREFin = 178
+  final val QUALIFIEDtype = 179
+  final val QUALIFIEDtpt = 180
 
   final val firstSimpleTreeTag = UNITconst
   final val firstNatTreeTag = SHARED

@@ -544,6 +544,9 @@ trait TypeAssigner {
   def assignType(tree: untpd.Annotated, arg: Tree, annot: Tree)(implicit ctx: Context) =
     tree.withType(AnnotatedType(arg.tpe.widen, Annotation(annot)))
 
+  def assignType(tree: untpd.QualifiedTypeTree, subject: ValDef, expr: Tree)(implicit ctx: Context) =
+    tree.withType(QualifiedType(subject, expr))
+
   def assignType(tree: untpd.PackageDef, pid: Tree)(implicit ctx: Context) =
     tree.withType(pid.symbol.termRef)
 

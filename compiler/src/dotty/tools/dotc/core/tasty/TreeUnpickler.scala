@@ -245,6 +245,9 @@ class TreeUnpickler(reader: TastyReader, nameAtRef: NameRef => TermName, posUnpi
               TypeBounds(readType(), readType())
             case ANNOTATEDtype =>
               AnnotatedType(readType(), Annotation(readTerm()))
+            case QUALIFIEDtype =>
+//              QualifiedType(readType(), readTerm())
+              QualifiedType(EmptyValDef, EmptyTree)
             case ANDtype =>
               AndType(readType(), readType())
             case ORtype =>
@@ -1021,6 +1024,9 @@ class TreeUnpickler(reader: TastyReader, nameAtRef: NameRef => TermName, posUnpi
               OrTypeTree(readTpt(), readTpt())
             case ANNOTATEDtpt =>
               Annotated(readTpt(), readTerm())
+            case QUALIFIEDtpt =>
+//              QualifiedTypeTree(readTerm(), readTpt(), readTerm())
+              QualifiedTypeTree(EmptyValDef, EmptyTree)
             case LAMBDAtpt =>
               val localCtx = localNonClassCtx
               val tparams = readParams[TypeDef](TYPEPARAM)(localCtx)

@@ -582,8 +582,9 @@ object Parsers {
      *                  If false, another selection is required after the `this`.
      *  @param finish   An alternative parse in case the token following a `.' is not an identifier.
      *                  If the alternative does not apply, its tree argument is returned unchanged.
+     *  @param preparsedIdent   If defined, the path's first part is an ident and already provided.
      */
-    def path(thisOK: Boolean, finish: Tree => Tree = id): Tree = {
+    def path(thisOK: Boolean, finish: Tree => Tree = id, preparsedIdent: Option[Ident] = None): Tree = {
       val start = in.offset
       def handleThis(qual: Ident) = {
         in.nextToken()
@@ -598,18 +599,23 @@ object Parsers {
         accept(DOT)
         dotSelectors(selector(t), finish)
       }
-      if (in.token == THIS) handleThis(EmptyTypeIdent)
-      else if (in.token == SUPER) handleSuper(EmptyTypeIdent)
-      else {
-        val t = termIdent()
+      def handleIdent(term: Ident) = {
         if (in.token == DOT) {
-          def qual = cpy.Ident(t)(t.name.toTypeName)
+          def qual = cpy.Ident(term)(term.name.toTypeName)
           in.nextToken()
           if (in.token == THIS) handleThis(qual)
           else if (in.token == SUPER) handleSuper(qual)
-          else selectors(t, finish)
+          else selectors(term, finish)
         }
-        else t
+        else term
+      }
+      preparsedIdent match {
+        case None =>
+          if (in.token == THIS) handleThis(EmptyTypeIdent)
+          else if (in.token == SUPER) handleSuper(EmptyTypeIdent)
+          else handleIdent(termIdent())
+        case Some(term) =>
+          handleIdent(term)
       }
     }
 
@@ -790,7 +796,7 @@ object Parsers {
       }
     }
 
-    /** InfixType ::= RefinedType {id [nl] refinedType}
+    /** InfixType ::= RefinedType {id [nl] RefinedType}
      */
     def infixType(): Tree = infixTypeRest(refinedType())
 
@@ -803,11 +809,11 @@ object Parsers {
 
     def refinedTypeRest(t: Tree): Tree = {
       newLineOptWhenFollowedBy(LBRACE)
-      if (in.token == LBRACE) refinedTypeRest(atPos(startOffset(t)) { RefinedTypeTree(t, refinement()) })
+      if (in.token == LBRACE) refinedTypeRest(atPos(startOffset(t)) { RefinedTypeTree(t, refinementNoLbrace()) })
       else t
     }
 
-    /** WithType ::= AnnotType {`with' AnnotType}    (deprecated)
+    /** WithType ::= AnnotType {`with' Annot}    (deprecated)
      */
     def withType(): Tree = withTypeRest(annotType())
 
@@ -837,21 +843,28 @@ object Parsers {
      *                     |  Refinement
      *                     |  Literal
      */
-    def simpleType(): Tree = simpleTypeRest {
-      if (in.token == LPAREN)
-        atPos(in.offset) {
-          makeTupleOrParens(inParens(argTypes(namedOK = false, wildOK = true)))
+    def simpleType(preparsedIdent: Option[Ident] = None): Tree = simpleTypeRest {
+      def handlePath() = {
+        path(thisOK = false, handleSingletonType, preparsedIdent) match {
+          case r @ SingletonTypeTree(_) => r
+          case r => convertToTypeId(r)
         }
-      else if (in.token == LBRACE)
-        atPos(in.offset) { RefinedTypeTree(EmptyTree, refinement()) }
-      else if (isSimpleLiteral) { SingletonTypeTree(literal()) }
-      else if (in.token == USCORE) {
-        val start = in.skipToken()
-        typeBounds().withPos(Position(start, in.lastOffset, start))
       }
-      else path(thisOK = false, handleSingletonType) match {
-        case r @ SingletonTypeTree(_) => r
-        case r => convertToTypeId(r)
+
+      if (preparsedIdent.isEmpty) {
+        if (in.token == LPAREN)
+          atPos(in.offset) {
+            makeTupleOrParens(inParens(argTypes(namedOK = false, wildOK = true)))
+          }
+        else if (in.token == LBRACE) { refinementOrQualifiedType() }
+        else if (isSimpleLiteral) { SingletonTypeTree(literal()) }
+        else if (in.token == USCORE) {
+          val start = in.skipToken()
+          typeBounds().withPos(Position(start, in.lastOffset, start))
+        }
+        else handlePath()
+      } else {
+        handlePath()
       }
     }
 
@@ -934,9 +947,79 @@ object Parsers {
      */
     def typeArgs(namedOK: Boolean, wildOK: Boolean): List[Tree] = inBrackets(argTypes(namedOK, wildOK))
 
-    /** Refinement ::= `{' RefineStatSeq `}'
-     */
-    def refinement(): List[Tree] = inBraces(refineStatSeq())
+    /** RefinementNoLbrace ::= RefineStatSeq `}'
+      */
+    def refinementNoLbrace(): List[Tree] = {
+      val stats = refineStatSeq()
+      accept(RBRACE)
+      stats
+    }
+
+    /** QualifiedTypeNoLbrace ::= [ident `:'] simpleType `=>' postfixExpr `}'
+      */
+    def qualifiedTypeNoLbrace(): Tree = {
+      def syntheticValDef(tpt: Tree): ValDef = {
+        val name = ctx.freshName(nme.SUBJECT_PARAM_PREFIX).toTermName
+        ValDef(name, tpt, EmptyTree).withFlags(SyntheticTermParam).withPos(tpt.pos)
+      }
+      def handlePlaceholder(subject: ValDef, qualifier: Tree): Tree =
+        if (placeholderParams.nonEmpty) {
+          if (subject.mods.is(Synthetic)) {
+            val placeholderName = placeholderParams.head.name
+            object replacePlaceholder extends UntypedTreeMap {
+              override def transform(tree: Tree)(implicit ctx: Context): Tree = tree match {
+                case Ident(name) if name eq placeholderName => Ident(subject.name)
+                case _                                      => super.transform(tree)
+              }
+            }
+            replacePlaceholder.transform(qualifier)
+          } else {
+            syntaxError(s"Cannot bind subject variable to ${subject.name} and use placeholder variable " +
+              s"at the same time!", placeholderParams.last.pos)
+            EmptyTree
+          }
+        } else {
+          qualifier
+        }
+      def finish(subject: ValDef) = {
+        accept(ARROW)
+        val qualifier = postfixExpr()
+        QualifiedTypeTree(subject, handlePlaceholder(subject, qualifier))
+      }
+
+      val saved = placeholderParams
+      placeholderParams = Nil
+      val qtpt =
+        if (isIdent) {
+          val idOffset = in.offset
+          val id = termIdent()
+          if (in.token == COLON) {
+            in.nextToken()
+            val tpt = simpleType()
+            val name = id.name.toTermName
+            val subject = ValDef(name, tpt, EmptyTree).withFlags(TermParam).withPos(Position(idOffset, in.offset))
+            finish(subject)
+          }
+          else finish(syntheticValDef(simpleType(Some(id))))
+        }
+        else finish(syntheticValDef(simpleType()))
+      accept(RBRACE)
+      if (placeholderParams.length > 1)
+        syntaxError("Can only use one placeholder variable!", placeholderParams(placeholderParams.length-2).pos)
+      placeholderParams = saved
+      qtpt
+    }
+
+    /** RefinementOrQualifiedType ::= `{' RefinementNoLbrace | QualifiedTypeNoLbrace
+      */
+    def refinementOrQualifiedType(): Tree = {
+      atPos(in.skipToken()) {
+        if (isDclIntro || in.token == RBRACE)
+          RefinedTypeTree(EmptyTree, refinementNoLbrace())
+        else
+          qualifiedTypeNoLbrace()
+      }
+    }
 
     /** TypeBounds ::= [`>:' Type] [`<:' Type]
      */

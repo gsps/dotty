@@ -3603,6 +3603,18 @@ object Types {
       (underlying /: annots)(AnnotatedType(_, _))
   }
 
+  // ----- Qualified types ----------------------------------------------------------
+
+  /** An qualified type tpe with expr */
+  case class QualifiedType(subject: ValDef, expr: Tree)
+    extends UncachedProxyType with ValueType {
+    // TODO: cache them?
+    override def underlying(implicit ctx: Context): Type = subject.tpe
+    def derivedQualifiedType(subject: ValDef, expr: Tree) =
+      if ((subject eq this.subject) && (expr eq this.expr)) this
+      else QualifiedType(subject, expr)
+  }
+
   // Special type objects and classes -----------------------------------------------------
 
   /** The type of an erased array */
@@ -3795,6 +3807,8 @@ object Types {
       tp.derivedAndOrType(tp1, tp2)
     protected def derivedAnnotatedType(tp: AnnotatedType, underlying: Type, annot: Annotation): Type =
       tp.derivedAnnotatedType(underlying, annot)
+    protected def derivedQualifiedType(tp: QualifiedType, subject: ValDef, expr: Tree): Type =
+      tp.derivedQualifiedType(subject, expr)
     protected def derivedWildcardType(tp: WildcardType, bounds: Type): Type =
       tp.derivedWildcardType(bounds)
     protected def derivedClassInfo(tp: ClassInfo, pre: Type): Type =
@@ -3897,6 +3911,12 @@ object Types {
           val underlying1 = this(underlying)
           if (underlying1 eq underlying) tp
           else derivedAnnotatedType(tp, underlying1, mapOver(annot))
+
+        case tp @ QualifiedType(subject, expr) =>
+          // TODO: How to safely transform the type of subject given that `expr`
+          //  should remain well-typed (and references to the symbol of subject
+          //  should remain intact)?
+          tp
 
         case tp: WildcardType =>
           derivedWildcardType(tp, mapOver(tp.optBounds))
@@ -4258,6 +4278,10 @@ object Types {
 
       case AnnotatedType(underlying, annot) =>
         this(applyToAnnot(x, annot), underlying)
+
+      case QualifiedType(subject, expr) =>
+        // TODO: Apply to qualifier expr?
+        this(x, subject.tpe)
 
       case tp: ProtoType =>
         tp.fold(x, this)

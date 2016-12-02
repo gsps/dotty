@@ -287,6 +287,7 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
   def Import(expr: Tree, selectors: List[untpd.Tree]): Import = new Import(expr, selectors)
   def PackageDef(pid: RefTree, stats: List[Tree]): PackageDef = new PackageDef(pid, stats)
   def Annotated(arg: Tree, annot: Tree): Annotated = new Annotated(arg, annot)
+  def QualifiedTypeTree(subject: ValDef, expr: Tree) = new QualifiedTypeTree(subject, expr)
 
   // ------ Additional creation methods for untyped only -----------------
 

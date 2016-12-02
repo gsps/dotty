@@ -1242,6 +1242,16 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     typed(annot, defn.AnnotationType)
   }
 
+  def typedQualifiedTypeTree(tree: untpd.QualifiedTypeTree)(implicit ctx: Context): QualifiedTypeTree =
+    track("typedQualifiedTypeTree")
+  {
+//    System.out.println(i"TYPING QualifiedTypeTree:\n\tqtpt: $tree\n\t\t=> ${tree.toString}")
+    val exprCtx = index(tree.subject)
+    val subject1 = typed(tree.subject).asInstanceOf[ValDef]
+    val expr1 = typedExpr(tree.expr, defn.BooleanType)(exprCtx)
+    assignType(cpy.QualifiedTypeTree(tree)(subject1, expr1), subject1, expr1)
+  }
+
   def typedValDef(vdef: untpd.ValDef, sym: Symbol)(implicit ctx: Context) = track("typedValDef") {
     val ValDef(name, tpt, _) = vdef
     completeAnnotations(vdef, sym)
@@ -1661,6 +1671,7 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
           case tree: untpd.Alternative => typedAlternative(tree, pt)
           case tree: untpd.PackageDef => typedPackageDef(tree)
           case tree: untpd.Annotated => typedAnnotated(tree, pt)
+          case tree: untpd.QualifiedTypeTree => typedQualifiedTypeTree(tree)
           case tree: untpd.TypedSplice => typedTypedSplice(tree)
           case tree:  untpd.UnApply => typedUnApply(tree, pt)
           case tree @ untpd.PostfixOp(qual, Ident(nme.WILDCARD)) => typedAsFunction(tree, pt)
