@@ -316,6 +316,18 @@ class Definitions {
     lazy val Predef_undefinedR = ScalaPredefModule.requiredMethodRef("???")
     def Predef_undefined(implicit ctx: Context) = Predef_undefinedR.symbol
 
+    def Predef_require(implicit ctx: Context) = ScalaPredefModule.requiredMethodRef("require", List(BooleanType))
+
+    def Ensuring(implicit ctx: Context) = ScalaPredefModule.requiredClass("Ensuring")
+    def Ensuring_ensuring(implicit ctx: Context) = {
+      Ensuring.info.member("ensuring".toTermName).requiredSymbol(x=>
+        (x is Method) && (x.info.paramTypess match {
+          case List(List(FunctionOf(List(_), BooleanType))) => true
+          case _ => false
+        })
+      ).asTerm.termRef
+    }
+
   lazy val ScalaRuntimeModuleRef = ctx.requiredModuleRef("scala.runtime.ScalaRunTime")
   def ScalaRuntimeModule(implicit ctx: Context) = ScalaRuntimeModuleRef.symbol
   def ScalaRuntimeClass(implicit ctx: Context) = ScalaRuntimeModule.moduleClass.asClass
