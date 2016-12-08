@@ -381,6 +381,18 @@ object Parsers {
         tree
     }
 
+    /** Replace each ident named `oldName` by an Ident(newName)
+      */
+    def renameVar(tree: Tree, oldName: Name, newName: Name): Tree = {
+      object replaceIdents extends UntypedTreeMap {
+        override def transform(tree: Tree)(implicit ctx: Context): Tree = tree match {
+          case Ident(name) if name eq oldName => Ident(newName)
+          case _                              => super.transform(tree)
+        }
+      }
+      replaceIdents.transform(tree)
+    }
+
 /* --------------- PLACEHOLDERS ------------------------------------------- */
 
     /** The implicit parameters introduced by `_` in the current expression.
@@ -947,6 +959,12 @@ object Parsers {
      */
     def typeArgs(namedOK: Boolean, wildOK: Boolean): List[Tree] = inBrackets(argTypes(namedOK, wildOK))
 
+
+    def syntheticQTypeSubject(tpt: Tree): ValDef = {
+      val name = ctx.freshName(nme.SUBJECT_PARAM_PREFIX).toTermName
+      ValDef(name, tpt, EmptyTree).withFlags(SyntheticTermParam).withPos(tpt.pos)
+    }
+
     /** RefinementNoLbrace ::= RefineStatSeq `}'
       */
     def refinementNoLbrace(): List[Tree] = {
@@ -958,21 +976,11 @@ object Parsers {
     /** QualifiedTypeNoLbrace ::= [ident `:'] simpleType `=>' postfixExpr `}'
       */
     def qualifiedTypeNoLbrace(): Tree = {
-      def syntheticValDef(tpt: Tree): ValDef = {
-        val name = ctx.freshName(nme.SUBJECT_PARAM_PREFIX).toTermName
-        ValDef(name, tpt, EmptyTree).withFlags(SyntheticTermParam).withPos(tpt.pos)
-      }
       def handlePlaceholder(subject: ValDef, qualifier: Tree): Tree =
         if (placeholderParams.nonEmpty) {
+          // If no explicit subject var was given, replace potential placeholders by the synthetic subject var
           if (subject.mods.is(Synthetic)) {
-            val placeholderName = placeholderParams.head.name
-            object replacePlaceholder extends UntypedTreeMap {
-              override def transform(tree: Tree)(implicit ctx: Context): Tree = tree match {
-                case Ident(name) if name eq placeholderName => Ident(subject.name)
-                case _                                      => super.transform(tree)
-              }
-            }
-            replacePlaceholder.transform(qualifier)
+            renameVar(qualifier, placeholderParams.head.name, subject.name)
           } else {
             syntaxError(s"Cannot bind subject variable to ${subject.name} and use placeholder variable " +
               s"at the same time!", placeholderParams.last.pos)
@@ -999,10 +1007,12 @@ object Parsers {
             val name = id.name.toTermName
             val subject = ValDef(name, tpt, EmptyTree).withFlags(TermParam).withPos(Position(idOffset, in.offset))
             finish(subject)
+          } else {
+            finish(syntheticQTypeSubject(simpleType(Some(id))))
           }
-          else finish(syntheticValDef(simpleType(Some(id))))
+        } else {
+          finish(syntheticQTypeSubject(simpleType()))
         }
-        else finish(syntheticValDef(simpleType()))
       accept(RBRACE)
       if (placeholderParams.length > 1)
         syntaxError("Can only use one placeholder variable!", placeholderParams(placeholderParams.length-2).pos)
@@ -1928,6 +1938,13 @@ object Parsers {
       var imods: Modifiers = EmptyModifiers
       var implicitOffset = -1 // use once
       var firstClauseOfCaseClass = ofCaseClass
+      def propagateParamNameToQType(paramName: TermName, tpt: Tree): Tree =
+        tpt match {
+          case tpt @ QualifiedTypeTree(subject, expr) if subject.name ne paramName =>
+            cpy.QualifiedTypeTree(tpt)(cpy.ValDef(subject)(name = paramName), renameVar(expr, subject.name, paramName))
+          case _ =>
+            tpt
+        }
       def param(): ValDef = {
         val start = in.offset
         var mods = annotsAsMods()
@@ -1961,7 +1978,7 @@ object Parsers {
               accept(COLON)
               if (in.token == ARROW && owner.isTypeName && !(mods is Local))
                 syntaxError(VarValParametersMayNotBeCallByName(name, mods is Mutable))
-              paramType()
+              propagateParamNameToQType(name, paramType())
             }
           val default =
             if (in.token == EQUALS) { in.nextToken(); expr() }
@@ -1993,8 +2010,26 @@ object Parsers {
           }
         else Nil
       }
+      def optPrecond(paramss: List[List[ValDef]]): List[List[ValDef]] = {
+        if (in.token == IF) {
+          in.skipToken()
+          val qualifier = inParens(postfixExpr())
+          val subject = syntheticQTypeSubject(Ident(ctx.definitions.UnitType.name))
+          val precondQtpt = QualifiedTypeTree(subject, qualifier)
+          val precondName = ctx.freshName(nme.EVIDENCE_PARAM_PREFIX).toTermName
+          val precondParam = ValDef(precondName, precondQtpt, EmptyTree).withFlags(SyntheticTermParam | Implicit)
+
+          paramss.reverse match {
+            case (params @ (param :: _)) :: paramss0 if param.mods is Implicit =>
+              ((params :+ precondParam) :: paramss0).reverse
+            case _ =>
+              paramss :+ List(precondParam)
+          }
+        }
+        else paramss
+      }
       val start = in.offset
-      val result = clauses()
+      val result = optPrecond(clauses())
       if (owner == nme.CONSTRUCTOR && (result.isEmpty || (result.head take 1 exists (_.mods is Implicit)))) {
         in.token match {
           case LBRACKET   => syntaxError("no type parameters allowed here")
