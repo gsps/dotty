@@ -70,6 +70,7 @@ class PostTyper extends MacroTransform with IdentityDenotTransformer { thisTrans
   val superAcc = new SuperAccessors(thisTransformer)
   val paramFwd = new ParamForwarding(thisTransformer)
   val synthMth = new SyntheticMethods(thisTransformer)
+  val dynChecks = new qtypes.DynamicChecks(thisTransformer)
 
   private def newPart(tree: Tree): Option[New] = methPart(tree) match {
     case Select(nu: New, _) => Some(nu)
@@ -234,7 +235,8 @@ class PostTyper extends MacroTransform with IdentityDenotTransformer { thisTrans
           }
         case tree: DefDef =>
           transformMemberDef(tree)
-          superAcc.wrapDefDef(tree)(super.transform(tree).asInstanceOf[DefDef])
+          val dynChecked = dynChecks.addDynamicChecks(super.transform(tree).asInstanceOf[DefDef])
+          superAcc.wrapDefDef(tree)(dynChecked)
         case tree: TypeDef =>
           transformMemberDef(tree)
           val sym = tree.symbol

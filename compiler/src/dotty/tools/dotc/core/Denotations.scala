@@ -217,6 +217,16 @@ object Denotations {
     def requiredMethodRef(name: PreName, argTypes: List[Type])(implicit ctx: Context): TermRef =
       requiredMethod(name, argTypes).termRef
 
+    def requiredMethod(name: PreName, numParams: Int)(implicit ctx: Context): TermSymbol =
+      info.member(name.toTermName).requiredSymbol(x=>
+        (x is Method) && (x.info.paramTypess match {
+          case List(types) if types.length == numParams => true
+          case _ => false
+        })
+      ).asTerm
+    def requiredMethodRef(name: PreName, numParams: Int)(implicit ctx: Context): TermRef =
+      requiredMethod(name, numParams).termRef
+
     def requiredValue(name: PreName)(implicit ctx: Context): TermSymbol =
       info.member(name.toTermName).requiredSymbol(_.info.isParameterless).asTerm
     def requiredValueRef(name: PreName)(implicit ctx: Context): TermRef =

@@ -171,28 +171,6 @@ object desugar {
 
     val meth1 = addEvidenceParams(cpy.DefDef(meth)(tparams = tparams1), epbuf.toList)
 
-    /** Runtime checks for pre- and postconditions */
-    def withPrecondChecks(body: Tree): Tree = {
-      val reqs = vparamss.flatten.flatMap {
-        case ValDef(_, QualifiedTypeTree(_, qualifier), _) =>
-          Apply(ref(defn.Predef_require), qualifier :: Nil) :: Nil
-        case _ =>
-          Nil
-      }
-      if (reqs.nonEmpty) Block(reqs, body)
-      else body
-    }
-    def withPostcondCheck(body: Tree): Tree = tpt match {
-      case QualifiedTypeTree(subject, qualifier) =>
-        val newEns = New(TypeTree(defn.Ensuring.typeRef), List(List(body)))
-        Apply(Select(newEns, "ensuring".toTermName),
-          makeClosure(cpy.ValDef(subject)() :: Nil, qualifier, TypeTree(defn.BooleanType), inlineable = false) :: Nil)
-      case _ =>
-        body
-    }
-
-    val meth2 = cpy.DefDef(meth1)(rhs = withPostcondCheck(withPrecondChecks(meth1.rhs)))
-
     /** The longest prefix of parameter lists in vparamss whose total length does not exceed `n` */
     def takeUpTo(vparamss: List[List[ValDef]], n: Int): List[List[ValDef]] = vparamss match {
       case vparams :: vparamss1 =>
@@ -231,10 +209,10 @@ object desugar {
     }
 
     val defGetters = defaultGetters(vparamss, 0)
-    if (defGetters.isEmpty) meth2
+    if (defGetters.isEmpty) meth1
     else {
-      val meth3 = cpy.DefDef(meth2)(vparamss = normalizedVparamss)
-        .withMods(meth2.mods | DefaultParameterized)
+      val meth3 = cpy.DefDef(meth1)(vparamss = normalizedVparamss)
+        .withMods(meth1.mods | DefaultParameterized)
       Thicket(meth3 :: defGetters)
     }
   }
