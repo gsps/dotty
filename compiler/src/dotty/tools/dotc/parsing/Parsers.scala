@@ -821,7 +821,10 @@ object Parsers {
 
     def refinedTypeRest(t: Tree): Tree = {
       newLineOptWhenFollowedBy(LBRACE)
-      if (in.token == LBRACE) refinedTypeRest(atPos(startOffset(t)) { RefinedTypeTree(t, refinementNoLbrace()) })
+      if (in.token == LBRACE) {
+        in.skipToken()
+        refinedTypeRest(atPos(startOffset(t)) { RefinedTypeTree(t, refinementNoLbrace()) })
+      }
       else t
     }
 
