@@ -1017,10 +1017,14 @@ object Parsers {
           finish(syntheticQTypeSubject(simpleType()))
         }
       accept(RBRACE)
-      if (placeholderParams.length > 1)
-        syntaxError("Can only use one placeholder variable!", placeholderParams(placeholderParams.length-2).pos)
-      placeholderParams = saved
-      qtpt
+      try
+        if (placeholderParams.length > 1) {
+          syntaxError("Can only use one placeholder variable!", placeholderParams(placeholderParams.length - 2).pos)
+          cpy.QualifiedTypeTree(qtpt)(qtpt.subject, Literal(Constant(true)))
+        } else {
+          qtpt
+        }
+      finally placeholderParams = saved
     }
 
     /** RefinementOrQualifiedType ::= `{' RefinementNoLbrace | QualifiedTypeNoLbrace
@@ -2016,7 +2020,7 @@ object Parsers {
       def optPrecond(paramss: List[List[ValDef]]): List[List[ValDef]] = {
         if (in.token == IF) {
           in.skipToken()
-          val qualifier = inParens(postfixExpr())
+          val qualifier = checkNoEscapingPlaceholders(inParens(postfixExpr()))
           val subject = syntheticQTypeSubject(Ident(ctx.definitions.UnitType.name))
           val precondQtpt = QualifiedTypeTree(subject, qualifier)
           val precondName = ctx.freshName(nme.EVIDENCE_PARAM_PREFIX).toTermName
