@@ -142,8 +142,6 @@ object desugar {
    *  ==>
    *      def f[T >: L <: H](params)(implicit evidence$0: B[T])
    *
-   *  Add require and ensure statements for pre- and postconditions.
-   *
    *  Expand default arguments to default getters. E.g,
    *
    *      def f[T: B](x: Int = 1)(y: String = x + "m") = ...
@@ -211,9 +209,9 @@ object desugar {
     val defGetters = defaultGetters(vparamss, 0)
     if (defGetters.isEmpty) meth1
     else {
-      val meth3 = cpy.DefDef(meth1)(vparamss = normalizedVparamss)
+      val meth2 = cpy.DefDef(meth1)(vparamss = normalizedVparamss)
         .withMods(meth1.mods | DefaultParameterized)
-      Thicket(meth3 :: defGetters)
+      Thicket(meth2 :: defGetters)
     }
   }
 
