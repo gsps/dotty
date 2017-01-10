@@ -656,6 +656,30 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
       loop(from, Nil, to :: Nil)
     }
 
+    /** Replace types of idents referring to `sym` by QualifierSubject referring to `qtp`.
+      */
+    def substQualifierSubject(fromSym: Symbol, toQtp: QualifiedType)(implicit ctx: Context): ThisTree = {
+      def treeMap(t: Tree): Tree = t match {
+        case t: Ident if t.symbol eq fromSym =>
+          cpy.Ident(t)(t.name).withType(QualifierSubject(toQtp))
+        case _ =>
+          t
+      }
+      new TreeTypeMap(treeMap = treeMap).apply(tree)
+    }
+
+    /** Replace types of idents typed QualifierSubject referring to `qtp` by a ref to `sym`.
+      */
+    def substQualifierSubject(fromQtp: QualifiedType, toSym: Symbol)(implicit ctx: Context): ThisTree = {
+      def treeMap(t: Tree): Tree = t match {
+        case t: Ident if t.tpe.dealias == QualifierSubject(fromQtp) =>
+          ref(toSym)
+        case _ =>
+          t
+      }
+      new TreeTypeMap(treeMap = treeMap).apply(tree)
+    }
+
     /** After phase `trans`, set the owner of every definition in this tree that was formerly
      *  owner by `from` to `to`.
      */

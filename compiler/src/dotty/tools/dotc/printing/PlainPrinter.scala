@@ -202,8 +202,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
         ParamRefNameString(tp) ~ ".type"
       case AnnotatedType(tpe, annot) =>
         toTextLocal(tpe) ~ " " ~ toText(annot)
-      case QualifiedType(subject, expr) =>
-        "{" ~ toText(subject.name) ~ ": " ~ toText(subject.tpt) ~ " => " ~ toText(expr) ~ "}"
+      case tp @ QualifiedType(subject, tpe) =>
+        "{" ~ toText(subject) ~ ": " ~ toText(tpe) ~ " => " ~ toText(tp.qualifier) ~ "}"
       case AppliedType(tycon, args) =>
         toTextLocal(tycon) ~ "[" ~ Text(args.map(argText), ", ") ~ "]"
       case tp: TypeVar =>

@@ -3260,6 +3260,23 @@ object Types {
       }
   }
 
+  /** Represents the type of the subject variable in a QualifiedType's qualifier tree. */
+  case class QualifierSubject(binder: QualifiedType) extends BoundType {
+    type BT = QualifiedType
+    def copyBoundType(bt: BT) = QualifierSubject(bt)
+
+    override def underlying(implicit ctx: Context): Type = binder.tpe
+
+    override def toString = "QualifierSubject"
+
+    override def computeHash = binder.identityHash
+
+    override def equals(that: Any) = that match {
+      case that: QualifierSubject => this.binder eq that.binder
+      case _ => false
+    }
+  }
+
   // ----- Skolem types -----------------------------------------------
 
   /** A skolem type reference with underlying type `binder`. */
@@ -3606,13 +3623,42 @@ object Types {
   // ----- Qualified types ----------------------------------------------------------
 
   /** An qualified type tpe with expr */
-  case class QualifiedType(subject: ValDef, expr: Tree)
-    extends UncachedProxyType with ValueType {
+  case class QualifiedType(subject: TermName, tpe: Type)(qualBuilder: QualifiedType => Tree)
+    extends UncachedProxyType with BindingType with ValueType {
+
     // TODO: cache them?
-    override def underlying(implicit ctx: Context): Type = subject.tpe
-    def derivedQualifiedType(subject: ValDef, expr: Tree) =
-      if ((subject eq this.subject) && (expr eq this.expr)) this
-      else QualifiedType(subject, expr)
+    override def underlying(implicit ctx: Context): Type = tpe
+
+    def derivedQualifiedType(subject: TermName, tpe: Type, qualifier: Tree)(implicit ctx: Context) =
+      if ((subject eq this.subject) && (tpe eq this.tpe) && (qualifier eq this.qualifier)) this
+      else {
+        def qualBuilder1(qtp1: QualifiedType) =
+          new TreeTypeMap(typeMap = identity(_).subst(this, qtp1)).transform(qualifier)
+        new QualifiedType(subject, tpe)(qualBuilder1)
+      }
+
+    // FIXME: private[core]?
+    val qualifier = qualBuilder(this)
+
+    // TODO: computeHash
+//    override def computeHash = doHash(subject, tpe, qualifier.hashCode())
+    override def equals(that: Any): Boolean = that match {
+      case that: QualifiedType =>
+        (this.subject eq that.subject) && (this.tpe eq that.tpe) && (this.qualifier == that.qualifier)
+      case _ =>
+        false
+    }
+
+    override def toString = s"QualifiedType($subject, $tpe, $qualifier)"
+  }
+
+  object QualifiedType {
+    // TODO: Caching for QualifiedTypes?
+    def apply(subject: ValDef, expr: Tree)(implicit ctx: Context) = {
+      def qualBuilder(qtp: QualifiedType) =
+        expr.substQualifierSubject(subject.symbol, qtp)
+      new QualifiedType(subject.name, subject.tpt.tpe)(qualBuilder)
+    }
   }
 
   // Special type objects and classes -----------------------------------------------------
@@ -3807,8 +3853,8 @@ object Types {
       tp.derivedAndOrType(tp1, tp2)
     protected def derivedAnnotatedType(tp: AnnotatedType, underlying: Type, annot: Annotation): Type =
       tp.derivedAnnotatedType(underlying, annot)
-    protected def derivedQualifiedType(tp: QualifiedType, subject: ValDef, expr: Tree): Type =
-      tp.derivedQualifiedType(subject, expr)
+    protected def derivedQualifiedType(tp: QualifiedType, subject: TermName, parent: Type, qualifier: Tree): Type =
+      tp.derivedQualifiedType(subject, parent, qualifier)
     protected def derivedWildcardType(tp: WildcardType, bounds: Type): Type =
       tp.derivedWildcardType(bounds)
     protected def derivedClassInfo(tp: ClassInfo, pre: Type): Type =
@@ -3912,11 +3958,9 @@ object Types {
           if (underlying1 eq underlying) tp
           else derivedAnnotatedType(tp, underlying1, mapOver(annot))
 
-        case tp @ QualifiedType(subject, expr) =>
-          // TODO: How to safely transform the type of subject given that `expr`
-          //  should remain well-typed (and references to the symbol of subject
-          //  should remain intact)?
-          tp
+        case tp @ QualifiedType(subject, parent) =>
+          // TODO: Introduce TreeTypeMap to also replace types in qualifier?
+          derivedQualifiedType(tp, subject, this(parent), tp.qualifier)
 
         case tp: WildcardType =>
           derivedWildcardType(tp, mapOver(tp.optBounds))
@@ -4279,9 +4323,9 @@ object Types {
       case AnnotatedType(underlying, annot) =>
         this(applyToAnnot(x, annot), underlying)
 
-      case QualifiedType(subject, expr) =>
-        // TODO: Apply to qualifier expr?
-        this(x, subject.tpe)
+      case QualifiedType(_, tpe) =>
+        // TODO: Also accumulate types in qualifier expr?
+        this(x, tpe)
 
       case tp: ProtoType =>
         tp.fold(x, this)

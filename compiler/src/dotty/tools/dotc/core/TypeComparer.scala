@@ -266,8 +266,8 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
           secondTry(tp1, tp2)
       }
       compareErasedValueType
-    case QualifiedType(subject, _) =>
-      isSubType(tp1, subject.tpt.tpe)
+    case QualifiedType(_, parent) =>
+      isSubType(tp1, parent)
     case ConstantType(v2) =>
       tp1 match {
         case ConstantType(v1) => v1.value == v2.value
@@ -349,8 +349,8 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
           false
       }
       joinOK || isSubType(tp11, tp2) && isSubType(tp12, tp2)
-    case QualifiedType(subject, _) =>
-      isSubType(subject.tpt.tpe, tp2)
+    case QualifiedType(_, parent) =>
+      isSubType(parent, tp2)
     case _: FlexType =>
       true
     case _ =>
