@@ -859,7 +859,7 @@ object Parsers {
      *                     |  Literal
      */
     def simpleType(preparsedIdent: Option[Ident] = None): Tree = simpleTypeRest {
-      def handlePath() = {
+      def handlePath(preparsedIdent: Option[Ident]) = {
         path(thisOK = false, handleSingletonType, preparsedIdent) match {
           case r @ SingletonTypeTree(_) => r
           case r => convertToTypeId(r)
@@ -877,9 +877,9 @@ object Parsers {
           val start = in.skipToken()
           typeBounds().withPos(Position(start, in.lastOffset, start))
         }
-        else handlePath()
+        else handlePath(preparsedIdent)
       } else {
-        handlePath()
+        handlePath(preparsedIdent)
       }
     }
 
