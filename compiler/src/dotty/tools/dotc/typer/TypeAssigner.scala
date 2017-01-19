@@ -108,6 +108,15 @@ trait TypeAssigner {
             case _ =>
               range(tp.bottomType, tp.topType) // should happen only in error cases
           }
+        case tp: QualifiedType =>
+          val tpe1 = apply(tp.tpe)
+          def toAvoid(tree: Tree): Boolean = tree existsSubTree {
+            case tree: DenotingTree => forbidden contains tree.denot.symbol
+            // TODO: What about Super?
+            case _ => false
+          }
+          // TODO: Do something smarter than widening the QType in case toAvoid is true
+          if (toAvoid(tp.qualifier)) tpe1 else tp.derivedQualifiedType(tp.subject, tpe1, tp.qualifier)
         case tp: ThisType if toAvoid(tp.cls) =>
           range(tp.bottomType, apply(classBound(tp.cls.classInfo)))
         case tp: TypeVar if ctx.typerState.constraint.contains(tp) =>

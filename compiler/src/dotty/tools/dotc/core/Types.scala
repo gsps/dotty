@@ -1307,6 +1307,14 @@ object Types {
     final def substParams(from: BindingType, to: List[Type])(implicit ctx: Context): Type =
       ctx.substParams(this, from, to, null)
 
+    /** Substitute bound parameters by some argument trees */
+    final def substParamsWithTrees(from: BindingType, to: List[Tree])(implicit ctx: Context): Type =
+      ctx.substParamsWithTrees(this, from, to, null)
+
+//    /** Substitute bound parameters by some symbols */
+//    final def substParamsWithSymbols(from: BindingType, to: List[Symbol])(implicit ctx: Context): Type =
+//      ctx.substParamsWithSymbols(this, from, to, null)
+
     /** Substitute all occurrences of symbols in `from` by references to corresponding symbols in `to`
      */
     final def substSym(from: List[Symbol], to: List[Symbol])(implicit ctx: Context): Type =
@@ -2664,11 +2672,14 @@ object Types {
         (if (status == TrueDeps) status else status | provisional).toByte
       }
       val depStatusAcc = new TypeAccumulator[DependencyStatus] {
-        def apply(status: DependencyStatus, tp: Type) =
+        def apply(status: DependencyStatus, tp: Type): DependencyStatus =
           if (status == TrueDeps) status
           else
             tp match {
               case TermParamRef(`thisLambdaType`, _) => TrueDeps
+              case tp: QualifiedType =>
+                val status1 = apply(status, tp.tpe)
+                tp.qualifier.deepFold(status1)((status, tree) => apply(status, tree.tpe))
               case tp: TypeRef =>
                 val status1 = foldOver(status, tp)
                 tp.info match { // follow type alias to avoid dependency
@@ -3654,10 +3665,17 @@ object Types {
 
   object QualifiedType {
     // TODO: Caching for QualifiedTypes?
+
     def apply(subject: ValDef, expr: Tree)(implicit ctx: Context) = {
       def qualBuilder(qtp: QualifiedType) =
         expr.substQualifierSubject(subject.symbol, qtp)
       new QualifiedType(subject.name, subject.tpt.tpe)(qualBuilder)
+    }
+
+    def apply(tp: Type)(implicit ctx: Context) = {
+      val name = (nme.SUBJECT_PARAM_PREFIX + "unused").toTermName
+      val trueLit = Literal(Constant(true))
+      new QualifiedType(name, tp)(_ => trueLit)
     }
   }
 
@@ -4323,9 +4341,11 @@ object Types {
       case AnnotatedType(underlying, annot) =>
         this(applyToAnnot(x, annot), underlying)
 
-      case QualifiedType(_, tpe) =>
-        // TODO: Also accumulate types in qualifier expr?
-        this(x, tpe)
+      case tp: QualifiedType =>
+//        // TODO: Evaluate the performance impact of folding over the qualifier trees here.
+//        val x1 = this(x, tp.tpe)
+//        tp.qualifier.deepFold(x1)((x: T, tree: Tree) => this(x, tree.tpe))
+        this(x, tp.tpe)
 
       case tp: ProtoType =>
         tp.fold(x, this)
