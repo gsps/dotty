@@ -23,12 +23,17 @@ object OrderingConstraint {
   type ParamOrdering = ArrayValuedMap[List[TypeParamRef]]
 
   /** A new constraint with given maps */
-  private def newConstraint(boundsMap: ParamBounds, lowerMap: ParamOrdering, upperMap: ParamOrdering)(implicit ctx: Context) : OrderingConstraint = {
-    val result = new OrderingConstraint(boundsMap, lowerMap, upperMap)
+  private def newConstraint(boundsMap: ParamBounds, lowerMap: ParamOrdering, upperMap: ParamOrdering,
+                            qtypeCnstr: QTypesConstraint)(implicit ctx: Context) : OrderingConstraint = {
+    val result = new OrderingConstraint(boundsMap, lowerMap, upperMap, qtypeCnstr)
     if (Config.checkConstraintsNonCyclic) result.checkNonCyclic()
     ctx.runInfo.recordConstraintSize(result, result.boundsMap.size)
     result
   }
+
+  /** The empty constraint */
+  def empty: OrderingConstraint =
+    new OrderingConstraint(SimpleMap.Empty, SimpleMap.Empty, SimpleMap.Empty, new QTypesConstraint(List.empty))
 
   /** A lens for updating a single entry array in one of the three constraint maps */
   abstract class ConstraintLens[T <: AnyRef: ClassTag] {
@@ -84,7 +89,7 @@ object OrderingConstraint {
     def entries(c: OrderingConstraint, poly: TypeLambda): Array[Type] =
       c.boundsMap(poly)
     def updateEntries(c: OrderingConstraint, poly: TypeLambda, entries: Array[Type])(implicit ctx: Context): OrderingConstraint =
-      newConstraint(c.boundsMap.updated(poly, entries), c.lowerMap, c.upperMap)
+      newConstraint(c.boundsMap.updated(poly, entries), c.lowerMap, c.upperMap, c.qtypeCnstr)
     def initial = NoType
   }
 
@@ -92,7 +97,7 @@ object OrderingConstraint {
     def entries(c: OrderingConstraint, poly: TypeLambda): Array[List[TypeParamRef]] =
       c.lowerMap(poly)
     def updateEntries(c: OrderingConstraint, poly: TypeLambda, entries: Array[List[TypeParamRef]])(implicit ctx: Context): OrderingConstraint =
-      newConstraint(c.boundsMap, c.lowerMap.updated(poly, entries), c.upperMap)
+      newConstraint(c.boundsMap, c.lowerMap.updated(poly, entries), c.upperMap, c.qtypeCnstr)
     def initial = Nil
   }
 
@@ -100,7 +105,7 @@ object OrderingConstraint {
     def entries(c: OrderingConstraint, poly: TypeLambda): Array[List[TypeParamRef]] =
       c.upperMap(poly)
     def updateEntries(c: OrderingConstraint, poly: TypeLambda, entries: Array[List[TypeParamRef]])(implicit ctx: Context): OrderingConstraint =
-      newConstraint(c.boundsMap, c.lowerMap, c.upperMap.updated(poly, entries))
+      newConstraint(c.boundsMap, c.lowerMap, c.upperMap.updated(poly, entries), c.qtypeCnstr)
     def initial = Nil
   }
 }
@@ -125,9 +130,10 @@ import OrderingConstraint._
  *               to a parameter P of the type lambda; it contains all constrained parameters
  *               Q that are known to be greater than P, i.e. P <: Q.
  */
-class OrderingConstraint(private val boundsMap: ParamBounds,
-                         private val lowerMap : ParamOrdering,
-                         private val upperMap : ParamOrdering) extends Constraint {
+class OrderingConstraint(private val boundsMap : ParamBounds,
+                         private val lowerMap  : ParamOrdering,
+                         private val upperMap  : ParamOrdering,
+                         private val qtypeCnstr: QTypesConstraint) extends Constraint {
 
   type This = OrderingConstraint
 
@@ -286,7 +292,7 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
     val entries1 = new Array[Type](nparams * 2)
     poly.paramInfos.copyToArray(entries1, 0)
     tvars.copyToArray(entries1, nparams)
-    newConstraint(boundsMap.updated(poly, entries1), lowerMap, upperMap).init(poly)
+    newConstraint(boundsMap.updated(poly, entries1), lowerMap, upperMap, qtypeCnstr).init(poly)
   }
 
   /** Split dependent parameters off the bounds for parameters in `poly`.
@@ -440,7 +446,8 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
       }
       po.remove(pt).mapValuesNow(removeFromBoundss)
     }
-    newConstraint(boundsMap.remove(pt), removeFromOrdering(lowerMap), removeFromOrdering(upperMap))
+    newConstraint(boundsMap.remove(pt), removeFromOrdering(lowerMap),
+      removeFromOrdering(upperMap), qtypeCnstr)
   }
 
   def isRemovable(pt: TypeLambda): Boolean = {
@@ -528,7 +535,8 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
     new OrderingConstraint(
         merge(this.boundsMap, that.boundsMap, mergeEntries),
         merge(this.lowerMap, that.lowerMap, mergeParams),
-        merge(this.upperMap, that.upperMap, mergeParams))
+        merge(this.upperMap, that.upperMap, mergeParams),
+        qtypeCnstr)
   }
 
   override def checkClosed()(implicit ctx: Context): Unit = {
@@ -625,4 +633,13 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
     }
     constrainedText + "\n" + boundsText
   }
+
+
+  // ---------- Qualified types -----------------------------------------
+
+  def add(tp1: Type, tp2: Type)(implicit ctx: Context): This =
+    new OrderingConstraint(boundsMap, lowerMap, upperMap, qtypeCnstr.add(tp1, tp2))
+
+  def qtypeImpls: List[QTypesConstraint.Impl] =
+    qtypeCnstr.impls
 }
