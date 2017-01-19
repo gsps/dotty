@@ -554,12 +554,14 @@ class Scala2Unpickler(bytes: Array[Byte], classRoot: ClassDenotation, moduleClas
             setClassInfo(denot, tp, selfInfo)
           case denot =>
             val tp1 = translateTempPoly(tp)
+            // For certain methods we augment the signature with QualifiedTypes
+            val tp2 = defn.augmentScalaLibDenotWithQTypes(denot, tp1)
             denot.info =
-              if (tag == ALIASsym) TypeAlias(tp1)
-              else if (denot.isType) checkNonCyclic(denot.symbol, tp1, reportErrors = false)
+              if (tag == ALIASsym) TypeAlias(tp2)
+              else if (denot.isType) checkNonCyclic(denot.symbol, tp2, reportErrors = false)
                 // we need the checkNonCyclic call to insert LazyRefs for F-bounded cycles
-              else if (!denot.is(Param)) tp1.underlyingIfRepeated(isJava = false)
-              else tp1
+              else if (!denot.is(Param)) tp2.underlyingIfRepeated(isJava = false)
+              else tp2
 
             if (!denot.isType) { // Only terms might have leaky aliases, see the documentation of `checkNoPrivateLeaks`
               val sym = denot.symbol

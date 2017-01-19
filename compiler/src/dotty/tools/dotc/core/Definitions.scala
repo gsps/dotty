@@ -1077,4 +1077,38 @@ class Definitions {
 
   def ErasedPhantom_UNIT(implicit ctx: Context) = ErasedPhantomClass.linkedClass.requiredValue("UNIT")
 
+
+  // ----- Qualified Types ----------------------------------------------------------
+
+  /**
+    * The Scala standard library contains various methods that ought to carry qualified type
+    * signatures. Rather than changing scala-library itself, we modify its denotations upon
+    * loading in Scala2Unpickler.scala.
+    */
+  lazy val augmentScalaLibDenotWithQTypes = new ((SymDenotation, Type) => Type) {
+    private object Consts {
+      val NumericClasses: Set[Symbol] = ScalaNumericValueTypeList.map(_.symbol.asClass).toSet
+
+      import nme._
+      val UnaryArithOpNames   = Set[Name](UNARY_+, UNARY_-, UNARY_!)
+      val BinaryArithOpNames  = Set[Name](ADD, SUB, MUL, DIV, MOD, LSL, LSR, ASR, LT, LE, GE, GT)
+    }
+    import Consts._
+
+    // TODO: This isn't doing anything useful yet; we're just introducing trivially qualified result types atm.
+    override def apply(denot: SymDenotation, tp: Type): Type = {
+      val clazz  = denot.owner
+      val opName = denot.name
+      if (NumericClasses contains denot.owner) {
+        if (UnaryArithOpNames contains opName) {
+          val exprTp @ ExprType(resTp) = tp
+          exprTp.derivedExprType(QualifiedType(resTp))
+        } else if (BinaryArithOpNames contains opName) {
+          val methTp @ MethodType(paramNames, List(paramTp1)) = tp
+          methTp.derivedMethodType(paramNames, List(QualifiedType(paramTp1)), QualifiedType(methTp.resultType))
+        } else tp
+      } else tp
+    }
+  }
+
 }
