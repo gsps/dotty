@@ -15,10 +15,10 @@ class DynamicChecks(thisTransformer: DenotTransformer) {
   import ast.tpd._
 
   private def makePostcondBlock(owner: Symbol, qtp: QualifiedType, body: Tree)(implicit ctx: Context): Tree = {
-    val QualifiedType(subject, tpe) = qtp
+    val QualifiedType(subject, parent) = qtp
     val statResSym = ctx.newSymbol(
       owner, subject, Synthetic,
-      tpe.widen, coord = owner.coord)
+      parent.widen, coord = owner.coord)
 
     val statRes = ValDef(statResSym, body)
     val qualifier1 = qtp.qualifier.substQualifierSubject(qtp, statResSym)

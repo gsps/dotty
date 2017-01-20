@@ -19,7 +19,7 @@ trait Substituters { this: Context =>
         if (tp.currentSymbol.isStatic) tp
         else tp.derivedSelect(subst(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val tpe1 = subst(tp.tpe, from, to, theMap)
+        val tpe1 = subst(tp.parent, from, to, theMap)
         val qualifier1 = new TreeTypeMap(typeMap = subst(_, from, to, theMap)).apply(tp.qualifier)
         tp.derivedQualifiedType(tp.subject, tpe1, qualifier1)
       case _: ThisType | NoPrefix =>
@@ -37,7 +37,7 @@ trait Substituters { this: Context =>
         if (sym.isStatic && !from.isStatic) tp
         else tp.derivedSelect(subst1(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val tpe1 = subst1(tp.tpe, from, to, theMap)
+        val tpe1 = subst1(tp.parent, from, to, theMap)
         val qualifier1 = new TreeTypeMap(typeMap = subst1(_, from, to, theMap)).apply(tp.qualifier)
         tp.derivedQualifiedType(tp.subject, tpe1, qualifier1)
       case _: ThisType | _: BoundType | NoPrefix =>
@@ -57,7 +57,7 @@ trait Substituters { this: Context =>
         if (sym.isStatic && !from1.isStatic && !from2.isStatic) tp
         else tp.derivedSelect(subst2(tp.prefix, from1, to1, from2, to2, theMap))
       case tp: QualifiedType =>
-        val tpe1 = subst2(tp.tpe, from1, to1, from2, to2, theMap)
+        val tpe1 = subst2(tp.parent, from1, to1, from2, to2, theMap)
         val qualifier1 = new TreeTypeMap(typeMap = subst2(_, from1, to1, from2, to2, theMap)).apply(tp.qualifier)
         tp.derivedQualifiedType(tp.subject, tpe1, qualifier1)
       case _: ThisType | _: BoundType | NoPrefix =>
@@ -82,7 +82,7 @@ trait Substituters { this: Context =>
         if (sym.isStatic && !existsStatic(from)) tp
         else tp.derivedSelect(subst(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val tpe1 = subst(tp.tpe, from, to, theMap)
+        val tpe1 = subst(tp.parent, from, to, theMap)
         val qualifier1 = new TreeTypeMap(typeMap = subst(_, from, to, theMap)).apply(tp.qualifier)
         tp.derivedQualifiedType(tp.subject, tpe1, qualifier1)
       case _: ThisType | _: BoundType | NoPrefix =>
@@ -206,7 +206,7 @@ trait Substituters { this: Context =>
         if (tp.currentSymbol.isStatic) tp
         else tp.derivedSelect(substParams(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val tpe1 = substParams(tp.tpe, from, to, theMap)
+        val tpe1 = substParams(tp.parent, from, to, theMap)
         val qualifier1 = new TreeTypeMap(typeMap = substParams(_, from, to, theMap)).apply(tp.qualifier)
         tp.derivedQualifiedType(tp.subject, tpe1, qualifier1)
       case _: ThisType | NoPrefix =>
@@ -224,7 +224,7 @@ trait Substituters { this: Context =>
         if (tp.currentSymbol.isStatic) tp
         else tp.derivedSelect(substParamsWithTrees(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val tpe1 = substParamsWithTrees(tp.tpe, from, to, theMap)
+        val tpe1 = substParamsWithTrees(tp.parent, from, to, theMap)
         // TODO: Not sure whether this actually covers everything. Can params in the qualifier have more complex types?
         def treeMap(tree: Tree): Tree = tree.tpe.widen match {
           case tp: ParamType if tp.binder == from => to(tp.paramNum)

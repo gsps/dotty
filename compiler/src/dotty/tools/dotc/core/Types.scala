@@ -2678,7 +2678,7 @@ object Types {
             tp match {
               case TermParamRef(`thisLambdaType`, _) => TrueDeps
               case tp: QualifiedType =>
-                val status1 = apply(status, tp.tpe)
+                val status1 = apply(status, tp.parent)
                 tp.qualifier.deepFold(status1)((status, tree) => apply(status, tree.tpe))
               case tp: TypeRef =>
                 val status1 = foldOver(status, tp)
@@ -3276,7 +3276,7 @@ object Types {
     type BT = QualifiedType
     def copyBoundType(bt: BT) = QualifierSubject(bt)
 
-    override def underlying(implicit ctx: Context): Type = binder.tpe
+    override def underlying(implicit ctx: Context): Type = binder.parent
 
     override def toString = "QualifierSubject"
 
@@ -3634,18 +3634,18 @@ object Types {
   // ----- Qualified types ----------------------------------------------------------
 
   /** An qualified type tpe with expr */
-  case class QualifiedType(subject: TermName, tpe: Type)(qualBuilder: QualifiedType => Tree)
+  case class QualifiedType(subject: TermName, parent: Type)(qualBuilder: QualifiedType => Tree)
     extends UncachedProxyType with BindingType with ValueType {
 
     // TODO: cache them?
-    override def underlying(implicit ctx: Context): Type = tpe
+    override def underlying(implicit ctx: Context): Type = parent
 
-    def derivedQualifiedType(subject: TermName, tpe: Type, qualifier: Tree)(implicit ctx: Context) =
-      if ((subject eq this.subject) && (tpe eq this.tpe) && (qualifier eq this.qualifier)) this
+    def derivedQualifiedType(subject: TermName, parent: Type, qualifier: Tree)(implicit ctx: Context) =
+      if ((subject eq this.subject) && (parent eq this.parent) && (qualifier eq this.qualifier)) this
       else {
         def qualBuilder1(qtp1: QualifiedType) =
           new TreeTypeMap(typeMap = identity(_).subst(this, qtp1)).transform(qualifier)
-        new QualifiedType(subject, tpe)(qualBuilder1)
+        new QualifiedType(subject, parent)(qualBuilder1)
       }
 
     // FIXME: private[core]?
@@ -3655,12 +3655,12 @@ object Types {
 //    override def computeHash = doHash(subject, tpe, qualifier.hashCode())
     override def equals(that: Any): Boolean = that match {
       case that: QualifiedType =>
-        (this.subject eq that.subject) && (this.tpe eq that.tpe) && (this.qualifier == that.qualifier)
+        (this.subject eq that.subject) && (this.parent eq that.parent) && (this.qualifier == that.qualifier)
       case _ =>
         false
     }
 
-    override def toString = s"QualifiedType($subject, $tpe, $qualifier)"
+    override def toString = s"QualifiedType($subject, $parent, $qualifier)"
   }
 
   object QualifiedType {
@@ -3672,10 +3672,10 @@ object Types {
       new QualifiedType(subject.name, subject.tpt.tpe)(qualBuilder)
     }
 
-    def apply(tp: Type)(implicit ctx: Context) = {
+    def apply(parent: Type)(implicit ctx: Context) = {
       val name = (nme.SUBJECT_PARAM_PREFIX + "unused").toTermName
       val trueLit = Literal(Constant(true))
-      new QualifiedType(name, tp)(_ => trueLit)
+      new QualifiedType(name, parent)(_ => trueLit)
     }
   }
 
@@ -4345,7 +4345,7 @@ object Types {
 //        // TODO: Evaluate the performance impact of folding over the qualifier trees here.
 //        val x1 = this(x, tp.tpe)
 //        tp.qualifier.deepFold(x1)((x: T, tree: Tree) => this(x, tree.tpe))
-        this(x, tp.tpe)
+        this(x, tp.parent)
 
       case tp: ProtoType =>
         tp.fold(x, this)

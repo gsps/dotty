@@ -109,7 +109,7 @@ trait TypeAssigner {
               range(tp.bottomType, tp.topType) // should happen only in error cases
           }
         case tp: QualifiedType =>
-          val tpe1 = apply(tp.tpe)
+          val tpe1 = apply(tp.parent)
           def toAvoid(tree: Tree): Boolean = tree existsSubTree {
             case tree: DenotingTree => forbidden contains tree.denot.symbol
             // TODO: What about Super?
