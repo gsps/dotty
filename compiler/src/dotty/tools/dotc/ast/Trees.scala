@@ -1281,7 +1281,7 @@ object Trees {
     class ShallowFolder[X](f: (X, Tree) => X) extends TreeAccumulator[X] {
       def apply(x: X, tree: Tree)(implicit ctx: Context): X = {
         val x1 = f(x, tree)
-        if (x1.asInstanceOf[AnyRef] ne x1.asInstanceOf[AnyRef]) x1
+        if (x1.asInstanceOf[AnyRef] ne x.asInstanceOf[AnyRef]) x1
         else foldOver(x1, tree)
       }
     }
