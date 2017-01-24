@@ -464,7 +464,8 @@ object Build {
       libraryDependencies ++= Seq("com.typesafe.sbt" % "sbt-interface" % sbtVersion.value,
                                   ("org.scala-lang.modules" %% "scala-xml" % "1.0.6").withDottyCompat(),
                                   "com.novocode" % "junit-interface" % "0.11" % "test",
-                                  "org.scala-lang" % "scala-library" % scalacVersion % "test"),
+                                  "org.scala-lang" % "scala-library" % scalacVersion % "test",
+                                  "ch.epfl.lara" %% "stainless" % "0.1"),
 
       // enable improved incremental compilation algorithm
       incOptions := incOptions.value.withNameHashing(true),
@@ -713,7 +714,12 @@ object Build {
     },
     packageSrc in Compile := (packageSrc in Compile).dependsOn(cleanSbtBridge).value,
     description := "sbt compiler bridge for Dotty",
-    resolvers += Resolver.typesafeIvyRepo("releases"), // For org.scala-sbt:api
+    resolvers ++= Seq(
+      Resolver.typesafeIvyRepo("releases"), // For org.scala-sbt stuff
+      "Sonatype OSS Snapshots" at "https://oss.sonatype.org/content/repositories/snapshots",
+      "Sonatype OSS Releases" at "https://oss.sonatype.org/content/repositories/releases",
+      "uuverifiers" at "http://logicrunch.it.uu.se:4096/~wv/maven"
+    ),
     libraryDependencies ++= Seq(
       "com.typesafe.sbt" % "sbt-interface" % sbtVersion.value,
       "org.scala-sbt" % "api" % sbtVersion.value % "test",
