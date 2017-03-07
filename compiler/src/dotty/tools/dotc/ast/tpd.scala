@@ -660,7 +660,7 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
       */
     def substQualifierSubject(fromSym: Symbol, toQtp: QualifiedType)(implicit ctx: Context): ThisTree = {
       def treeMap(t: Tree): Tree = t match {
-        case t: Ident if t.symbol eq fromSym =>
+        case t: Ident if t.symbol == fromSym =>
           cpy.Ident(t)(t.name).withType(QualifierSubject(toQtp))
         case _ =>
           t
