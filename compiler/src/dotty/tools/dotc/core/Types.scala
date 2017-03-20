@@ -250,6 +250,7 @@ object Types {
     /** Is this type produced as a repair for an error? */
     final def isError(implicit ctx: Context): Boolean = stripTypeVar match {
       case _: ErrorType => true
+      case _: MethodParam => false
       case tp => (tp.typeSymbol is Erroneous) || (tp.termSymbol is Erroneous)
     }
 
