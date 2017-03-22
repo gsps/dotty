@@ -247,7 +247,7 @@ class TreeUnpickler(reader: TastyReader, nameAtRef: NameRef => TermName, posUnpi
               AnnotatedType(readType(), Annotation(readTerm()))
             case QUALIFIEDtype =>
 //              QualifiedType(readType(), readTerm())
-              QualifiedType(EmptyValDef, EmptyTree)
+              QualifiedType(EmptyValDef, false, EmptyTree)
             case ANDtype =>
               AndType(readType(), readType())
             case ORtype =>

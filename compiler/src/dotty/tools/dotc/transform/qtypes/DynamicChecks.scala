@@ -17,7 +17,7 @@ class DynamicChecks(thisTransformer: DenotTransformer) {
   private def makeCheckedExpr(owner: Symbol, qtp: QualifiedType, body: Tree, errorStrPrefix: String = "")(
     implicit ctx: Context): Tree =
   {
-    val QualifiedType(subject, parent) = qtp
+    val QualifiedType(subject, parent, true) = qtp
     val statResSym = ctx.newSymbol(
       owner, subject, Synthetic,
       parent.widen, coord = owner.coord)

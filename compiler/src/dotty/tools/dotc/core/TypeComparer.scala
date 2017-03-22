@@ -266,7 +266,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
           secondTry(tp1, tp2)
       }
       compareErasedValueType
-    case tp2 @ QualifiedType(_, parent2) =>
+    case tp2 @ QualifiedType(_, parent2, _) =>
       println(i"SUBTYPING QT!  $tp1  <:?  $tp2")
       // TODO: Rather than only delegating to isSubtype(tp1, parent2), we could be more liberal:
       //  E.g. we could also allow the case where tp1 is a SingletonType and tp2 is QualifiedType
@@ -356,7 +356,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
           false
       }
       joinOK || isSubType(tp11, tp2) && isSubType(tp12, tp2)
-    case QualifiedType(_, parent) =>
+    case QualifiedType(_, parent, _) =>
       // TODO: Rather than only delegating to isSubtype(parent, tp2), try to check precisely
       //  whether tp1 (with its qualifier) is a subtype of tp2 (which may, e.g., be a SingletonType).
       isSubType(parent, tp2)

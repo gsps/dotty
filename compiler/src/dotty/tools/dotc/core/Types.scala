@@ -3635,28 +3635,33 @@ object Types {
   // ----- Qualified types ----------------------------------------------------------
 
   /** An qualified type tpe with expr */
-  case class QualifiedType(subject: TermName, parent: Type)(qualBuilder: QualifiedType => Tree)
-    extends UncachedProxyType with BindingType with ValueType {
+  case class QualifiedType(subject: TermName, parent: Type, precise: Boolean)(qualifierExp: QualifiedType => Tree)
+    extends UncachedProxyType with BindingType with ValueType
+  {
 
     // TODO: cache them?
     override def underlying(implicit ctx: Context): Type = parent
 
-    def derivedQualifiedType(subject: TermName, parent: Type, qualifier: Tree)(implicit ctx: Context) =
-      if ((subject eq this.subject) && (parent eq this.parent) && (qualifier eq this.qualifier)) this
+    def derivedQualifiedType(subject: TermName, parent: Type, precise: Boolean, qualifier: Tree)(
+        implicit ctx: Context): QualifiedType =
+      if ((subject eq this.subject) && (parent eq this.parent) &&
+          (precise == this.precise) && (qualifier eq this.qualifier))
+        this
       else {
-        def qualBuilder1(qtp1: QualifiedType) =
-          new TreeTypeMap(typeMap = identity(_).subst(this, qtp1)).transform(qualifier)
-        new QualifiedType(subject, parent)(qualBuilder1)
+        def qualifierExp(qtp: QualifiedType) =
+          new TreeTypeMap(typeMap = _.subst(this, qtp)).transform(qualifier)
+        new QualifiedType(subject, parent, precise)(qualifierExp)
       }
 
     // FIXME: private[core]?
-    val qualifier = qualBuilder(this)
+    val qualifier: Tree = qualifierExp(this)
 
     // TODO: computeHash
-//    override def computeHash = doHash(subject, tpe, qualifier.hashCode())
+//    override def computeHash = doHash(qualifier.hashCode(), doHash(precise.hashCode(), doHash(subject, parent)))
     override def equals(that: Any): Boolean = that match {
       case that: QualifiedType =>
-        (this.subject eq that.subject) && (this.parent eq that.parent) && (this.qualifier == that.qualifier)
+        (this.subject == that.subject) && (this.parent == that.parent) &&
+          (this.precise == that.precise) && (this.qualifier == that.qualifier)
       case _ =>
         false
     }
@@ -3667,16 +3672,15 @@ object Types {
   object QualifiedType {
     // TODO: Caching for QualifiedTypes?
 
-    def apply(subject: ValDef, expr: Tree)(implicit ctx: Context) = {
+    def apply(subject: ValDef, precise: Boolean, expr: Tree)(implicit ctx: Context) = {
       def qualBuilder(qtp: QualifiedType) =
         expr.substQualifierSubject(subject.symbol, qtp)
-      new QualifiedType(subject.name, subject.tpt.tpe)(qualBuilder)
+      new QualifiedType(subject.name, subject.tpt.tpe, precise)(qualBuilder)
     }
 
     def apply(parent: Type)(implicit ctx: Context) = {
-      val name = (nme.SUBJECT_PARAM_PREFIX + "unused").toTermName
       val trueLit = Literal(Constant(true))
-      new QualifiedType(name, parent)(_ => trueLit)
+      new QualifiedType(nme.WILDCARD, parent, true)(_ => trueLit)
     }
   }
 
@@ -3872,8 +3876,9 @@ object Types {
       tp.derivedAndOrType(tp1, tp2)
     protected def derivedAnnotatedType(tp: AnnotatedType, underlying: Type, annot: Annotation): Type =
       tp.derivedAnnotatedType(underlying, annot)
-    protected def derivedQualifiedType(tp: QualifiedType, subject: TermName, parent: Type, qualifier: Tree): Type =
-      tp.derivedQualifiedType(subject, parent, qualifier)
+    protected def derivedQualifiedType(tp: QualifiedType, subject: TermName, parent: Type, precise: Boolean,
+                                       qualifier: Tree): Type =
+      tp.derivedQualifiedType(subject, parent, precise, qualifier)
     protected def derivedWildcardType(tp: WildcardType, bounds: Type): Type =
       tp.derivedWildcardType(bounds)
     protected def derivedClassInfo(tp: ClassInfo, pre: Type): Type =
@@ -3977,9 +3982,9 @@ object Types {
           if (underlying1 eq underlying) tp
           else derivedAnnotatedType(tp, underlying1, mapOver(annot))
 
-        case tp @ QualifiedType(subject, parent) =>
+        case tp @ QualifiedType(subject, parent, precise) =>
           // TODO: Introduce TreeTypeMap to also replace types in qualifier?
-          derivedQualifiedType(tp, subject, this(parent), tp.qualifier)
+          derivedQualifiedType(tp, subject, this(parent), precise, tp.qualifier)
 
         case tp: WildcardType =>
           derivedWildcardType(tp, mapOver(tp.optBounds))

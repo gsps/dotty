@@ -109,14 +109,14 @@ trait TypeAssigner {
               range(tp.bottomType, tp.topType) // should happen only in error cases
           }
         case tp: QualifiedType =>
-          val tpe1 = apply(tp.parent)
+          val parent1 = apply(tp.parent)
           def toAvoid(tree: Tree): Boolean = tree existsSubTree {
             case tree: DenotingTree => forbidden contains tree.denot.symbol
             // TODO: What about Super?
             case _ => false
           }
           // TODO: Do something smarter than widening the QType in case toAvoid is true
-          if (toAvoid(tp.qualifier)) tpe1 else tp.derivedQualifiedType(tp.subject, tpe1, tp.qualifier)
+          if (toAvoid(tp.qualifier)) parent1 else tp.derivedQualifiedType(tp.subject, parent1, tp.precise, tp.qualifier)
         case tp: ThisType if toAvoid(tp.cls) =>
           range(tp.bottomType, apply(classBound(tp.cls.classInfo)))
         case tp: TypeVar if ctx.typerState.constraint.contains(tp) =>
@@ -553,8 +553,8 @@ trait TypeAssigner {
   def assignType(tree: untpd.Annotated, arg: Tree, annot: Tree)(implicit ctx: Context) =
     tree.withType(AnnotatedType(arg.tpe.widen, Annotation(annot)))
 
-  def assignType(tree: untpd.QualifiedTypeTree, subject: ValDef, expr: Tree)(implicit ctx: Context) =
-    tree.withType(QualifiedType(subject, expr))
+  def assignType(tree: untpd.QualifiedTypeTree, subject: ValDef, precise: Boolean, expr: Tree)(implicit ctx: Context) =
+    tree.withType(QualifiedType(subject, precise, expr))
 
   def assignType(tree: untpd.PackageDef, pid: Tree)(implicit ctx: Context) =
     tree.withType(pid.symbol.termRef)
