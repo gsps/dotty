@@ -722,6 +722,48 @@ trait Checking {
       checkNoForwardDependencies(vparams1)
     case Nil =>
   }
+
+  /** Check that QualifiedTypes only refer to method parameters in their qualifier. */
+  def checkNoSymbolDependenciesInQualifiers(methTp: MethodType)(implicit ctx: Context): Unit = {
+    def checkRef(tp: Type, pos: Position): Unit = {
+      tp match {
+        case MethodParam(_, _) | QualifierSubject(_) =>
+          // Ok
+        case TypeRef(prefix, _) =>
+          checkRef(prefix, pos)
+        case TermRef(prefix, _) =>
+          checkRef(prefix, pos)
+        case _ =>
+          ctx.error(s"illegal reference to symbol that is not a method parameter (found: $tp)", pos)
+      }
+    }
+
+    // TODO: Only create one sharable instance of `checkQualifier` and `checkType`?
+    val checkQualifier = new TreeTraverser {
+      def traverse(tree: Tree)(implicit ctx: Context) = tree match {
+        case tree: Select =>
+          // FIXME: Not sure if this is safe.
+          traverseChildren(tree)
+        case tree: DenotingTree =>
+          checkRef(tree.tpe, tree.pos)
+          // FIXME: I *think* it is safe to remove the traverseChildren, since checkRef already checks the qualifiers.
+          traverseChildren(tree)
+        case _ =>
+          traverseChildren(tree)
+      }
+    }
+    val checkType = new TypeAccumulator[Unit] {
+      def apply(x: Unit, tp: Type): Unit = tp match {
+        case tp: QualifiedType =>
+          foldOver(x, tp.parent)
+          checkQualifier.traverse(tp.qualifier)
+        case _ =>
+          foldOver(x, tp)
+      }
+    }
+
+    checkType((), methTp)
+  }
 }
 
 trait NoChecking extends Checking {
@@ -741,4 +783,5 @@ trait NoChecking extends Checking {
   override def checkTraitInheritance(parentSym: Symbol, cls: ClassSymbol, pos: Position)(implicit ctx: Context) = ()
   override def checkCaseInheritance(parentSym: Symbol, caseCls: ClassSymbol, pos: Position)(implicit ctx: Context) = ()
   override def checkNoForwardDependencies(vparams: List[ValDef])(implicit ctx: Context): Unit = ()
+  override def checkNoSymbolDependenciesInQualifiers(methTp: MethodType)(implicit ctx: Context): Unit = ()
 }
