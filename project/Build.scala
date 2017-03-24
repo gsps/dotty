@@ -465,8 +465,7 @@ object Build {
                                   ("org.scala-lang.modules" %% "scala-xml" % "1.0.6").withDottyCompat(),
                                   "com.novocode" % "junit-interface" % "0.11" % "test",
                                   "org.scala-lang" % "scala-library" % scalacVersion % "test",
-                                  "ch.epfl.lara" %% "stainless" % "0.1"),
-
+                                  "ch.epfl.lara" %% "stainless-dotty-frontend" % "0.1"),
       // enable improved incremental compilation algorithm
       incOptions := incOptions.value.withNameHashing(true),
 
