@@ -271,10 +271,19 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       // TODO: Rather than only delegating to isSubtype(tp1, parent2), we could be more liberal:
       //  E.g. we could also allow the case where tp1 is a SingletonType and tp2 is QualifiedType
       //  that equals tp1.
-      isSubType(tp1, parent2) && {
-        constraint = constraint.add(tp1, tp2)
-        true
-      }
+      isSubType(tp1, parent2) && (tp1 match {
+        case tp1: QualifiedType =>
+          ctx.checkQTypeConstraint(tp1, tp2) match {
+            case Some(true)   => println("\t==> OK!"); true
+            case Some(false)  => println("\t==> BAD"); false
+            case None         => println("\t==> ???"); false
+          }
+        case tp1: TermRef if !tp1.isOverloaded =>
+          isSubType(QualifiedType(tp1), tp2)
+        case _ =>
+          // TODO: Convert singleton types and such to qualified types, then check
+          secondTry(tp1, tp2)
+      })
     case ConstantType(v2) =>
       tp1 match {
         case ConstantType(v1) => v1.value == v2.value

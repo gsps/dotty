@@ -3638,14 +3638,14 @@ object Types {
   case class QualifiedType(subject: TermName, parent: Type, precise: Boolean)(qualifierExp: QualifiedType => Tree)
     extends UncachedProxyType with BindingType with ValueType
   {
-    import qtyper.extraction.ConstraintExpr
-
-    private[this] var myCExpr: ConstraintExpr = null
-    def cExpr(implicit ctx: Context): ConstraintExpr = {
-      if (myCExpr == null)
-        myCExpr = qtyper.extraction.extractQType(this)
-      myCExpr
-    }
+//    import qtyper.extraction.ConstraintExpr
+//
+//    private[this] var myCExpr: ConstraintExpr = _
+//    def cExpr(implicit ctx: Context): ConstraintExpr = {
+//      if (myCExpr == null)
+//        myCExpr = qtyper.extraction.extractQType(this)
+//      myCExpr
+//    }
 
     // TODO: cache them?
     override def underlying(implicit ctx: Context): Type = parent
@@ -3680,15 +3680,26 @@ object Types {
   object QualifiedType {
     // TODO: Caching for QualifiedTypes?
 
-    def apply(subject: ValDef, precise: Boolean, expr: Tree)(implicit ctx: Context) = {
+    def apply(subject: ValDef, precise: Boolean, qualifier: Tree)(implicit ctx: Context) = {
       def qualBuilder(qtp: QualifiedType) =
-        expr.substQualifierSubject(subject.symbol, qtp)
+        qualifier.substQualifierSubject(subject.symbol, qtp)
       new QualifiedType(subject.name, subject.tpt.tpe, precise)(qualBuilder)
     }
 
-    def apply(parent: Type)(implicit ctx: Context) = {
-      val trueLit = Literal(Constant(true))
-      new QualifiedType(nme.WILDCARD, parent, true)(_ => trueLit)
+    def apply(parent: Type)(implicit ctx: Context): QualifiedType = parent match {
+      case qtp: QualifiedType => qtp
+      case _                  => new QualifiedType(nme.WILDCARD, parent, true)(_ => Literal(Constant(true)))
+    }
+
+    // FIXME: Should directly extract a cExpr in this case
+    def apply(tp: TermRef)(implicit ctx: Context): QualifiedType = {
+      assert(!tp.isOverloaded)  // FIXME: Probably not a very useful test. What would be a sane restriction?
+      val subject = tp.symbol.name.asTermName
+      def qualBuilder(qtp: QualifiedType) = {
+        val subjectIdent = ctx.typeAssigner.assignType(untpd.Ident(subject), QualifierSubject(qtp))
+        Apply(Select(subjectIdent, nme.EQ), List(Ident(tp)))
+      }
+      new QualifiedType(subject, tp.widenSingleton, true)(qualBuilder)
     }
   }
 

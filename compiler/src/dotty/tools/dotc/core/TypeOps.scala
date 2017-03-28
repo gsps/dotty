@@ -305,6 +305,12 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
     hasImport(ctx.withPhase(ctx.typerPhase)) || hasOption
   }
 
+  /** QualifiedType extraction and constraint checking */
+  def checkQTypeConstraint(qtp1: QualifiedType, qtp2: QualifiedType): Option[Boolean] = {
+    val cnstr = ctx.qualifierExtraction.extractConstraint(qtp1, qtp2)
+    qtyper.extraction.ConstraintChecker.check(cnstr)
+  }
+
   /** Is auto-tupling enabled? */
   def canAutoTuple =
     !featureEnabled(defn.LanguageModuleClass, nme.noAutoTupling)

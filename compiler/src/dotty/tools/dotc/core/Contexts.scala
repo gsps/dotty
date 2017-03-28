@@ -32,6 +32,7 @@ import language.implicitConversions
 import DenotTransformers.DenotTransformer
 import util.Property.Key
 import xsbti.AnalysisCallback
+import qtyper.extraction.QualifierExtraction
 
 object Contexts {
 
@@ -188,6 +189,14 @@ object Contexts {
       if (_typeComparer.ctx ne this)
         _typeComparer = _typeComparer.copyIn(this)
       _typeComparer
+    }
+
+    private var _qualifierExtraction: QualifierExtraction = _
+    protected def qualifierExtraction_=(qEx: QualifierExtraction) = _qualifierExtraction = qEx
+    def qualifierExtraction: QualifierExtraction = {
+      if (_qualifierExtraction.ctx ne this)
+        _qualifierExtraction = _qualifierExtraction.copyIn(this)
+      _qualifierExtraction
     }
 
     /** Number of findMember calls on stack */
@@ -521,6 +530,7 @@ object Contexts {
     period = InitialPeriod
     mode = Mode.None
     typerState = new TyperState(null)
+    qualifierExtraction = QualifierExtraction(this)
     printerFn = new RefinedPrinter(_)
     owner = NoSymbol
     sstate = settings.defaultState

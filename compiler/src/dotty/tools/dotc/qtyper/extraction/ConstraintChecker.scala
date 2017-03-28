@@ -2,10 +2,8 @@ package dotty.tools.dotc
 package qtyper.extraction
 
 import scala.annotation.tailrec
-
-//import inox.solvers
+import qtyper.extraction.ast.{trees => qt}
 import stainless._
-import extraction.{trees => xt}
 
 /**
  * Created by gs on 22.03.17.
@@ -31,9 +29,10 @@ object ConstraintChecker {
   implicit val debugSection = DebugSectionVerification
 
 
-  def check(cExpr1: ConstraintExpr, cExpr2: ConstraintExpr): Option[Boolean] = {
-    val program = getProgram(Seq(cExpr1.fd, cExpr2.fd))
-    val vc      = generateVC(cExpr1, cExpr2)
+  def check(cnstr: QTypeConstraint): Option[Boolean] = {
+    val program = getProgram(Seq(cnstr.fd))
+//    val vc      = generateVC(cExpr1, cExpr2)
+    val vc      = generateVC(cnstr)
     checkVC(program)(vc) match {
       case CStatus.Invalid(_) => Some(false)
       case CStatus.Valid      => Some(true)
@@ -44,75 +43,53 @@ object ConstraintChecker {
 
   private def getProgram(fds: Seq[trees.FunDef]): StainlessProgram = {
     new inox.Program {
-      val ctx = inoxCtx
+      val ctx = defaultInoxCtx
       val trees: stainless.trees.type = stainless.trees
       val symbols = trees.NoSymbols.withFunctions(fds)
-    }//.asInstanceOf[inox.Program { val trees: extraction.extractor.s.type }]
-    // FIXME: Can we get scala to prove the above on its own?
+    }
   }
 
 
-  private def generateVC(cExpr1: ConstraintExpr, cExpr2: ConstraintExpr): trees.Expr = {
-    import trees._
-
-    val (fd1, fd2) = (cExpr1.fd, cExpr2.fd)
-//    val (params1, params2) = (fd1.params, fd2.params)
+//  private def generateVC(cExpr1: ConstraintExpr, cExpr2: ConstraintExpr): trees.Expr = {
+//    import trees._
 //
-//    @inline
-//    def varLt(vd1: xt.ValDef, vd2: xt.ValDef): Boolean = vd1.v.id.pos.start < vd2.v.id.pos.start
+//    val (fd1, fd2) = (cExpr1.fd, cExpr2.fd)
+//    def buildArgLists(params1: Seq[trees.ValDef], params2: Seq[trees.ValDef]): (List[Expr], List[Expr]) = {
+//      var (args1, args2) = (List.empty[Expr], List.empty[Expr])
+//      var (i, j) = (0, 0)
+//      val (m, n): (Int, Int) = (params1.length, params2.length)
 //
-//    @tailrec
-//    def buildArgLists(i: Int, j: Int, args1: List[xt.Expr], args2: List[xt.Expr]): (List[xt.Expr], List[xt.Expr]) = {
-//      def varFor(vd: xt.ValDef): xt.Variable = vd.toVariable.freshen
-//
-//      if (i >= params1.length)
-//        (args1.reverse, args2.reverse ++ params2.drop(j).map(varFor))
-//      else if (j >= params2.length)
-//        (args1.reverse ++ params1.drop(i).map(varFor), args2.reverse)
-//
-//      val (vd1, vd2) = (params1(i), params2(j))
-//      if (vdLt(vd1, vd2))
-//        buildArgLists(i+1, j, varFor(vd1) :: args1, args2)
-//      else if (vdLt(vd2, vd1))
-//        buildArgLists(i, j+1, args1, varFor(vd2) :: args2)
-//      else {
-//        val v = varFor(vd1)
-//        buildArgLists(i+1, j+1, v :: args1, v :: args2)
+//      if (m > 0 && n > 0) {
+//        var (v1, v2) = (params1(0).toVariable, params2(0).toVariable)
+//        while (i < m && j < n) {
+//          if (v1 == v2) {
+//            val vFresh = v1.freshen
+//            args1 = vFresh :: args1; args2 = vFresh :: args2
+//            i += 1; v1 = params1(i).toVariable
+//            j += 1; v2 = params2(j).toVariable
+//          } else if (v1.getPos <= v2.getPos) {
+//            args1 = v1.freshen :: args1
+//            i += 1; v1 = params1(i).toVariable
+//          } else {
+//            args2 = v2.freshen :: args2
+//            j += 1; v2 = params2(j).toVariable
+//          }
+//        }
 //      }
+//
+//      if (i >= m)
+//        (args1.reverse, args2.reverse ++ params2.drop(j).map(_.toVariable.freshen))
+//      else // (j >= n)
+//        (args1.reverse ++ params1.drop(i).map(_.toVariable.freshen), args2.reverse)
 //    }
-//    val (args1, args2) = buildArgLists(0, 0, Nil, Nil)
+//
+//    val (args1, args2) = buildArgLists(fd1.params, fd2.params)
+//    implies(FunctionInvocation(fd1.id, Seq.empty, args1), FunctionInvocation(fd2.id, Seq.empty, args2))
+//  }
 
-    def buildArgLists(params1: Seq[trees.ValDef], params2: Seq[trees.ValDef]): (List[Expr], List[Expr]) = {
-      var (args1, args2) = (List.empty[Expr], List.empty[Expr])
-      var (i, j) = (0, 0)
-      val (m, n): (Int, Int) = (params1.length, params2.length)
-
-      if (m > 0 && n > 0) {
-        var (v1, v2) = (params1(0).toVariable, params2(0).toVariable)
-        while (i < m && j < n) {
-          if (v1 == v2) {
-            val vFresh = v1.freshen
-            args1 = vFresh :: args1; args2 = vFresh :: args2
-            i += 1; v1 = params1(i).toVariable
-            j += 1; v2 = params2(j).toVariable
-          } else if (v1.getPos <= v2.getPos) {
-            args1 = v1.freshen :: args1
-            i += 1; v1 = params1(i).toVariable
-          } else {
-            args2 = v2.freshen :: args2
-            j += 1; v2 = params2(j).toVariable
-          }
-        }
-      }
-
-      if (i >= m)
-        (args1.reverse, args2.reverse ++ params2.drop(j).map(_.toVariable.freshen))
-      else // (j >= n)
-        (args1.reverse ++ params1.drop(i).map(_.toVariable.freshen), args2.reverse)
-    }
-
-    val (args1, args2) = buildArgLists(fd1.params, fd2.params)
-    implies(FunctionInvocation(fd1.id, Seq.empty, args1), FunctionInvocation(fd2.id, Seq.empty, args2))
+  private def generateVC(cnstr: QTypeConstraint): trees.Expr = {
+    val fd = cnstr.fd
+    trees.FunctionInvocation(fd.id, Seq(), fd.params.map(_.toVariable.freshen))
   }
 
 
@@ -129,6 +106,7 @@ object ConstraintChecker {
       val cond = simplifyLets(vc)
       ctx.reporter.synchronized {
         ctx.reporter.info(s" - Now considering VC $vc @${vc.getPos}...")
+        ctx.reporter.info(s"\t${program.symbols.functions.values.head}")
         ctx.reporter.debug(cond.asString)
         ctx.reporter.debug("Solving with: " + s.name)
       }
