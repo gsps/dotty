@@ -2,8 +2,11 @@ package dotty.tools.dotc
 package qtyper.extraction
 
 import scala.annotation.tailrec
+
 import qtyper.extraction.ast.{trees => qt}
+
 import stainless._
+
 
 /**
  * Created by gs on 22.03.17.
@@ -93,18 +96,20 @@ object ConstraintChecker {
   }
 
 
-  private def checkVC(program: StainlessProgram)(vc: program.trees.Expr): CStatus[program.Model] = {
+  private def checkVC(program: StainlessProgram)(vc: program.trees.Expr): CStatus[program.Model] = { // ~40ms
     import inox.solvers.SolverResponses._
-    val sf = solvers.SolverFactory.default(program)
-    val s = sf.getNewSolver
+    val s = timeMe("sf & sf.getNewSolver") { // ~5ms
+      val sf = solvers.SolverFactory.default(program)
+      sf.getNewSolver
+    }
 
     import program._
     import program.trees._
     import program.symbols._
 
     try {
-      val cond = simplifyLets(vc)
-      ctx.reporter.synchronized {
+      val cond = simplifyLets(vc) // ~0ms
+      ctx.reporter.synchronized { // ~1ms
         ctx.reporter.info(s" - Now considering VC $vc @${vc.getPos}...")
         ctx.reporter.info(s"\t${program.symbols.functions.values.head}")
         ctx.reporter.debug(cond.asString)
@@ -114,9 +119,9 @@ object ConstraintChecker {
       val timer = ctx.timers.verification.start()
 
       val cstatus = { //try {
-        s.assertCnstr(Not(cond))
+        timeMe("s.assertCnstr") { s.assertCnstr(Not(cond)) } // ~15ms
 
-        val res = s.check(Model)
+        val res = timeMe("s.check(Model)") { s.check(Model) } // ~15ms
 
         val time = timer.stop()
 
@@ -149,7 +154,7 @@ object ConstraintChecker {
 
       val time = timer.stop()
 
-      ctx.reporter.synchronized {
+      ctx.reporter.synchronized { // ~1ms
         cstatus match {
           case CStatus.Valid =>
             ctx.reporter.info(" => VALID")
@@ -166,7 +171,7 @@ object ConstraintChecker {
 
       cstatus
     } finally {
-      s.free()
+      timeMe("s.free()") { s.free() } // ~1ms
     }
   }
 }

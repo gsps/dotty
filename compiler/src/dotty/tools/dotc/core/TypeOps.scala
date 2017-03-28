@@ -307,8 +307,10 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
 
   /** QualifiedType extraction and constraint checking */
   def checkQTypeConstraint(qtp1: QualifiedType, qtp2: QualifiedType): Option[Boolean] = {
-    val cnstr = ctx.qualifierExtraction.extractConstraint(qtp1, qtp2)
-    qtyper.extraction.ConstraintChecker.check(cnstr)
+    import qtyper.extraction.timeMe
+    val cnstr = timeMe("Extracting QTypeConstraint") { ctx.qualifierExtraction.extractConstraint(qtp1, qtp2) } // ~10ms
+    val res = timeMe("Checking QTypeConstraint") { qtyper.extraction.ConstraintChecker.check(cnstr) } // ~40ms
+    res
   }
 
   /** Is auto-tupling enabled? */
