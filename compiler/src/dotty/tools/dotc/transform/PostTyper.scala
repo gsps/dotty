@@ -70,7 +70,7 @@ class PostTyper extends MacroTransform with IdentityDenotTransformer { thisTrans
   val superAcc = new SuperAccessors(thisTransformer)
   val paramFwd = new ParamForwarding(thisTransformer)
   val synthMth = new SyntheticMethods(thisTransformer)
-  val dynChecks = new qtypes.DynamicChecks(thisTransformer)
+//  val dynChecks = new qtypes.DynamicChecks(thisTransformer)
 
   private def newPart(tree: Tree): Option[New] = methPart(tree) match {
     case Select(nu: New, _) => Some(nu)
