@@ -62,7 +62,6 @@ class FrontEnd extends Phase {
   def typeCheck(implicit ctx: Context) = monitor("typechecking") {
     val unit = ctx.compilationUnit
     unit.tpdTree = ctx.typer.typedExpr(unit.untpdTree)
-    ctx.typer.verifyQTypes
     typr.println("typed: " + unit.source)
     record("retained untyped trees", unit.untpdTree.treeSize)
     record("retained typed trees after typer", unit.tpdTree.treeSize)

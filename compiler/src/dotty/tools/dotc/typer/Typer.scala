@@ -90,9 +90,6 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
    */
   private[this] var foundUnderScala2: Type = NoType
 
-  /** The QTyper used to handle constraints among QualifiedTypes. */
-  private val qtyper: QTyper = new QTyper
-
   def newLikeThis: Typer = new Typer
 
   /** Attribute an identifier consisting of a simple name or wildcard
@@ -2334,9 +2331,5 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
         typedExpr(cmp, defn.BooleanType)
       case _ =>
     }
-  }
-
-  def verifyQTypes(implicit ctx: Context): Boolean = {
-    qtyper.verify
   }
 }

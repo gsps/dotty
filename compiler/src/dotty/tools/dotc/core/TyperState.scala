@@ -21,7 +21,8 @@ class TyperState(previous: TyperState /* | Null */) extends DotClass with Showab
   def reporter: Reporter = myReporter
 
   /** The current constraint set */
-  def constraint: Constraint = OrderingConstraint.empty
+  def constraint: Constraint =
+    new OrderingConstraint(SimpleMap.Empty, SimpleMap.Empty, SimpleMap.Empty)
   def constraint_=(c: Constraint)(implicit ctx: Context): Unit = {}
 
   /** A fresh type state with the same constraint as this one and the given reporter */

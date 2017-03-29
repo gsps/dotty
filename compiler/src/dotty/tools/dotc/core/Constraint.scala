@@ -144,13 +144,4 @@ abstract class Constraint extends Showable {
 
   /** Check that constraint only refers to TypeParamRefs bound by itself */
   def checkClosed()(implicit ctx: Context): Unit
-
-
-  /** A new constraint that also requires the qualifier of tp1 to imply
-    * the qualifier of tp2.
-    */
-  def add(tp1: Type, tp2: Type)(implicit ctx: Context): This
-
-  /** The implications induced by constraints among QualifiedTypes. */
-  def qtypeImpls: List[QTypesConstraint.Impl]
 }
