@@ -235,8 +235,9 @@ class PostTyper extends MacroTransform with IdentityDenotTransformer { thisTrans
           }
         case tree: DefDef =>
           transformMemberDef(tree)
-          val dynChecked = dynChecks.withDynamicChecks(super.transform(tree).asInstanceOf[DefDef])
-          superAcc.wrapDefDef(tree)(dynChecked)
+//          val dynChecked = dynChecks.withDynamicChecks(super.transform(tree).asInstanceOf[DefDef])
+//          superAcc.wrapDefDef(tree)(dynChecked)
+          superAcc.wrapDefDef(tree)(super.transform(tree).asInstanceOf[DefDef])
         case tree: TypeDef =>
           transformMemberDef(tree)
           val sym = tree.symbol
