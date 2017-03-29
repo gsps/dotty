@@ -33,7 +33,7 @@ object ConstraintChecker {
 
 
   def check(cnstr: QTypeConstraint): Option[Boolean] = {
-    val program = getProgram(Seq(cnstr.fd))
+    val program = getProgram(cnstr.fds)
 //    val vc      = generateVC(cExpr1, cExpr2)
     val vc      = generateVC(cnstr)
     checkVC(program)(vc) match {
@@ -91,7 +91,7 @@ object ConstraintChecker {
 //  }
 
   private def generateVC(cnstr: QTypeConstraint): trees.Expr = {
-    val fd = cnstr.fd
+    val fd = cnstr.fds.head
     trees.FunctionInvocation(fd.id, Seq(), fd.params.map(_.toVariable.freshen))
   }
 
@@ -111,7 +111,7 @@ object ConstraintChecker {
       val cond = simplifyLets(vc) // ~0ms
       ctx.reporter.synchronized { // ~1ms
         ctx.reporter.info(s" - Now considering VC $vc @${vc.getPos}...")
-        ctx.reporter.info(s"\t${program.symbols.functions.values.head}")
+//        ctx.reporter.info(s"\t${program.symbols.functions}")
         ctx.reporter.debug(cond.asString)
         ctx.reporter.debug("Solving with: " + s.name)
       }

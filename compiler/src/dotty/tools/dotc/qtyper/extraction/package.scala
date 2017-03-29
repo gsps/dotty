@@ -3,15 +3,19 @@ package qtyper
 
 import core.Contexts._
 import core.Types._
+import core.Symbols.Symbol
+
+import stainless.{trees => st}
 
 /**
   * Created by gs on 20.03.17.
   */
 package object extraction {
-//  type ConstraintExpr = stainless.extraction.trees.FunDef
-//  case class ConstraintExpr(fd: extraction.ast.trees.FunDef)
-//  case class QTypeConstraint(fd: extraction.ast.trees.FunDef)
-  case class QTypeConstraint(fd: stainless.trees.FunDef)
+  case class ConstraintExpr(qtp: QualifiedType, scope: Map[Symbol, Int], fd: st.FunDef) {
+    lazy val qualifierSubject = QualifierSubject(qtp)
+  }
+
+  case class QTypeConstraint(fds: Seq[st.FunDef])
 
   class ExtractionException(msg: String) extends Exception(msg)
 

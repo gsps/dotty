@@ -40,14 +40,142 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   override def copyIn(ctx: Context): QualifierExtraction = new QualifierExtraction(inoxCtx, exState)(ctx)
 
 
-  // TODO: Extract only once for `qtp1`, `qtp2` and any QualifiedType in `normScope`
-  def extractConstraint(qtp1: QualifiedType, qtp2: QualifiedType): QTypeConstraint = {
-    val (scope1, scope2)  = (scope(qtp1), scope(qtp2))
-    val commonSyms        = scope1 intersect scope2
-    val otherSyms         = (scope1 union scope2) diff commonSyms
+//  // TODO: Extract only once for `qtp1`, `qtp2` and any QualifiedType in `normScope`
+//  def extractConstraint(qtp1: QualifiedType, qtp2: QualifiedType): QTypeConstraint = {
+//    val (scope1, scope2)  = (scope(qtp1), scope(qtp2))
+//    val commonSyms        = scope1 intersect scope2
+//    val otherSyms         = (scope1 union scope2) diff commonSyms
+//
+//    def normalizedScope(syms: Set[Symbol]) = syms.toSeq.sortBy(sym => sym.pos.start).toList
+//    val normScope = normalizedScope(commonSyms) ++ normalizedScope(otherSyms)
+//
+//    def valDefForQs(qs: QualifierSubject) = {
+//      val binder = qs.binder
+//      val pos = binder.qualifier.pos
+//      trees.ValDef(
+//        FreshIdentifier(qs.binder.subject.toString, true).setPos(pos),
+//        stainlessType(qs.binder.parent)(emptyDefContext, pos),
+//        Set.empty
+//      ).setPos(pos)
+//    }
+//    val (qs1, qs2) = (QualifierSubject(qtp1), QualifierSubject(qtp2))
+//    val subjectVd  = valDefForQs(qs1)
+//    var fctx: DefContext = {
+//      val subjectExpr = () => subjectVd.toVariable
+//      emptyDefContext.withNewQualifierSubjectVars(Seq(qs1 -> subjectExpr, qs2 -> subjectExpr))
+//    }
+//
+//    val fparams = normScope.foldLeft(Seq(subjectVd)) { case (params, sym) =>
+////      println(s"Extracting sym $sym : ${sym.info}")
+//      val vd = trees.ValDef(
+//        FreshIdentifier(sym.name.toString, true).setPos(sym.pos),
+//        stainlessType(sym.info)(fctx, sym.pos),
+//        annotationsOf(sym)
+//      ).setPos(sym.pos)
+//      val expr = () => vd.toVariable
+//      fctx = fctx.withNewVar(sym -> expr)
+//      params :+ vd
+//    }
+//
+//    def extractQualifier(qualifier: tpd.Tree, dctx: DefContext): trees.Expr =
+//      trees.exprOps.flattenBlocks(extractTreeOrNoTree(qualifier)(dctx))
+//
+//    try {
+//      // FIXME: Wrong if qtype-bearing normScope(k)'s qualifier contains symbols not already contained in qtp1 or qtp2
+//      val scopeCond = {
+//        trees.andJoin(normScope.flatMap { sym =>
+//          sym.info.widenDealias match {
+//            case qtp: QualifiedType =>
+//              fctx = fctx.withNewQualifierSubjectVar(QualifierSubject(qtp) -> fctx.vars(sym))
+//              Seq(extractQualifier(qtp.qualifier, fctx))
+//            case _ => Seq()
+//          }
+//        })
+//      }
+//      val qual1 = extractQualifier(qtp1.qualifier, fctx)
+//      val qual2 = extractQualifier(qtp2.qualifier, fctx)
+//
+//      val fd = new trees.FunDef(
+//        FreshIdentifier("constraint"),
+//        Seq(),
+//        fparams,
+//        trees.BooleanType,
+//        trees.implies(trees.and(scopeCond, qual1), qual2),
+//        Set.empty)
+//      fd.setPos(ctx.tree.pos)
+//
+//      QTypeConstraint(Lowering(fd))
+//    } catch {
+//      case e: ImpureCodeEncounteredException =>
+//        throw new ExtractionException(e.getMessage)
+//    }
+//  }
 
-    def normalizedScope(syms: Set[Symbol]) = syms.toSeq.sortBy(sym => sym.pos.start).toList
-    val normScope = normalizedScope(commonSyms) ++ normalizedScope(otherSyms)
+  def extractConstraint(qtp1: QualifiedType, qtp2: QualifiedType): QTypeConstraint = {
+    import stainless.{trees => st}
+
+    val cExpr1 = qtp1.cExpr
+    val cExpr2 = qtp2.cExpr
+
+    val syms1      = cExpr1.scope.keySet
+    val syms2      = cExpr2.scope.keySet
+    val commonSyms = syms1 intersect syms2
+    val otherSyms  = (syms1 union syms2) diff commonSyms
+    val normScope  = normalizedScope(commonSyms) ++ normalizedScope(otherSyms)
+
+    val scopeCExprs = normScope.flatMap { sym =>
+      sym.info.widenDealias match {
+        // TODO: Go through qtp.cExpr instead to save extraction
+        case qtp: QualifiedType => Seq(sym -> qtp.cExpr)
+        case _                  => Seq()
+      }
+    }
+
+    val allCExprs = cExpr1 +: cExpr2 +: scopeCExprs.map(_._2)
+    val symVars: Map[Symbol, st.Variable] = allCExprs.foldLeft(Map.empty[Symbol, st.Variable]) {
+      case (symVars, ConstraintExpr(_, scope, fd)) => scope.foldLeft(symVars) {
+        case (symVars, (sym, paramNum)) if !symVars.contains(sym) =>
+          symVars + (sym -> fd.params(paramNum + 1).toVariable.freshen)
+        case _ => symVars
+      }
+    }
+
+    val qsVars: Map[QualifierSubject, st.Variable] = {
+      val subjectVar = cExpr1.fd.params.head.toVariable.freshen
+      val qsVars0 = Map.empty[QualifierSubject, st.Variable] +
+        (cExpr1.qualifierSubject -> subjectVar) +
+        (cExpr2.qualifierSubject -> subjectVar)
+      scopeCExprs.foldLeft(qsVars0) { case (qsVars, (sym, cExpr)) =>
+        qsVars + (cExpr.qualifierSubject -> symVars(sym))
+      }
+    }
+
+    def app(cExpr: ConstraintExpr): st.Expr = {
+      val args = qsVars(cExpr.qualifierSubject) +: normalizedScope(cExpr.scope.keys).map(sym => symVars(sym))
+      st.FunctionInvocation(cExpr.fd.id, Seq(), args)
+//      st.exprOps.replaceFromSymbols((cExpr.fd.params zip args).toMap, cExpr.fd.fullBody)
+    }
+
+    val fparams = new st.ValDef(qsVars(cExpr1.qualifierSubject)) +: normScope.map { sym => new st.ValDef(symVars(sym)) }
+    val scopeCond = st.andJoin(scopeCExprs.map { case (_, cExpr) => app(cExpr) })
+    val fd = new st.FunDef(
+      FreshIdentifier("constraint"),
+      Seq(),
+      fparams,
+      st.BooleanType,
+      st.implies(st.and(scopeCond, app(cExpr1)), app(cExpr2)),
+      Set.empty)
+    fd.setPos(ctx.tree.pos)
+
+    QTypeConstraint(fd +: allCExprs.map(_.fd))
+  }
+
+
+  //I'd eventually like to make qtypes unique, so I'll also need some hashing for trees.
+  def extractQualifier(qtp: QualifiedType): ConstraintExpr = {
+    println(s"$$$$$$ EXTRACTING $qtp")
+    val scope = scopeOf(qtp)
+    val normScope = normalizedScope(scope)
 
     def valDefForQs(qs: QualifierSubject) = {
       val binder = qs.binder
@@ -58,15 +186,12 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
         Set.empty
       ).setPos(pos)
     }
-    val (qs1, qs2) = (QualifierSubject(qtp1), QualifierSubject(qtp2))
-    val subjectVd  = valDefForQs(qs1)
-    var fctx: DefContext = {
-      val subjectExpr = () => subjectVd.toVariable
-      emptyDefContext.withNewQualifierSubjectVars(Seq(qs1 -> subjectExpr, qs2 -> subjectExpr))
-    }
+    val qs        = QualifierSubject(qtp)
+    val subjectVd = valDefForQs(qs)
+
+    var fctx: DefContext = emptyDefContext.withNewQualifierSubjectVar((qs, () => subjectVd.toVariable))
 
     val fparams = normScope.foldLeft(Seq(subjectVd)) { case (params, sym) =>
-//      println(s"Extracting sym $sym : ${sym.info}")
       val vd = trees.ValDef(
         FreshIdentifier(sym.name.toString, true).setPos(sym.pos),
         stainlessType(sym.info)(fctx, sym.pos),
@@ -77,38 +202,24 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
       params :+ vd
     }
 
-    def extractQualifier(qualifier: tpd.Tree, dctx: DefContext): trees.Expr =
-      trees.exprOps.flattenBlocks(extractTreeOrNoTree(qualifier)(dctx))
-
     try {
-      val scopeCond = {
-        trees.andJoin(normScope.flatMap { sym =>
-          sym.info.widenDealias match {
-            case qtp: QualifiedType =>
-              fctx = fctx.withNewQualifierSubjectVar(QualifierSubject(qtp) -> fctx.vars(sym))
-              Seq(extractQualifier(qtp.qualifier, fctx))
-            case _ => Seq()
-          }
-        })
-      }
-      val qual1 = extractQualifier(qtp1.qualifier, fctx)
-      val qual2 = extractQualifier(qtp2.qualifier, fctx)
-
+      val qual = trees.exprOps.flattenBlocks(extractTreeOrNoTree(qtp.qualifier)(fctx))
       val fd = new trees.FunDef(
-        FreshIdentifier("constraint"),
+        FreshIdentifier("qualifier"),
         Seq(),
         fparams,
         trees.BooleanType,
-        trees.implies(trees.and(scopeCond, qual1), qual2),
+        qual,
         Set.empty)
       fd.setPos(ctx.tree.pos)
 
-      QTypeConstraint(Lowering(fd))
+      ConstraintExpr(qtp, scope.zipWithIndex.toMap, Lowering(fd))
     } catch {
       case e: ImpureCodeEncounteredException =>
         throw new ExtractionException(e.getMessage)
     }
   }
+
 
   override protected def extractTree(tree: tpd.Tree)(implicit dctx: DefContext): trees.Expr = {
     try {
@@ -205,39 +316,52 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
       case tree: tpd.Ident => // FIXME: It's probably insufficient to only select symbols from Idents
         assert(!tree.tpe.isInstanceOf[MethodParam])
         val sym = tree.symbol
-        if (sym ne NoSymbol) {
-          syms + sym
-        } else {
-          syms
-        }
+        if (sym ne NoSymbol) syms + sym
+        else                 syms
       case tree =>
         foldOver(syms, tree)
     }
   }
 
-//  object usedSymsInType extends TypeAccumulator[Set[Symbol]] {
-//    def apply(syms: Set[Symbol], tp: Type): Set[Symbol] = tp match {
-//      case tp: TermRef =>
-//        val sym = tp.symbol
-//        if (sym ne NoSymbol) {
-//          syms + sym
-//        } else {
-//          syms
-//        }
-//      case qtp: QualifiedType =>
-//        usedSymsInTree.apply(apply(syms, qtp.parent), qtp.qualifier)
-//      case tp =>
-//        foldOver(syms, tp)
-//    }
-//  }
+  object usedSymsInType extends TypeAccumulator[Set[Symbol]] {
+    def apply(syms: Set[Symbol], tp: Type): Set[Symbol] = tp match {
+      case tp: TermRef =>
+        val sym = tp.symbol
+        if (sym ne NoSymbol) syms + sym
+        else                 syms
+      case qtp: QualifiedType =>
+        usedSymsInTree.apply(apply(syms, qtp.parent), qtp.qualifier)
+      case tp =>
+        foldOver(syms, tp)
+    }
+  }
 
-  def scope(qtp: QualifiedType): Set[Symbol] =
-    usedSymsInTree.apply(Set.empty[Symbol], qtp.qualifier)
+//  def scope(qtp: QualifiedType): Set[Symbol] =
+//    usedSymsInTree.apply(Set.empty[Symbol], qtp.qualifier)
+
+  /** Returns the smalled set S of term-level symbols that contains all
+    *   - all symbols in qtp's qualifier, and
+    *   - all symbols that that any symbol in S refers to.
+    */
+  def scopeOf(qtp: QualifiedType): Set[Symbol] = {
+    var res   = usedSymsInTree(Set.empty[Symbol], qtp.qualifier)
+    var grew  = true
+    var added = Set.empty[Symbol]
+    while (grew) {
+      added = added.foldLeft(Set.empty[Symbol]) { (syms, sym) => usedSymsInType(syms, sym.info) }
+      val resSizePrev = res.size
+      res = res union added
+      grew = res.size > resSizePrev
+    }
+    res
+  }
 
 //  def normalizedScope(qtp: QualifiedType): List[Symbol] = {
 //    scope(qtp).toSeq.sortBy(_.pos.start).toList
 ////    val subject = QualifierSubject(qtp)
 ////    subject :: (syms - subject).sortBy(_.pos.start).toList
 //  }
+
+  def normalizedScope(syms: Traversable[Symbol]): List[Symbol] = syms.toSeq.sortBy(sym => sym.pos.start).toList
 
 }

@@ -3638,14 +3638,14 @@ object Types {
   case class QualifiedType(subject: TermName, parent: Type, precise: Boolean)(qualifierExp: QualifiedType => Tree)
     extends UncachedProxyType with BindingType with ValueType
   {
-//    import qtyper.extraction.ConstraintExpr
-//
-//    private[this] var myCExpr: ConstraintExpr = _
-//    def cExpr(implicit ctx: Context): ConstraintExpr = {
-//      if (myCExpr == null)
-//        myCExpr = qtyper.extraction.extractQType(this)
-//      myCExpr
-//    }
+    import qtyper.extraction.ConstraintExpr
+
+    private[this] var myCExpr: ConstraintExpr = _
+    def cExpr(implicit ctx: Context): ConstraintExpr = {
+      if (myCExpr == null)
+        myCExpr = ctx.qualifierExtraction.extractQualifier(this)
+      myCExpr
+    }
 
     // TODO: cache them?
     override def underlying(implicit ctx: Context): Type = parent
