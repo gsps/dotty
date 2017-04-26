@@ -647,6 +647,8 @@ object StdNames {
       ++ ConversionNames
       ++ CommonOpNames
     )
+    val UnaryOpNames    = Set[Name](UNARY_~, UNARY_+, UNARY_-, UNARY_!)
+    val QTypePrimitiveOpNames = BooleanOpNames ++ NumberOpNames -- ConversionNames
 
     val add: N                    = "add"
     val complement: N             = "complement"

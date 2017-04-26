@@ -110,13 +110,14 @@ trait TypeAssigner {
           }
         case tp: QualifiedType =>
           val parent1 = apply(tp.parent)
-          def toAvoid(tree: Tree): Boolean = tree existsSubTree {
-            case tree: DenotingTree => forbidden contains tree.denot.symbol
-            // TODO: What about Super?
-            case _ => false
-          }
           // TODO: Do something smarter than widening the QType in case toAvoid is true
-          if (toAvoid(tp.qualifier)) parent1 else tp.derivedQualifiedType(tp.subject, parent1, tp.precise, tp.qualifier)
+          tp.cExpr.scope.find(toAvoid) match {
+            case Some(badTp) =>
+              typr.println(i"Dropping qualification to $tp since its dependency on $badTp conflicts with $forbidden")
+              parent1
+            case None =>
+              tp.derivedQualifiedType(tp.subject, parent1, tp.precise, tp.cExpr)
+          }
         case tp: ThisType if toAvoid(tp.cls) =>
           range(tp.bottomType, apply(classBound(tp.cls.classInfo)))
         case tp: TypeVar if ctx.typerState.constraint.contains(tp) =>

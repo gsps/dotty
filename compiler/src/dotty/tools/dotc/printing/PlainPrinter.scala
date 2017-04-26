@@ -203,7 +203,17 @@ class PlainPrinter(_ctx: Context) extends Printer {
       case AnnotatedType(tpe, annot) =>
         toTextLocal(tpe) ~ " " ~ toText(annot)
       case tp @ QualifiedType(subject, parent, _) =>
-        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " => " ~ toText(tp.qualifier) ~ "}"
+//        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " => " ~ tp.cExpr.fd.fullBody.toString ~ "}"
+//        val deps = tp.cExpr.scope.map(toText)
+        val deps = tp.cExpr.scope.map { tp =>
+          tp.cExpr.subject.toString() ~ " -> " ~ toText(tp)
+        }
+//        val deps = tp.cExpr.scope.map { tp => toText(tp) ~ (if (tp.isInstanceOf[ParamType]) s" ($tp)" else "")  }
+        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " => " ~ tp.cExpr.exprStr() ~ "} @ [" ~
+          Text(deps, "; ") ~ "]"
+
+//        val qual = tp.cExpr.scope.last.cExpr.expr.toString
+//        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " => " ~ qual ~ "}"
       case AppliedType(tycon, args) =>
         toTextLocal(tycon) ~ "[" ~ Text(args.map(argText), ", ") ~ "]"
       case tp: TypeVar =>

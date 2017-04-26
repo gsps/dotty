@@ -32,7 +32,7 @@ import language.implicitConversions
 import DenotTransformers.DenotTransformer
 import util.Property.Key
 import xsbti.AnalysisCallback
-import qtyper.extraction.QualifierExtraction
+import qtyper.extraction.{ExtractionState, QualifierExtraction}
 
 object Contexts {
 
@@ -647,6 +647,10 @@ object Contexts {
      *  to avoid space leaks - the message computation usually captures a context.
      */
     private[core] val errorTypeMsg = mutable.Map[ErrorType, () => Message]()
+
+    // Extraction state
+
+    private[dotty] val extractionState: ExtractionState = new ExtractionState()
 
     // Phases state
 

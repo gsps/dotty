@@ -16,6 +16,7 @@ import config.Config
 import util.Property
 import collection.mutable
 import ast.tpd._
+import qtyper.extraction.{ConstraintExpr, QTypeConstraint}
 import reporting.trace
 
 trait TypeOps { this: Context => // TODO: Make standalone object.
@@ -58,6 +59,13 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
             val sym = tp.symbol
             if (sym.isStatic) tp
             else derivedSelect(tp, atVariance(variance max 0)(this(tp.prefix)))
+          case tp: QualifiedType =>
+            val cExpr1 = tp.cExpr.mapScope(apply)
+            tp.derivedQualifiedType(
+              tp.subject,
+              apply(tp.parent),
+              tp.precise,
+              cExpr1)
           case tp: ThisType =>
             toPrefix(pre, cls, tp.cls)
           case _: BoundType | NoPrefix =>
@@ -306,9 +314,9 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
   }
 
   /** QualifiedType extraction and constraint checking */
-  def checkQTypeConstraint(qtp1: QualifiedType, qtp2: QualifiedType): Option[Boolean] = {
+  def checkQTypeConstraint(tp1: Type, tp2: QualifiedType): Option[Boolean] = {
     import qtyper.extraction.timeMe
-    val cnstr = timeMe("Extracting QTypeConstraint") { ctx.qualifierExtraction.extractConstraint(qtp1, qtp2) } // ~10ms
+    val cnstr = timeMe("Extracting QTypeConstraint") { QTypeConstraint(tp1, tp2) } // ~10ms
     val res = timeMe("Checking QTypeConstraint") { qtyper.extraction.ConstraintChecker.check(cnstr) } // ~40ms
     res
   }

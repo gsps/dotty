@@ -1306,7 +1306,8 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     vparamss1.foreach(checkNoForwardDependencies)
     if (sym is Implicit) checkImplicitParamsNotSingletons(vparamss1)
     var tpt1 = checkSimpleKinded(typedType(tpt))
-    checkNoSymbolDependenciesInQualifiers(sym.info.widenSingleton.asInstanceOf[MethodType])
+    // TODO: Re-add this check once we have an implementation for CExprs!
+//    checkNoSymbolDependenciesInQualifiers(sym.info.widenSingleton.asInstanceOf[MethodType])
 
     var rhsCtx = ctx
     if (sym.isConstructor && !sym.isPrimaryConstructor && tparams1.nonEmpty) {

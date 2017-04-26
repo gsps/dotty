@@ -4,21 +4,26 @@ package qtyper.extraction
 import core.Contexts._
 import core.Names._
 import core.Symbols._
+import core.Types.MethodParam
 
 import stainless.ast.SymbolIdentifier
 import stainless.{FreshIdentifier, Identifier}
 
+import inox.utils.Bijection
 import scala.collection.mutable.{Map => MutableMap}
 
 /**
  * Created by gs on 27.03.17.
  */
 class ExtractionState {
-//  val trees: stainless.extraction.oo.Trees
+  val trees: stainless.trees.type = stainless.trees
+//  val trees: qtyper.extraction.ast.trees.type = qtyper.extraction.ast.trees
 
   protected val symbolsCache: MutableMap[Symbol, SymbolIdentifier] = MutableMap.empty
   protected val namesCache: MutableMap[Name, Identifier] = MutableMap.empty
-//  protected val qsVariables: MutableMap[QualifierSubject, trees.Variable] = MutableMap()
+  protected val symVars: Bijection[Symbol, trees.Variable] = Bijection()
+  protected val mpVars: Bijection[MethodParam, trees.Variable] = Bijection()
+
 
   def getIdentifier(sym: Symbol)(implicit ctx: Context): SymbolIdentifier = symbolsCache.get(sym) match {
     case Some(id) => id
@@ -37,14 +42,28 @@ class ExtractionState {
       id
   }
 
-//  def getVariable(qs: QualifierSubject): trees.Variable = qsVariables(qs)
-//
-//  def getOrPutVariable(qs: QualifierSubject, vBuilder: => trees.Variable): trees.Variable =
-//    qsVariables.get(qs) match {
-//      case Some(v) => v
-//      case None =>
-//        val v = vBuilder
-//        qsVariables += qs -> v
-//        v
-//    }
+
+  def getOrPutVar(sym: Symbol, builder: () => trees.Variable): trees.Variable =
+    symVars.getB(sym) match {
+      case Some(v) => v
+      case None =>
+        val v = builder()
+        symVars += sym -> v
+        v
+    }
+
+  def getOrPutVar(mp: MethodParam, builder: () => trees.Variable): trees.Variable =
+    mpVars.getB(mp) match {
+      case Some(v) => v
+      case None =>
+        val v = builder()
+        mpVars += mp -> v
+        v
+    }
+
+  def getVarSymbol(variable: trees.Variable): Symbol =
+    symVars.toA(variable)
+
+  def getVarMp(variable: trees.Variable): MethodParam =
+    mpVars.toA(variable)
 }

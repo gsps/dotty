@@ -30,28 +30,13 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
 
   def copyIn(ctx: Context): DottyExtraction
 
+  import DottyExtraction._
   import AuxiliaryExtractors._
   import ExpressionExtractors._
   import StructuralExtractors._
 
   lazy val reporter = inoxCtx.reporter
 
-
-  implicit def dottyPosToInoxPos(p: Position): inox.utils.Position = {
-    if (!p.exists) {
-      inox.utils.NoPosition
-    } else if (p.start != p.end) {
-      val start = ctx.source.atPos(p.startPos)
-      val end   = ctx.source.atPos(p.endPos)
-      inox.utils.RangePosition(start.line, start.column, start.point,
-        end.line, end.column, end.point,
-        ctx.source.file.file)
-    } else {
-      val sp = ctx.source.atPos(p)
-      inox.utils.OffsetPosition(sp.line, sp.column, sp.point,
-        ctx.source.file.file)
-    }
-  }
 
   protected def annotationsOf(sym: Symbol): Set[trees.Flag] = {
     val actualSymbol = sym // .accessedOrSelf
@@ -133,7 +118,6 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
                                    tparams: Map[Symbol, trees.TypeParameter] = Map(),
                                    vars: Map[Symbol, () => trees.Variable] = Map(),
                                    mutableVars: Map[Symbol, () => trees.Variable] = Map(),
-                                   qualifierSubjectVars: Map[QualifierSubject, () => trees.Variable] = Map(),
                                    localFuns: Map[Symbol, trees.LocalFunDef] = Map(),
                                    isExtern: Boolean = false
                                  ) {
@@ -141,7 +125,6 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
       copy(this.tparams ++ that.tparams,
         this.vars ++ that.vars,
         this.mutableVars ++ that.mutableVars,
-        this.qualifierSubjectVars ++ that.qualifierSubjectVars,
         this.localFuns ++ that.localFuns,
         this.isExtern || that.isExtern)
     }
@@ -153,10 +136,6 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
     def withNewMutableVar(nvar: (Symbol, () => trees.Variable)) = copy(mutableVars = mutableVars + nvar)
     def withNewMutableVars(nvars: Traversable[(Symbol, () => trees.Variable)]) =
       copy(mutableVars = mutableVars ++ nvars)
-    def withNewQualifierSubjectVar(nvar: (QualifierSubject, () => trees.Variable)) =
-      copy(qualifierSubjectVars = qualifierSubjectVars + nvar)
-    def withNewQualifierSubjectVars(nvars: Traversable[(QualifierSubject, () => trees.Variable)]) =
-      copy(qualifierSubjectVars = qualifierSubjectVars ++ nvars)
     def withLocalFun(s: Symbol, lf: trees.LocalFunDef) = copy(localFuns = this.localFuns + (s -> lf))
     def withExtern(nextern: Boolean) = copy(isExtern = isExtern || nextern)
   }
@@ -1117,6 +1096,11 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
     extractType(t.tpe)(dctx, t.pos)
   }
 
+  protected def ignoreInAndType(tp: Type): Boolean = {
+    val sym = tp.typeSymbol
+    sym == defn.ProductClass || sym == defn.SingletonClass
+  }
+
   protected def extractType(tpt: Type)(implicit dctx: DefContext, pos: Position): trees.Type = tpt match {
     case tpe if tpe.typeSymbol == defn.CharClass    => trees.CharType
     case tpe if tpe.typeSymbol == defn.IntClass     => trees.Int32Type
@@ -1191,18 +1175,24 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
 
     case tt @ TermRef(_, _) => extractType(tt.widenTermRefExpr)
 
+    case tt @ MethodParam(_, _) => extractType(tt.underlying)
+
     case ta @ TypeAlias(tp) => extractType(tp)
 
     case tb @ TypeBounds(lo, hi) => extractType(hi)
 
-    case AndType(tp, prod) if prod.typeSymbol == defn.ProductClass => extractType(tp)
-    case AndType(prod, tp) if prod.typeSymbol == defn.ProductClass => extractType(tp)
+    case AndType(tp, other) if ignoreInAndType(other) => extractType(tp)
+    case AndType(other, tp) if ignoreInAndType(other) => extractType(tp)
     case ot: OrType => extractType(ot.join)
 
     case pp @ PolyParam(binder, num) =>
-      dctx.tparams.collectFirst { case (k, v) if k.name == pp.paramName => v }.getOrElse {
-        outOfSubsetError(tpt.typeSymbol.pos, "Could not extract "+tpt+" with context " + dctx.tparams)
-      }
+//      dctx.tparams.collectFirst { case (k, v) if k.name == pp.paramName => v }.getOrElse {
+//        outOfSubsetError(tpt.typeSymbol.pos, "Could not extract "+tpt+" with context " + dctx.tparams)
+//      }
+      extractType(pp.underlying match {
+        case bounds: TypeBounds => bounds.underlying
+        case tp => tp
+      })
 
     case tp: TypeVar => extractType(tp.stripTypeVar)
 
@@ -1217,5 +1207,27 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
       } else {
         outOfSubsetError(NoPosition, "Tree with null-pointer as type found")
       }
+  }
+}
+
+object DottyExtraction {
+  implicit def dottyPosToInoxPos(p: Position)(implicit ctx: Context): inox.utils.Position = {
+    if (!p.exists) {
+      inox.utils.NoPosition
+    } else if (p.start != p.end) {
+      val start = ctx.source.atPos(p.startPos)
+      val end   = ctx.source.atPos(p.endPos)
+      inox.utils.RangePosition(start.line, start.column, start.point,
+        end.line, end.column, end.point,
+        ctx.source.file.file)
+    } else {
+      val sp = ctx.source.atPos(p)
+      // FIXME: sp sometimes doesn't exist, since ctx.source is NoSource -- investigate why this happens during typing
+      if (sp.exists)
+        inox.utils.OffsetPosition(sp.line, sp.column, sp.point,
+          ctx.source.file.file)
+      else
+        inox.utils.NoPosition
+    }
   }
 }

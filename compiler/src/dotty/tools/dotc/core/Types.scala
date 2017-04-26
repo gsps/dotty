@@ -38,6 +38,7 @@ import language.implicitConversions
 import scala.util.hashing.{ MurmurHash3 => hashing }
 import config.Printers.{core, typr, cyclicErrors}
 import java.lang.ref.WeakReference
+import qtyper.extraction.{ConstraintExpr, TrivialCExpr, TermRefCExpr, ConstantCExpr}
 
 object Types {
 
@@ -96,6 +97,10 @@ object Types {
 //        println("foo")
       nextId
     }
+
+    /** What is the extracted representation of this type? */
+    def cExpr(implicit ctx: Context): ConstraintExpr =
+      ctx.qualifierExtraction.extractTrivialQualifier(this)
 
     /** Is this type different from NoType? */
     def exists: Boolean = true
@@ -898,6 +903,7 @@ object Types {
      *  <o.x.type>.widen = o.C
      */
     final def widen(implicit ctx: Context): Type = widenSingleton match {
+      case tp: QualifiedType => tp.parent.widen
       case tp: ExprType => tp.resultType.widen
       case tp => tp
     }
@@ -1307,10 +1313,6 @@ object Types {
     /** Substitute bound types by some other types */
     final def substParams(from: BindingType, to: List[Type])(implicit ctx: Context): Type =
       ctx.substParams(this, from, to, null)
-
-    /** Substitute bound parameters by some argument trees */
-    final def substParamsWithTrees(from: BindingType, to: List[Tree])(implicit ctx: Context): Type =
-      ctx.substParamsWithTrees(this, from, to, null)
 
 //    /** Substitute bound parameters by some symbols */
 //    final def substParamsWithSymbols(from: BindingType, to: List[Symbol])(implicit ctx: Context): Type =
@@ -2009,6 +2011,13 @@ object Types {
           else designator
         fixDenot(TermRef(prefix, designator1), prefix)
     }
+
+    private[this] var myCExpr: TermRefCExpr = _
+    override def cExpr(implicit ctx: Context): TermRefCExpr = {
+      if (myCExpr == null)
+        myCExpr = ctx.qualifierExtraction.extractTermRefQualifier(this)
+      myCExpr
+    }
   }
 
   abstract case class TypeRef(override val prefix: Type, designator: TypeDesignator) extends NamedType {
@@ -2126,6 +2135,8 @@ object Types {
       case that: ThisType => tref.eq(that.tref)
       case _ => false
     }
+
+    // TODO (gsps): Override cExpr
   }
 
   final class CachedThisType(tref: TypeRef) extends ThisType(tref)
@@ -2154,6 +2165,8 @@ object Types {
       case that: SuperType => thistpe.eq(that.thistpe) && supertpe.eq(that.supertpe)
       case _ => false
     }
+
+    // TODO (gsps): Override cExpr
   }
 
   final class CachedSuperType(thistpe: Type, supertpe: Type) extends SuperType(thistpe, supertpe)
@@ -2170,6 +2183,13 @@ object Types {
     override def underlying(implicit ctx: Context) = value.tpe
 
     override def computeHash = doHash(value)
+
+    private[this] var myCExpr: ConstantCExpr = _
+    override def cExpr(implicit ctx: Context): ConstantCExpr = {
+      if (myCExpr == null)
+        myCExpr = ctx.qualifierExtraction.extractConstantQualifier(this)
+      myCExpr
+    }
   }
 
   final class CachedConstantType(value: Constant) extends ConstantType(value)
@@ -2679,8 +2699,12 @@ object Types {
             tp match {
               case TermParamRef(`thisLambdaType`, _) => TrueDeps
               case tp: QualifiedType =>
-                val status1 = apply(status, tp.parent)
-                tp.qualifier.deepFold(status1)((status, tree) => apply(status, tree.tpe))
+                val hasDep = tp.cExpr.scope.exists {
+                  case MethodParam(`thisMethodType`, _) => true
+                  case _ => false
+                }
+                if (hasDep) TrueDeps
+                else apply(status, tp.parent)
               case tp: TypeRef =>
                 val status1 = foldOver(status, tp)
                 tp.info match { // follow type alias to avoid dependency
@@ -3217,6 +3241,13 @@ object Types {
       catch {
         case ex: IndexOutOfBoundsException => s"ParamRef(<bad index: $paramNum>)"
       }
+
+    private[this] var myCExpr: TermRefCExpr = _
+    override def cExpr(implicit ctx: Context): TermRefCExpr = {
+      if (myCExpr == null)
+        myCExpr = ctx.qualifierExtraction.extractMethodParam(this)
+      myCExpr
+    }
   }
 
   /** Only created in `binder.paramRefs`. Use `binder.paramRefs(paramNum)` to
@@ -3270,23 +3301,8 @@ object Types {
       catch {
         case ex: NullPointerException => s"RecThis(<under construction>)"
       }
-  }
 
-  /** Represents the type of the subject variable in a QualifiedType's qualifier tree. */
-  case class QualifierSubject(binder: QualifiedType) extends BoundType {
-    type BT = QualifiedType
-    def copyBoundType(bt: BT) = QualifierSubject(bt)
-
-    override def underlying(implicit ctx: Context): Type = binder.parent
-
-    override def toString = "QualifierSubject"
-
-    override def computeHash = binder.identityHash
-
-    override def equals(that: Any) = that match {
-      case that: QualifierSubject => this.binder eq that.binder
-      case _ => false
-    }
+    // TODO (gsps): Override cExpr
   }
 
   // ----- Skolem types -----------------------------------------------
@@ -3308,6 +3324,8 @@ object Types {
     }
 
     override def toString = s"Skolem($hashCode)"
+
+    // TODO (gsps): Override cExpr???
   }
 
   // ------------ Type variables ----------------------------------------
@@ -3635,71 +3653,46 @@ object Types {
   // ----- Qualified types ----------------------------------------------------------
 
   /** An qualified type tpe with expr */
-  case class QualifiedType(subject: TermName, parent: Type, precise: Boolean)(qualifierExp: QualifiedType => Tree)
+  case class QualifiedType(subject: TermName, parent: Type, precise: Boolean)(cExprExp: QualifiedType => ConstraintExpr)
     extends UncachedProxyType with BindingType with ValueType
   {
-    import qtyper.extraction.ConstraintExpr
+    private val myCExpr = cExprExp(this)
+    override def cExpr(implicit ctx: Context): ConstraintExpr = myCExpr
 
-    private[this] var myCExpr: ConstraintExpr = _
-    def cExpr(implicit ctx: Context): ConstraintExpr = {
-      if (myCExpr == null)
-        myCExpr = ctx.qualifierExtraction.extractQualifier(this)
-      myCExpr
-    }
-
-    // TODO: cache them?
     override def underlying(implicit ctx: Context): Type = parent
 
-    def derivedQualifiedType(subject: TermName, parent: Type, precise: Boolean, qualifier: Tree)(
+    def derivedQualifiedType(subject: TermName, parent: Type, precise: Boolean, cExpr: ConstraintExpr)(
         implicit ctx: Context): QualifiedType =
       if ((subject eq this.subject) && (parent eq this.parent) &&
-          (precise == this.precise) && (qualifier eq this.qualifier))
+          (precise == this.precise) && (cExpr eq this.cExpr))
         this
-      else {
-        def qualifierExp(qtp: QualifiedType) =
-          new TreeTypeMap(typeMap = _.subst(this, qtp)).transform(qualifier)
-        new QualifiedType(subject, parent, precise)(qualifierExp)
-      }
-
-    // FIXME: private[core]?
-    val qualifier: Tree = qualifierExp(this)
+      else
+//        new QualifiedType(subject, parent, precise)(cExpr.subst(this, _))
+        new QualifiedType(subject, parent, precise)(_ => cExpr)
 
     // TODO: computeHash
 //    override def computeHash = doHash(qualifier.hashCode(), doHash(precise.hashCode(), doHash(subject, parent)))
     override def equals(that: Any): Boolean = that match {
       case that: QualifiedType =>
         (this.subject == that.subject) && (this.parent == that.parent) &&
-          (this.precise == that.precise) && (this.qualifier == that.qualifier)
+          (this.precise == that.precise) && (this.myCExpr == that.myCExpr)
       case _ =>
         false
     }
 
-    override def toString = s"QualifiedType($subject, $parent, $qualifier)"
+    override def toString = s"QualifiedType($subject, $parent, $precise, $myCExpr)"
   }
 
   object QualifiedType {
     // TODO: Caching for QualifiedTypes?
 
     def apply(subject: ValDef, precise: Boolean, qualifier: Tree)(implicit ctx: Context) = {
-      def qualBuilder(qtp: QualifiedType) =
-        qualifier.substQualifierSubject(subject.symbol, qtp)
-      new QualifiedType(subject.name, subject.tpt.tpe, precise)(qualBuilder)
-    }
-
-    def apply(parent: Type)(implicit ctx: Context): QualifiedType = parent match {
-      case qtp: QualifiedType => qtp
-      case _                  => new QualifiedType(nme.WILDCARD, parent, true)(_ => Literal(Constant(true)))
-    }
-
-    // FIXME: Should directly extract a cExpr in this case
-    def apply(tp: TermRef)(implicit ctx: Context): QualifiedType = {
-      assert(!tp.isOverloaded)  // FIXME: Probably not a very useful test. What would be a sane restriction?
-      val subject = tp.symbol.name.asTermName
       def qualBuilder(qtp: QualifiedType) = {
-        val subjectIdent = ctx.typeAssigner.assignType(untpd.Ident(subject), QualifierSubject(qtp))
-        Apply(Select(subjectIdent, nme.EQ), List(Ident(tp)))
+//        val qualifier1 = qualifier.substQualifierSubject(subject.symbol, qtp)
+        // TODO: Provide `precise` to extractQualifier
+        ctx.qualifierExtraction.extractQualifier(subject, qualifier, qtp)
       }
-      new QualifiedType(subject, tp.widenSingleton, true)(qualBuilder)
+      new QualifiedType(subject.name, subject.tpt.tpe, precise)(qualBuilder)
     }
   }
 
@@ -3896,8 +3889,8 @@ object Types {
     protected def derivedAnnotatedType(tp: AnnotatedType, underlying: Type, annot: Annotation): Type =
       tp.derivedAnnotatedType(underlying, annot)
     protected def derivedQualifiedType(tp: QualifiedType, subject: TermName, parent: Type, precise: Boolean,
-                                       qualifier: Tree): Type =
-      tp.derivedQualifiedType(subject, parent, precise, qualifier)
+                                       cExpr: ConstraintExpr): Type =
+      tp.derivedQualifiedType(subject, parent, precise, cExpr)
     protected def derivedWildcardType(tp: WildcardType, bounds: Type): Type =
       tp.derivedWildcardType(bounds)
     protected def derivedClassInfo(tp: ClassInfo, pre: Type): Type =
@@ -4003,7 +3996,7 @@ object Types {
 
         case tp @ QualifiedType(subject, parent, precise) =>
           // TODO: Introduce TreeTypeMap to also replace types in qualifier?
-          derivedQualifiedType(tp, subject, this(parent), precise, tp.qualifier)
+          derivedQualifiedType(tp, subject, this(parent), precise, tp.cExpr)
 
         case tp: WildcardType =>
           derivedWildcardType(tp, mapOver(tp.optBounds))
