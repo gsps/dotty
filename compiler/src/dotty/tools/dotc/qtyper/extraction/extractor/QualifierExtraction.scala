@@ -60,7 +60,8 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
       case trees.BooleanType  => st.BooleanType
       case trees.UnitType     => st.UnitType
       case trees.Int32Type    => st.Int32Type
-      case _ => ???
+//      case stTp => throw new NotImplementedError(s"Cannot extract stainless type of $tp @ $stTp")
+      case _ => st.Untyped
     }
   }
 
@@ -107,7 +108,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   }
 
 
-  def extractMethodParam(mp: MethodParam): TermRefCExpr = {
+  def extractMethodParam(mp: TermParamRef): TermRefCExpr = {
     val subject = exState.getOrPutVar(mp, () => {
       val pos = NoPosition
       val stainlessTp = stType(mp.underlying.widen)(emptyDefContext, pos)
@@ -119,7 +120,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
 
   def injectPrimitive(clazz: ClassSymbol, opName: Name, opTp: Type): Type = {
-    @inline def depParam(opTp: MethodType): MethodParam = MethodParam(opTp, 0)
+    @inline def depParam(opTp: MethodType): TermParamRef = TermParamRef(opTp, 0)
 
     def subject(resTp: Type): st.Variable = {
       val stainlessResTp = stType(resTp)(emptyDefContext, NoPosition)
@@ -136,7 +137,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
                    bodyFn: (st.Expr, st.Expr) => st.Expr): MethodType = {
       val cExpr = BinaryPrimitiveCExpr(subject(opTp.resultType), argTp1, argTp2)(bodyFn)
       val qtp   = QualifiedType("pv".toTermName, opTp.resultType, true)(_ => cExpr)
-      opTp.derivedMethodType(resType = qtp)
+      opTp.derivedLambdaType(resType = qtp)
     }
 
     val tp1 = (clazz, opName, opTp) match {
@@ -175,7 +176,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
           case nme.SUB  => st.Minus
           case nme.MUL  => st.Times
           case nme.DIV  => st.Division
-          case nme.MOD  => st.Modulo
+          case nme.MOD  => st.Remainder
           case nme.LSL  => st.BVShiftLeft
           case nme.ASR  => st.BVAShiftRight
           case nme.LSR  => st.BVLShiftRight

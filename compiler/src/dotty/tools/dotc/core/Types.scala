@@ -255,7 +255,7 @@ object Types {
     /** Is this type produced as a repair for an error? */
     final def isError(implicit ctx: Context): Boolean = stripTypeVar match {
       case _: ErrorType => true
-      case _: MethodParam => false
+      case _: TermParamRef => false
       case tp => (tp.typeSymbol is Erroneous) || (tp.termSymbol is Erroneous)
     }
 
@@ -2618,9 +2618,11 @@ object Types {
 
     final def derivedLambdaType(paramNames: List[ThisName] = this.paramNames,
                           paramInfos: List[PInfo] = this.paramInfos,
-                          resType: Type = this.resType)(implicit ctx: Context) =
-      if ((paramNames eq this.paramNames) && (paramInfos eq this.paramInfos) && (resType eq this.resType)) this
-      else newLikeThis(paramNames, paramInfos, resType)
+                          resType: Type = this.resType)(implicit ctx: Context): This =
+      if ((paramNames eq this.paramNames) && (paramInfos eq this.paramInfos) && (resType eq this.resType))
+        this.asInstanceOf[This]
+      else
+        newLikeThis(paramNames, paramInfos, resType)
 
     final def newLikeThis(paramNames: List[ThisName], paramInfos: List[PInfo], resType: Type)(implicit ctx: Context): This =
       companion(paramNames)(
@@ -2700,7 +2702,7 @@ object Types {
               case TermParamRef(`thisLambdaType`, _) => TrueDeps
               case tp: QualifiedType =>
                 val hasDep = tp.cExpr.scope.exists {
-                  case MethodParam(`thisMethodType`, _) => true
+                  case TermParamRef(`thisLambdaType`, _) => true
                   case _ => false
                 }
                 if (hasDep) TrueDeps
@@ -3256,6 +3258,13 @@ object Types {
   abstract case class TermParamRef(binder: TermLambda, paramNum: Int) extends ParamRef {
     type BT = TermLambda
     def copyBoundType(bt: BT) = bt.paramRefs(paramNum)
+
+    private[this] var myCExpr: TermRefCExpr = _
+    override def cExpr(implicit ctx: Context): TermRefCExpr = {
+      if (myCExpr == null)
+        myCExpr = ctx.qualifierExtraction.extractMethodParam(this)
+      myCExpr
+    }
   }
 
   /** Only created in `binder.paramRefs`. Use `binder.paramRefs(paramNum)` to

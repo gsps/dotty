@@ -4,7 +4,7 @@ package qtyper.extraction
 import core.Contexts._
 import core.Names._
 import core.Symbols._
-import core.Types.MethodParam
+import core.Types.TermParamRef
 
 import stainless.ast.SymbolIdentifier
 import stainless.{FreshIdentifier, Identifier}
@@ -22,7 +22,7 @@ class ExtractionState {
   protected val symbolsCache: MutableMap[Symbol, SymbolIdentifier] = MutableMap.empty
   protected val namesCache: MutableMap[Name, Identifier] = MutableMap.empty
   protected val symVars: Bijection[Symbol, trees.Variable] = Bijection()
-  protected val mpVars: Bijection[MethodParam, trees.Variable] = Bijection()
+  protected val mpVars: Bijection[TermParamRef, trees.Variable] = Bijection()
 
 
   def getIdentifier(sym: Symbol)(implicit ctx: Context): SymbolIdentifier = symbolsCache.get(sym) match {
@@ -52,7 +52,7 @@ class ExtractionState {
         v
     }
 
-  def getOrPutVar(mp: MethodParam, builder: () => trees.Variable): trees.Variable =
+  def getOrPutVar(mp: TermParamRef, builder: () => trees.Variable): trees.Variable =
     mpVars.getB(mp) match {
       case Some(v) => v
       case None =>
@@ -64,6 +64,6 @@ class ExtractionState {
   def getVarSymbol(variable: trees.Variable): Symbol =
     symVars.toA(variable)
 
-  def getVarMp(variable: trees.Variable): MethodParam =
+  def getVarMp(variable: trees.Variable): TermParamRef =
     mpVars.toA(variable)
 }

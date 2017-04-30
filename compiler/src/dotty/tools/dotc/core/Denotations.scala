@@ -219,7 +219,7 @@ object Denotations {
 
     def requiredMethod(name: PreName, numParams: Int)(implicit ctx: Context): TermSymbol =
       info.member(name.toTermName).requiredSymbol(x=>
-        (x is Method) && (x.info.paramTypess match {
+        (x is Method) && (x.info.paramInfoss match {
           case List(types) if types.length == numParams => true
           case _ => false
         })

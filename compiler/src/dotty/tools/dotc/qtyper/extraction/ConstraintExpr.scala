@@ -50,7 +50,7 @@ sealed trait ConstraintExpr {
   def substRecThis(from: RecType, to: Type)(implicit ctx: Context): ConstraintExpr =
     mapScope(_.substRecThis(from, to))
 
-  def substParam(from: ParamType, to: Type)(implicit ctx: Context): ConstraintExpr =
+  def substParam(from: ParamRef, to: Type)(implicit ctx: Context): ConstraintExpr =
     mapScope(_.substParam(from, to))
 
   def substParams(from: BindingType, to: List[Type])(implicit ctx: Context): ConstraintExpr =

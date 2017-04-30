@@ -12,7 +12,7 @@ import core._
 import Flags._
 import Contexts._
 import Names._
-import NameKinds.WildcardParamName
+import NameKinds.{EvidenceParamName, SubjectVarName, WildcardParamName}
 import ast.{Positioned, Trees, untpd}
 import ast.Trees._
 import Decorators._
@@ -963,10 +963,8 @@ object Parsers {
     def typeArgs(namedOK: Boolean, wildOK: Boolean): List[Tree] = inBrackets(argTypes(namedOK, wildOK))
 
 
-    def syntheticQTypeSubject(tpt: Tree): ValDef = {
-      val name = ctx.freshName(nme.SUBJECT_PARAM_PREFIX).toTermName
-      ValDef(name, tpt, EmptyTree).withFlags(SyntheticTermParam).withPos(tpt.pos)
-    }
+    def syntheticQTypeSubject(tpt: Tree): ValDef =
+      ValDef(SubjectVarName.fresh(), tpt, EmptyTree).withFlags(SyntheticTermParam).withPos(tpt.pos)
 
     /** RefinementNoLbrace ::= RefineStatSeq `}'
       */
@@ -2023,7 +2021,7 @@ object Parsers {
           val qualifier = checkNoEscapingPlaceholders(inParens(postfixExpr()))
           val subject = syntheticQTypeSubject(Ident(ctx.definitions.UnitType.name))
           val precondQtpt = QualifiedTypeTree(subject, qualifier)
-          val precondName = ctx.freshName(nme.EVIDENCE_PARAM_PREFIX).toTermName
+          val precondName = EvidenceParamName.fresh()
           val precondParam = ValDef(precondName, precondQtpt, EmptyTree).withFlags(SyntheticTermParam | Implicit)
 
           paramss.reverse match {

@@ -1175,7 +1175,7 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
 
     case tt @ TermRef(_, _) => extractType(tt.widenTermRefExpr)
 
-    case tt @ MethodParam(_, _) => extractType(tt.underlying)
+    case tt @ TermParamRef(_, _) => extractType(tt.underlying)
 
     case ta @ TypeAlias(tp) => extractType(tp)
 
@@ -1185,7 +1185,7 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
     case AndType(other, tp) if ignoreInAndType(other) => extractType(tp)
     case ot: OrType => extractType(ot.join)
 
-    case pp @ PolyParam(binder, num) =>
+    case pp @ TypeParamRef(binder, num) =>
 //      dctx.tparams.collectFirst { case (k, v) if k.name == pp.paramName => v }.getOrElse {
 //        outOfSubsetError(tpt.typeSymbol.pos, "Could not extract "+tpt+" with context " + dctx.tparams)
 //      }
@@ -1197,6 +1197,14 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
     case tp: TypeVar => extractType(tp.stripTypeVar)
 
     case AnnotatedType(tpe, _) => extractType(tpe)
+
+    /** ==> Dotty types that we may or may not wanna handle in special ways, but will just widen for now: */
+
+    case tp: SkolemType => extractType(tp.underlying)
+
+    case tp: ExprType => extractType(tp.resultType)
+
+    /** <== */
 
     // @nv: we want this case to be close to the end as it otherwise interferes with other cases
     case tpe if tpe.typeSymbol == defn.NothingClass => trees.Untyped

@@ -22,21 +22,21 @@ object QTypeConstraint {
     val cExpr2 = tp2.cExpr
 
     def termRefUnderlying(tp: TermRef): Type = ctx.extractionState.getVarSymbol(tp.cExpr.subject).info
-    def mpUnderlying(tp: MethodParam): Type  = ctx.extractionState.getVarMp(tp.cExpr.subject).underlying
+    def mpUnderlying(tp: TermParamRef): Type = ctx.extractionState.getVarMp(tp.cExpr.subject).underlying
 
     import ConstraintExpr.singletonDepsFor
     def recSingletonDeps(tp: Type, deps: Set[Type] = Set.empty): Set[Type] = {
       singletonDepsFor(tp).foldLeft(deps) {
-        case (deps0, tp: TermRef)     => recSingletonDeps(termRefUnderlying(tp), deps0 + tp)
-        case (deps0, tp: MethodParam) => recSingletonDeps(mpUnderlying(tp), deps0 + tp)
-        case (deps0, _)               => deps0
+        case (deps0, tp: TermRef)      => recSingletonDeps(termRefUnderlying(tp), deps0 + tp)
+        case (deps0, tp: TermParamRef) => recSingletonDeps(mpUnderlying(tp), deps0 + tp)
+        case (deps0, _)                => deps0
       }
     }
 
     def singletonExpr(tp: Type): st.Expr = {
       val underlying = tp match {
-        case tp: TermRef     => termRefUnderlying(tp)
-        case tp: MethodParam => mpUnderlying(tp)
+        case tp: TermRef      => termRefUnderlying(tp)
+        case tp: TermParamRef => mpUnderlying(tp)
       }
       // FIXME FIXME FIXME: FRESHEN!
       val undSubject = underlying.cExpr.subject
@@ -59,7 +59,7 @@ object QTypeConstraint {
     val singletonExprs  = singletonSeq.filter {
       // (Constants are simply constrained in exprs at their usage site; we could share these constraints here)
       case _: ConstantType                    => false
-      case TermRef(_, _) | MethodParam(_, _)  => true
+      case TermRef(_, _) | TermParamRef(_, _) => true
       case _                                  => false
     } .map(singletonExpr)
 //    println(s"SingletonSeq:"); for (s <- singletonSeq) println(s"\t| $s")
