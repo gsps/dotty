@@ -271,12 +271,17 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       //  E.g. we could also allow the case where tp1 is a SingletonType and tp2 is QualifiedType
       //  that equals tp1.
       isSubType(tp1, parent2) && {
-        println(i"SUBTYPING QT!  $tp1  <:?  $tp2")
-//        (new Throwable()).printStackTrace()
-        ctx.checkQTypeConstraint(tp1, tp2) match {
-          case Some(true)   => true
-          case Some(false)  => false
-          case None         => ???
+        if (ctx.phase.isTyper) {
+          println(i"SUBTYPING QT!  $tp1  <:?  $tp2")
+//          (new Throwable()).printStackTrace()
+          ctx.checkQTypeConstraint(tp1, tp2) match {
+            case Some(true)   => true
+            case Some(false)  => false
+            case None         => ???
+          }
+        } else {
+          // NOTE: Bailing out, for similar reasons as in the case of SkolemType (TreeChecker otherwise fails)
+          true
         }
       }
     case ConstantType(v2) =>

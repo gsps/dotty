@@ -72,10 +72,16 @@ object QTypeConstraint {
 //    val anteExprs = singletonExprs ++ Seq(cExpr1.expr, cExpr2.scopeExpr, st.Equals(cExpr1.subject, cExpr2.subject))
 //    val vc = st.Implies(st.andJoin(anteExprs), cExpr2.propExpr)
 
+    val subjectTp = {
+      assert(cExpr1.subject.tpe != st.Untyped, s"Lhs type $tp1 was extracted to st.Untyped!")
+      assert(cExpr2.subject.tpe != st.Untyped, s"Rhs type $tp1 was extracted to st.Untyped!")
+      cExpr1.subject.tpe
+    }
+
     val vc = {
       val anteExprs = singletonExprs ++ Seq(cExpr1.expr, cExpr2.scopeExpr)
       val impl      = st.Implies(st.andJoin(anteExprs), cExpr2.propExpr)
-      val subject   = st.Variable.fresh("V", cExpr1.subject.tpe)
+      val subject   = st.Variable.fresh("V", subjectTp)
       st.exprOps.replaceFromSymbols(Map(cExpr1.subject -> subject, cExpr2.subject -> subject), impl)
     }
     QTypeConstraint(vc)
