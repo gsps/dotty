@@ -116,7 +116,7 @@ trait TypeAssigner {
               typr.println(i"Dropping qualification to $tp since its dependency on $badTp conflicts with $forbidden")
               parent1
             case None =>
-              tp.derivedQualifiedType(tp.subject, parent1, tp.precise, tp.cExpr)
+              tp.derivedQualifiedType(tp.subject, parent1, tp.cExpr)
           }
         case tp: ThisType if toAvoid(tp.cls) =>
           range(tp.bottomType, apply(classBound(tp.cls.classInfo)))
@@ -554,8 +554,8 @@ trait TypeAssigner {
   def assignType(tree: untpd.Annotated, arg: Tree, annot: Tree)(implicit ctx: Context) =
     tree.withType(AnnotatedType(arg.tpe.widen, Annotation(annot)))
 
-  def assignType(tree: untpd.QualifiedTypeTree, subject: ValDef, precise: Boolean, expr: Tree)(implicit ctx: Context) =
-    tree.withType(QualifiedType(subject, precise, expr))
+  def assignType(tree: untpd.QualifiedTypeTree, subject: ValDef, expr: Tree)(implicit ctx: Context) =
+    tree.withType(QualifiedType(subject, expr))
 
   def assignType(tree: untpd.PackageDef, pid: Tree)(implicit ctx: Context) =
     tree.withType(pid.symbol.termRef)

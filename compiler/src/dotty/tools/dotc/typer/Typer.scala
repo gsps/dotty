@@ -1249,7 +1249,7 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     val exprCtx = index(tree.subject)
     val subject1 = typed(tree.subject).asInstanceOf[ValDef]
     val expr1 = typedExpr(tree.expr, defn.BooleanType)(exprCtx)
-    assignType(cpy.QualifiedTypeTree(tree)(subject1, expr1), subject1, true, expr1)
+    assignType(cpy.QualifiedTypeTree(tree)(subject1, expr1), subject1, expr1)
   }
 
   def typedValDef(vdef: untpd.ValDef, sym: Symbol)(implicit ctx: Context) = track("typedValDef") {

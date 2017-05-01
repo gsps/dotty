@@ -3662,46 +3662,36 @@ object Types {
   // ----- Qualified types ----------------------------------------------------------
 
   /** An qualified type tpe with expr */
-  case class QualifiedType(subject: TermName, parent: Type, precise: Boolean)(cExprExp: QualifiedType => ConstraintExpr)
+  case class QualifiedType(subject: TermName, parent: Type, _cExpr: ConstraintExpr)
     extends UncachedProxyType with BindingType with ValueType
   {
-    private val myCExpr = cExprExp(this)
-    override def cExpr(implicit ctx: Context): ConstraintExpr = myCExpr
+    override def cExpr(implicit ctx: Context): ConstraintExpr = _cExpr
 
     override def underlying(implicit ctx: Context): Type = parent
 
-    def derivedQualifiedType(subject: TermName, parent: Type, precise: Boolean, cExpr: ConstraintExpr)(
+    def derivedQualifiedType(subject: TermName, parent: Type, cExpr: ConstraintExpr)(
         implicit ctx: Context): QualifiedType =
-      if ((subject eq this.subject) && (parent eq this.parent) &&
-          (precise == this.precise) && (cExpr eq this.cExpr))
-        this
-      else
-//        new QualifiedType(subject, parent, precise)(cExpr.subst(this, _))
-        new QualifiedType(subject, parent, precise)(_ => cExpr)
+      if ((subject eq this.subject) && (parent eq this.parent) && (cExpr eq this._cExpr)) this
+      else new QualifiedType(subject, parent, cExpr)
 
     // TODO: computeHash
 //    override def computeHash = doHash(qualifier.hashCode(), doHash(precise.hashCode(), doHash(subject, parent)))
     override def equals(that: Any): Boolean = that match {
       case that: QualifiedType =>
-        (this.subject == that.subject) && (this.parent == that.parent) &&
-          (this.precise == that.precise) && (this.myCExpr == that.myCExpr)
+        (this.subject == that.subject) && (this.parent == that.parent) && (this._cExpr == that._cExpr)
       case _ =>
         false
     }
 
-    override def toString = s"QualifiedType($subject, $parent, $precise, $myCExpr)"
+    override def toString = s"QualifiedType($subject, $parent, ${_cExpr})"
   }
 
   object QualifiedType {
     // TODO: Caching for QualifiedTypes?
 
-    def apply(subject: ValDef, precise: Boolean, qualifier: Tree)(implicit ctx: Context) = {
-      def qualBuilder(qtp: QualifiedType) = {
-//        val qualifier1 = qualifier.substQualifierSubject(subject.symbol, qtp)
-        // TODO: Provide `precise` to extractQualifier
-        ctx.qualifierExtraction.extractQualifier(subject, qualifier, qtp)
-      }
-      new QualifiedType(subject.name, subject.tpt.tpe, precise)(qualBuilder)
+    def apply(subject: ValDef, qualifier: Tree)(implicit ctx: Context) = {
+      val cExpr = ctx.qualifierExtraction.extractQualifier(subject, qualifier)
+      new QualifiedType(subject.name, subject.tpt.tpe, cExpr)
     }
   }
 
@@ -3897,9 +3887,9 @@ object Types {
       tp.derivedAndOrType(tp1, tp2)
     protected def derivedAnnotatedType(tp: AnnotatedType, underlying: Type, annot: Annotation): Type =
       tp.derivedAnnotatedType(underlying, annot)
-    protected def derivedQualifiedType(tp: QualifiedType, subject: TermName, parent: Type, precise: Boolean,
+    protected def derivedQualifiedType(tp: QualifiedType, subject: TermName, parent: Type,
                                        cExpr: ConstraintExpr): Type =
-      tp.derivedQualifiedType(subject, parent, precise, cExpr)
+      tp.derivedQualifiedType(subject, parent, cExpr)
     protected def derivedWildcardType(tp: WildcardType, bounds: Type): Type =
       tp.derivedWildcardType(bounds)
     protected def derivedClassInfo(tp: ClassInfo, pre: Type): Type =
@@ -4003,9 +3993,9 @@ object Types {
           if (underlying1 eq underlying) tp
           else derivedAnnotatedType(tp, underlying1, mapOver(annot))
 
-        case tp @ QualifiedType(subject, parent, precise) =>
+        case tp @ QualifiedType(subject, parent, cExpr) =>
           // TODO: Introduce TreeTypeMap to also replace types in qualifier?
-          derivedQualifiedType(tp, subject, this(parent), precise, tp.cExpr)
+          derivedQualifiedType(tp, subject, this(parent), cExpr)
 
         case tp: WildcardType =>
           derivedWildcardType(tp, mapOver(tp.optBounds))

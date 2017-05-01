@@ -129,14 +129,14 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
     def unaryPrim(opTp: ExprType, argTp1: Type, bodyFn: (st.Expr) => st.Expr): ExprType = {
       val cExpr = UnaryPrimitiveCExpr(subject(opTp.resultType), argTp1)(bodyFn)
-      val qtp   = QualifiedType("pv".toTermName, opTp.resultType, true)(_ => cExpr)
+      val qtp   = QualifiedType("pv".toTermName, opTp.resultType, cExpr)
       opTp.derivedExprType(qtp)
     }
 
     def binaryPrim(opTp: MethodType, argTp1: Type, argTp2: Type,
                    bodyFn: (st.Expr, st.Expr) => st.Expr): MethodType = {
       val cExpr = BinaryPrimitiveCExpr(subject(opTp.resultType), argTp1, argTp2)(bodyFn)
-      val qtp   = QualifiedType("pv".toTermName, opTp.resultType, true)(_ => cExpr)
+      val qtp   = QualifiedType("pv".toTermName, opTp.resultType, cExpr)
       opTp.derivedLambdaType(resType = qtp)
     }
 
@@ -235,7 +235,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   }
   */
 
-  def extractQualifier(subjectVd: tpd.ValDef, qualifier: tpd.Tree, qtp: QualifiedType): ConstraintExpr = {
+  def extractQualifier(subjectVd: tpd.ValDef, qualifier: tpd.Tree): ConstraintExpr = {
     /*qualifier match {
 //      case Ex.StainlessIdent(sym) =>
 //        // TODO: Handle the case where a lone ident is really a function call?
