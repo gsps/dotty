@@ -15,6 +15,7 @@ import TastyBuffer._
 import TypeApplications._
 import transform.SymUtils._
 import config.Config
+import qtyper.extraction.{ConstraintExpr, QTypeCExpr, UnaryPrimitiveCExpr, BinaryPrimitiveCExpr}
 
 class TreePickler(pickler: TastyPickler) {
   val buf = new TreeBuffer
@@ -222,7 +223,7 @@ class TreePickler(pickler: TastyPickler) {
       withLength { pickleType(tpe.tpe, richTypes); pickleTree(tpe.annot.tree) }
     case tpe: QualifiedType =>
       writeByte(QUALIFIEDtype)
-//      withLength { pickleType(tpe.tpe, richTypes); pickleTree(tpe.expr) }
+      withLength { pickleName(tpe.subject); pickleType(tpe.parent, richTypes); pickleCExpr(tpe.qtCExpr, richTypes) }
     case tpe: AndOrType =>
       writeByte(if (tpe.isAnd) ANDtype else ORtype)
       withLength { pickleType(tpe.tp1, richTypes); pickleType(tpe.tp2, richTypes) }
@@ -514,7 +515,7 @@ class TreePickler(pickler: TastyPickler) {
           withLength { pickleTree(tree); pickleTree(annot.tree) }
         case QualifiedTypeTree(subject, expr) =>
           writeByte(QUALIFIEDtpt)
-//          withLength { pickleTree(subject); pickleTree(tpt); pickleTree(expr) }
+          withLength { preRegister(subject); pickleParam(subject); pickleTree(expr) }
         case LambdaTypeTree(tparams, body) =>
           writeByte(LAMBDAtpt)
           withLength { pickleParams(tparams); pickleTree(body) }
@@ -589,6 +590,56 @@ class TreePickler(pickler: TastyPickler) {
       writeByte(ANNOTATION)
       withLength { pickleType(ann.symbol.typeRef); pickleTree(ann.tree) }
     }
+
+  def pickleCExpr(cExpr: ConstraintExpr, richTypes: Boolean)(implicit ctx: Context) = {
+    import stainless.Identifier
+    import stainless.{trees => st}
+
+    def pickleStIdentifier(ident: Identifier): Unit = {
+      // TODO(gsps): writeString(ident.name)
+      writeInt(ident.globalId)
+      writeInt(ident.id)
+    }
+
+    def pickleStType(tpe: st.Type): Unit = {
+      val tag = tpe match {
+        case st.Untyped => UNTYPEDsttp
+        case st.BooleanType => BOOLEANsttp
+        case st.UnitType => UNITsttp
+        case st.Int32Type => INT32sttp
+        case _ => throw new IllegalArgumentException()
+      }
+      writeByte(tag)
+    }
+
+    def pickleStVariable(v: st.Variable): Unit = {
+      pickleStIdentifier(v.id)
+      pickleStType(v.tpe)
+    }
+
+    cExpr match {
+      case QTypeCExpr(subject, subjectTp, qualifierTp) =>
+        writeByte(QTYPEcexpr)
+        pickleStVariable(subject)
+        pickleType(subjectTp, richTypes)
+        pickleType(qualifierTp, richTypes)
+
+      case UnaryPrimitiveCExpr(subject, tp1, prim) =>
+        writeByte(UNARYPRIMcexpr)
+        pickleStVariable(cExpr.subject)
+        pickleType(tp1, richTypes)
+        writeByte(prim.id)
+
+      case BinaryPrimitiveCExpr(subject, tp1, tp2, prim) =>
+        writeByte(BINARYPRIMcexpr)
+        pickleStVariable(subject)
+        pickleType(tp1, richTypes)
+        pickleType(tp2, richTypes)
+        writeByte(prim.id)
+
+      case _ => throw new IllegalArgumentException()
+    }
+  }
 
   def pickle(trees: List[Tree])(implicit ctx: Context) = {
     trees.foreach(tree => if (!tree.isEmpty) pickleTree(tree))

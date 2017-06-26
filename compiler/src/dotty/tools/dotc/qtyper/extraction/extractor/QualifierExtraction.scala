@@ -15,9 +15,9 @@ import typer.{ForceDegree, Inferencing}
 import util.Positions._
 
 import qtyper.extraction.{ast => qtAst}
-import qtAst.{Identifier, FreshIdentifier}
-import qtAst.{trees => qt}
+//import qtAst.{trees => qt}
 
+import stainless.{Identifier, FreshIdentifier}
 import stainless.{trees => st}
 
 //import scala.language.implicitConversions
@@ -39,8 +39,9 @@ import scala.collection.mutable.{Map => MutableMap}
 class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(override implicit val ctx: Context)
   extends DottyExtraction(inoxCtx, exState)(ctx) {
 
-  val trees: qtyper.extraction.ast.trees.type = qtyper.extraction.ast.trees
+//  val trees: qtyper.extraction.ast.trees.type = qtyper.extraction.ast.trees
 //  val trees: st.type = st
+  val trees: stainless.extraction.oo.trees.type = stainless.extraction.oo.trees
 
   override def copyIn(ctx: Context): QualifierExtraction = new QualifierExtraction(inoxCtx, exState)(ctx)
 
@@ -114,12 +115,13 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
       val stainlessTp = stType(mp.underlying.widen)(emptyDefContext, pos)
       freshVar(mp.paramName.toString, stainlessTp, pos)
     })
-    println(s"EXTRACT MP $mp  -> $subject")
     TermRefCExpr(subject)
   }
 
 
   def injectPrimitive(clazz: ClassSymbol, opName: Name, opTp: Type): Type = {
+    import ConstraintExpr.{Primitives => P}
+
     @inline def depParam(opTp: MethodType): TermParamRef = TermParamRef(opTp, 0)
 
     def subject(resTp: Type): st.Variable = {
@@ -127,63 +129,61 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
       freshVar("pv", stainlessResTp)
     }
 
-    def unaryPrim(opTp: ExprType, argTp1: Type, bodyFn: (st.Expr) => st.Expr): ExprType = {
-      val cExpr = UnaryPrimitiveCExpr(subject(opTp.resultType), argTp1)(bodyFn)
+    def unaryPrim(opTp: ExprType, argTp1: Type, prim: ConstraintExpr.UnaryPrimitive): ExprType = {
+      val cExpr = UnaryPrimitiveCExpr(subject(opTp.resultType), argTp1, prim)
       val qtp   = QualifiedType("pv".toTermName, opTp.resultType, cExpr)
       opTp.derivedExprType(qtp)
     }
 
-    def binaryPrim(opTp: MethodType, argTp1: Type, argTp2: Type,
-                   bodyFn: (st.Expr, st.Expr) => st.Expr): MethodType = {
-      val cExpr = BinaryPrimitiveCExpr(subject(opTp.resultType), argTp1, argTp2)(bodyFn)
+    def binaryPrim(opTp: MethodType, argTp1: Type, argTp2: Type, prim: ConstraintExpr.BinaryPrimitive): MethodType = {
+      val cExpr = BinaryPrimitiveCExpr(subject(opTp.resultType), argTp1, argTp2, prim)
       val qtp   = QualifiedType("pv".toTermName, opTp.resultType, cExpr)
       opTp.derivedLambdaType(resType = qtp)
     }
 
     val tp1 = (clazz, opName, opTp) match {
       case (_, nme.EQ, opTp @ MethodTpe(_, List(_), BooleanType)) =>
-        binaryPrim(opTp, clazz.thisType, depParam(opTp), st.Equals)
+        binaryPrim(opTp, clazz.thisType, depParam(opTp), P.Equals)
 
       case (_, nme.NE, opTp @ MethodTpe(_, List(_), BooleanType)) =>
-        val bodyFn = (a: st.Expr, b: st.Expr) => st.Not(st.Equals(a, b))
-        binaryPrim(opTp, clazz.thisType, depParam(opTp), bodyFn)
+        binaryPrim(opTp, clazz.thisType, depParam(opTp), P.NotEquals)
 
       case (_, _, opTp @ ExprType(resTp)) if nme.UnaryOpNames.contains(opName) =>
-        val bodyFn = opName match {
-          case nme.UNARY_~ => st.BVNot
+        val prim = opName match {
+          case nme.UNARY_~ => P.BVNot
           case nme.UNARY_+ => return opTp  // TODO(gsps): Handle properly, once we support conversions
-          case nme.UNARY_- => st.UMinus
-          case nme.UNARY_! => st.Not
+          case nme.UNARY_- => P.UMinus
+          case nme.UNARY_! => P.Not
           case _ => ???
         }
-        unaryPrim(opTp, BooleanClass.thisType, bodyFn)
+        unaryPrim(opTp, BooleanClass.thisType, prim)
 
       case (BooleanClass, _, opTp @ MethodTpe(_, List(_), resTp)) =>
-        val bodyFn = opName match {
-          case nme.AND | nme.ZAND => (a: st.Expr, b: st.Expr) => st.And(a, b)
-          case nme.OR | nme.ZOR   => (a: st.Expr, b: st.Expr) => st.Or(a, b)
-          case nme.XOR            => (a: st.Expr, b: st.Expr) => st.Not(st.Equals(a, b))
+        val prim = opName match {
+          case nme.AND | nme.ZAND => P.And
+          case nme.OR | nme.ZOR   => P.Or
+          case nme.XOR            => P.NotEquals
           case _ => ???
         }
-        binaryPrim(opTp, BooleanClass.thisType, depParam(opTp), bodyFn)
+        binaryPrim(opTp, BooleanClass.thisType, depParam(opTp), prim)
 
       case (IntClass, _, opTp @ MethodTpe(_, List(paramTp), resTp)) if paramTp.widenSingleton == IntType =>
         val bodyFn = opName match {
-          case nme.AND  => st.BVAnd
-          case nme.OR   => st.BVOr
-          case nme.XOR  => st.BVXor
-          case nme.ADD  => st.Plus
-          case nme.SUB  => st.Minus
-          case nme.MUL  => st.Times
-          case nme.DIV  => st.Division
-          case nme.MOD  => st.Remainder
-          case nme.LSL  => st.BVShiftLeft
-          case nme.ASR  => st.BVAShiftRight
-          case nme.LSR  => st.BVLShiftRight
-          case nme.LT   => st.LessThan
-          case nme.GT   => st.GreaterThan
-          case nme.LE   => st.LessEquals
-          case nme.GE   => st.GreaterEquals
+          case nme.AND  => P.BVAnd
+          case nme.OR   => P.BVOr
+          case nme.XOR  => P.BVXor
+          case nme.ADD  => P.Plus
+          case nme.SUB  => P.Minus
+          case nme.MUL  => P.Times
+          case nme.DIV  => P.Division
+          case nme.MOD  => P.Remainder
+          case nme.LSL  => P.BVShiftLeft
+          case nme.ASR  => P.BVAShiftRight
+          case nme.LSR  => P.BVLShiftRight
+          case nme.LT   => P.LessThan
+          case nme.GT   => P.GreaterThan
+          case nme.LE   => P.LessEquals
+          case nme.GE   => P.GreaterEquals
           case _ => ???
         }
 //        println(s"!!!!! Injecting Primitive Int.$opName ( $paramTp )  :  $resTp")
@@ -235,7 +235,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   }
   */
 
-  def extractQualifier(subjectVd: tpd.ValDef, qualifier: tpd.Tree): ConstraintExpr = {
+  def extractQualifier(subjectVd: tpd.ValDef, qualifier: tpd.Tree): QTypeCExpr = {
     /*qualifier match {
 //      case Ex.StainlessIdent(sym) =>
 //        // TODO: Handle the case where a lone ident is really a function call?
@@ -288,7 +288,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
     val pos         = qualifier.pos
     val parentTp    = subjectVd.tpt.tpe
     val stainlessTp = stType(parentTp)(emptyDefContext, pos)
-    val subject     = freshVar(s"${subjectVd.name.toString}#qs", stainlessTp, pos)
+    val subject     = freshVar(subjectVd.name.toString, stainlessTp, pos)
     val qualTp      = qualifier.tpe
     assert(qualTp.widenDealias == BooleanType, s"Expected Boolean qualifier, but found $qualTp")
     QTypeCExpr(subject, subjectVd.symbol.termRef, qualTp)
@@ -314,39 +314,39 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
   /** Tree lowering **/
 
-  protected object Lowering {
-    val extractor: inox.ast.SymbolTransformer {
-      val s: qt.type
-      val t: stainless.extraction.trees.type
-    } = {
-      import stainless.extraction._
-      qtAst.extractor         andThen
-      oo.extractor            andThen
-      holes.extractor         andThen
-      imperative.extractor    andThen
-      innerfuns.extractor     andThen
-      inlining.extractor      andThen
-      preconditionInferrence
-    }
-
-    private val loweringChecker = inox.ast.SymbolTransformer(new stainless.extraction.CheckingTransformer {
-      val s: stainless.extraction.trees.type = stainless.extraction.trees
-      val t: stainless.trees.type = stainless.trees
-    })
-
-    // Lower an qtyper.extraction.ast program to a stainless program and make sure nothing remains untranslated
-    def apply(fd: qt.FunDef): stainless.trees.FunDef = {
-      val qtProgram = new inox.Program {
-        val ctx = inoxCtx
-        val trees: qt.type = qt
-        val symbols = qt.NoSymbols.withFunctions(Seq(fd))
-      }
-      val program = qtProgram.transform(extractor andThen loweringChecker)
-      assert(program.symbols.adts.size == 0)
-      assert(program.symbols.functions.size == 1)
-      program.symbols.functions(fd.id)
-    }
-  }
+//  protected object Lowering {
+//    val extractor: inox.ast.SymbolTransformer {
+//      val s: qt.type
+//      val t: stainless.extraction.trees.type
+//    } = {
+//      import stainless.extraction._
+//      qtAst.extractor         andThen
+//      oo.extractor            andThen
+//      holes.extractor         andThen
+//      imperative.extractor    andThen
+//      innerfuns.extractor     andThen
+//      inlining.extractor      andThen
+//      preconditionInferrence
+//    }
+//
+//    private val loweringChecker = inox.ast.SymbolTransformer(new stainless.extraction.CheckingTransformer {
+//      val s: stainless.extraction.trees.type = stainless.extraction.trees
+//      val t: stainless.trees.type = stainless.trees
+//    })
+//
+//    // Lower an qtyper.extraction.ast program to a stainless program and make sure nothing remains untranslated
+//    def apply(fd: qt.FunDef): stainless.trees.FunDef = {
+//      val qtProgram = new inox.Program {
+//        val ctx = inoxCtx
+//        val trees: qt.type = qt
+//        val symbols = qt.NoSymbols.withFunctions(Seq(fd))
+//      }
+//      val program = qtProgram.transform(extractor andThen loweringChecker)
+//      assert(program.symbols.adts.size == 0)
+//      assert(program.symbols.functions.size == 1)
+//      program.symbols.functions(fd.id)
+//    }
+//  }
 
 
   /** Helpers **/
@@ -370,10 +370,10 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 //    ).setPos(pos)
 
   final protected def freshVar(name: String, stainlessTp: st.Type, pos: Position): st.Variable =
-    st.Variable(FreshIdentifier(name, alwaysShowUniqueID = true).setPos(pos), stainlessTp, Set.empty).setPos(pos)
+    st.Variable(FreshIdentifier(name, alwaysShowUniqueID = false).setPos(pos), stainlessTp, Set.empty).setPos(pos)
 
   final protected def freshVar(name: String, stainlessTp: st.Type): st.Variable =
-    st.Variable.fresh(name, stainlessTp, true)
+    st.Variable.fresh(name, stainlessTp, alwaysShowUniqueID = false)
 
 
   /*

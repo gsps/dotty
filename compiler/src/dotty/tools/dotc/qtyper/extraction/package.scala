@@ -12,10 +12,10 @@ package object extraction {
 
 
   def defaultInoxCtx = {
-//    val reporter = new inox.Reporter(Set.empty) { override def emit(msg: Message): Unit = {} }
+    val reporter = new inox.Reporter(Set.empty) { override def emit(msg: Message): Unit = {} }
 //    val reporter = new inox.DefaultReporter(Set.empty)
-    val debugSections = Set(inox.ast.DebugSectionTrees, inox.utils.DebugSectionTimers, inox.solvers.DebugSectionSolver)
-    val reporter = new inox.DefaultReporter(debugSections)
+//    val debugSections = Set(inox.ast.DebugSectionTrees, inox.utils.DebugSectionTimers, inox.solvers.DebugSectionSolver)
+//    val reporter = new inox.DefaultReporter(debugSections)
     inox.Context(reporter, new inox.utils.InterruptManager(reporter))
   }
 
@@ -35,7 +35,7 @@ package object extraction {
     val tStart = System.nanoTime()
     val res = fn
     val tDur = (System.nanoTime() - tStart) / 1000000L
-    println(s"$what took $tDur ms.")
+//    println(s"$what took $tDur ms.")
     res
   }
 }

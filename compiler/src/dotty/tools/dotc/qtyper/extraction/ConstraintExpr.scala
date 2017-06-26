@@ -9,6 +9,8 @@ import core.Symbols.{ClassSymbol, Symbol}
 
 import stainless.{trees => st}
 
+import ConstraintExpr.{UnaryPrimitive, BinaryPrimitive}
+
 
 sealed trait ConstraintExpr {
   implicit val ctx: Context  // FIXME (gsps): Dubious whether we should really capture a Context here
@@ -27,33 +29,39 @@ sealed trait ConstraintExpr {
   val nonSingletonDeps: Set[Type] //= Set.empty
   val singletonDeps: Set[Type] //= Set.empty
 
+  lazy val depSubjectMap: Map[st.Variable, Type] =
+    scope.foldLeft(Map.empty[st.Variable, Type]) { (map, tp) =>
+      val cExpr = tp.cExpr
+      map + (cExpr.subject -> tp) ++ cExpr.depSubjectMap
+    }
+
 
   type ThisCExpr >: Null <: ConstraintExpr { type ThisCExpr = ConstraintExpr.this.ThisCExpr }
 
   def mapScope(f: Type => Type): ThisCExpr
 
-  def subst(from: BindingType, to: BindingType)(implicit ctx: Context): ConstraintExpr =
+  def subst(from: BindingType, to: BindingType)(implicit ctx: Context): ThisCExpr =
     mapScope(_.subst(from, to))
 
-  def subst(from: List[Symbol], to: List[Type])(implicit ctx: Context): ConstraintExpr =
+  def subst(from: List[Symbol], to: List[Type])(implicit ctx: Context): ThisCExpr =
     mapScope(_.subst(from, to))
 
-  def substDealias(from: List[Symbol], to: List[Type])(implicit ctx: Context): ConstraintExpr =
+  def substDealias(from: List[Symbol], to: List[Type])(implicit ctx: Context): ThisCExpr =
     mapScope(_.substDealias(from, to))
 
-  def substSym(from: List[Symbol], to: List[Symbol])(implicit ctx: Context): ConstraintExpr =
+  def substSym(from: List[Symbol], to: List[Symbol])(implicit ctx: Context): ThisCExpr =
     mapScope(_.substSym(from, to))
 
-  def substThis(from: ClassSymbol, to: Type)(implicit ctx: Context): ConstraintExpr =
+  def substThis(from: ClassSymbol, to: Type)(implicit ctx: Context): ThisCExpr =
     mapScope(_.substThis(from, to))
 
-  def substRecThis(from: RecType, to: Type)(implicit ctx: Context): ConstraintExpr =
+  def substRecThis(from: RecType, to: Type)(implicit ctx: Context): ThisCExpr =
     mapScope(_.substRecThis(from, to))
 
-  def substParam(from: ParamRef, to: Type)(implicit ctx: Context): ConstraintExpr =
+  def substParam(from: ParamRef, to: Type)(implicit ctx: Context): ThisCExpr =
     mapScope(_.substParam(from, to))
 
-  def substParams(from: BindingType, to: List[Type])(implicit ctx: Context): ConstraintExpr =
+  def substParams(from: BindingType, to: List[Type])(implicit ctx: Context): ThisCExpr =
     mapScope(_.substParams(from, to))
 
 
@@ -119,8 +127,7 @@ final case class TermRefCExpr(subject: st.Variable)(implicit val ctx: Context) e
 }
 
 
-final case class UnaryPrimitiveCExpr(subject: st.Variable, tp1: Type)(
-    bodyFn: (st.Expr) => st.Expr)(implicit val ctx: Context)
+final case class UnaryPrimitiveCExpr(subject: st.Variable, tp1: Type, prim: UnaryPrimitive)(implicit val ctx: Context)
   extends ConstraintExpr with LazyExprs
 {
   import ConstraintExpr._
@@ -132,7 +139,7 @@ final case class UnaryPrimitiveCExpr(subject: st.Variable, tp1: Type)(
 
     val (val1, scope1) = freshenedExprFlat(tp1)
     myScopeExpr = scope1
-    myValExpr   = Some(bodyFn(val1))
+    myValExpr   = Some(prim.builder(val1))
     myPropExpr  = st.Equals(subject, myValExpr.get)
     myExpr      = st.and(myScopeExpr, myPropExpr)
   }
@@ -145,15 +152,15 @@ final case class UnaryPrimitiveCExpr(subject: st.Variable, tp1: Type)(
   type ThisCExpr = UnaryPrimitiveCExpr
   def mapScope(f: Type => Type): ThisCExpr = {
     val tp11 = f(tp1)
-    if (tp1 != tp11) UnaryPrimitiveCExpr(subject, tp11)(bodyFn) else this
+    if (tp1 != tp11) UnaryPrimitiveCExpr(subject, tp11, prim) else this
   }
 
   def exprStr(): String = expr.toString()
 }
 
 
-final case class BinaryPrimitiveCExpr(subject: st.Variable, tp1: Type, tp2: Type)(
-    bodyFn: (st.Expr, st.Expr) => st.Expr)(implicit val ctx: Context)
+final case class BinaryPrimitiveCExpr(subject: st.Variable, tp1: Type, tp2: Type, prim: BinaryPrimitive)(
+  implicit val ctx: Context)
   extends ConstraintExpr with LazyExprs
 {
   import ConstraintExpr._
@@ -167,7 +174,7 @@ final case class BinaryPrimitiveCExpr(subject: st.Variable, tp1: Type, tp2: Type
     val (val1, scope1) = freshenedExprFlat(tp1)
     val (val2, scope2) = freshenedExprFlat(tp2)
     myScopeExpr = st.and(scope1, scope2)
-    myValExpr   = Some(bodyFn(val1, val2))
+    myValExpr   = Some(prim.builder(val1, val2))
     myPropExpr  = st.Equals(subject, myValExpr.get)
     myExpr      = st.and(myScopeExpr, myPropExpr)
   }
@@ -181,7 +188,7 @@ final case class BinaryPrimitiveCExpr(subject: st.Variable, tp1: Type, tp2: Type
   def mapScope(f: Type => Type): ThisCExpr = {
     val tp11 = f(tp1)
     val tp21 = f(tp2)
-    if (tp1 != tp11 || tp2 != tp21) BinaryPrimitiveCExpr(subject, tp11, tp21)(bodyFn) else this
+    if (tp1 != tp11 || tp2 != tp21) BinaryPrimitiveCExpr(subject, tp11, tp21, prim) else this
   }
 
   def exprStr(): String = expr.toString()
@@ -307,7 +314,7 @@ object ConstraintExpr {
 //    println(s"ooo => $optSubst")
     val subst = optSubst.getOrElse {
       var oldVars = cExpr.nonSingletonDeps.toSeq.map(_.cExpr.subject)
-      if (!tp.isInstanceOf[SingletonType])
+      if (!tp.isInstanceOf[SingletonType] && !tp.isInstanceOf[TermParamRef])
         oldVars = cExpr.subject +: oldVars
       oldVars.map { v => v -> v.freshen } .toMap
     }
@@ -334,5 +341,110 @@ object ConstraintExpr {
   def singletonDepsFor(tp: Type)(implicit ctx: Context): Set[Type] = tp match {
     case _: SingletonType => tp.cExpr.singletonDeps + tp
     case _                => tp.cExpr.singletonDeps
+  }
+
+  def depSubjectMap(tp: Type)(implicit ctx: Context): Map[st.Variable, Type] = {
+    val cExpr = tp.cExpr
+    cExpr.depSubjectMap + (cExpr.subject -> tp)
+  }
+
+
+
+  sealed trait Primitive { val id: Int }
+  final case class UnaryPrimitive(id: Int, builder: (st.Expr) => st.Expr) extends Primitive
+  final case class BinaryPrimitive(id: Int, builder: (st.Expr, st.Expr) => st.Expr) extends Primitive
+
+  object Primitives {
+    import scala.collection.mutable.{Map => MutableMap}
+
+    private val idMap = MutableMap.empty[Int, Primitive]
+
+    private def unary(builder: (st.Expr) => st.Expr): UnaryPrimitive = {
+      val prim = UnaryPrimitive(nextId, builder)
+      idMap(nextId) = prim
+      nextId += 1
+      prim
+    }
+
+    private def binary(builder: (st.Expr, st.Expr) => st.Expr): BinaryPrimitive = {
+      val prim = BinaryPrimitive(nextId, builder)
+      idMap(nextId) = prim
+      nextId += 1
+      prim
+    }
+
+    def apply(id: Int): Primitive = idMap(id)
+
+    private var nextId: Int = 1
+
+    val Equals    = binary(st.Equals)
+    val NotEquals = binary((a: st.Expr, b: st.Expr) => st.Not(st.Equals(a, b)))
+    val Not       = unary(st.Not)
+    val And       = binary((a: st.Expr, b: st.Expr) => st.And(a, b))
+    val Or        = binary((a: st.Expr, b: st.Expr) => st.Or(a, b))
+
+    val UMinus    = unary(st.UMinus)
+    val Plus      = binary(st.Plus)
+    val Minus     = binary(st.Minus)
+    val Times     = binary(st.Times)
+    val Division  = binary(st.Division)
+    val Remainder = binary(st.Remainder)
+
+    val LessThan      = binary(st.LessThan)
+    val GreaterThan   = binary(st.GreaterThan)
+    val LessEquals    = binary(st.LessEquals)
+    val GreaterEquals = binary(st.GreaterEquals)
+
+    val BVNot         = unary(st.BVNot)
+    val BVAnd         = binary(st.BVAnd)
+    val BVOr          = binary(st.BVOr)
+    val BVXor         = binary(st.BVXor)
+    val BVShiftLeft   = binary(st.BVShiftLeft)
+    val BVAShiftRight = binary(st.BVAShiftRight)
+    val BVLShiftRight = binary(st.BVLShiftRight)
+  }
+
+
+  def prettyPrintExpr(tp: QualifiedType)(implicit ctx: Context): String = {
+    val cExpr   = tp.cExpr
+    val varOccs = new collection.mutable.ListMap[st.Variable, Int]
+    val varTps  = ConstraintExpr.depSubjectMap(tp)
+    val expr    = cExpr.expr
+    val subject = cExpr.subject
+
+    stainless.trees.exprOps.preTraversal {
+      case v: st.Variable => varOccs(v) = varOccs.getOrElse(v, 0) + 1
+      case _ => //
+    } (expr)
+
+    {
+      object printer extends stainless.ast.Printer {
+        val trees: st.type = st
+
+        override protected def ppBody(tree: trees.Tree)(implicit pctx: st.PrinterContext): Unit = tree match {
+          case v: trees.Variable if v == subject =>
+            p"${v.id}"
+          case v: trees.Variable =>
+            varTps.get(v) match {
+              case Some(tp) =>
+                varOccs.get(v) match {
+                  case Some(n) =>
+                    varOccs -= v
+//                    if (n == 1) p"⟦${tp.show}⟧"
+//                    else        p"(${v.id}: ${tp.show})"
+                    p"(${v.id}: ${tp.show})"
+                  case None => p"${v.id}"
+                }
+              case None => p"!${v.id}@${v.id.globalId}!"
+            }
+          case _ => super.ppBody(tree)
+        }
+      }
+
+      val opts = st.PrinterOptions()
+      val pctx = st.PrinterContext(expr, Nil, opts.baseIndent, opts)
+      printer.pp(expr)(pctx)
+      pctx.sb.toString
+    }
   }
 }

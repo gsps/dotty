@@ -13,6 +13,7 @@ import java.lang.Integer.toOctalString
 import config.Config.summarizeDepth
 import scala.util.control.NonFatal
 import scala.annotation.switch
+import qtyper.extraction.ConstraintExpr
 
 class PlainPrinter(_ctx: Context) extends Printer {
   protected[this] implicit def ctx: Context = _ctx.addMode(Mode.Printing)
@@ -203,17 +204,45 @@ class PlainPrinter(_ctx: Context) extends Printer {
       case AnnotatedType(tpe, annot) =>
         toTextLocal(tpe) ~ " " ~ toText(annot)
       case tp @ QualifiedType(subject, parent, _) =>
-//        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " => " ~ tp.cExpr.fd.fullBody.toString ~ "}"
-//        val deps = tp.cExpr.scope.map(toText)
-        val deps = tp.cExpr.scope.map { tp =>
-          tp.cExpr.subject.toString() ~ " -> " ~ toText(tp)
-        }
-//        val deps = tp.cExpr.scope.map { tp => toText(tp) ~ (if (tp.isInstanceOf[ParamType]) s" ($tp)" else "")  }
-        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " => " ~ tp.cExpr.exprStr() ~ "} @ [" ~
-          Text(deps, "; ") ~ "]"
+////        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " => " ~ tp.cExpr.fd.fullBody.toString ~ "}"
+////        val deps = tp.cExpr.scope.map(toText)
+//        val deps = tp.cExpr.scope.map { tp =>
+//          tp.cExpr.subject.toString() ~ " -> " ~ toText(tp)
+//        }
+//        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " => " ~ tp.cExpr.exprStr() ~ "} @ [" ~
+//          Text(deps, "; ") ~ "]"
 
-//        val qual = tp.cExpr.scope.last.cExpr.expr.toString
-//        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " => " ~ qual ~ "}"
+//        var scope = tp.cExpr.scope.toSet
+
+//        val varOccs = new collection.mutable.ListMap[st.Variable, Int].withDefaultValue(0)
+//        val varTps = new collection.mutable.HashMap[st.Variable, Type]
+//
+//        def populateVarTps(tp: Type): Unit = {
+//          val cExpr = tp.cExpr
+//          varTps(cExpr.subject) = tp
+//          cExpr.scope.foreach(tp => populateVarTps(tp.cExpr))
+//        }
+//        populateVarTps(tp)
+//
+//        stainless.trees.exprOps.preTraversal {
+//          case v: st.Variable => varOccs(v) += 1
+//        } (tp.cExpr.expr)
+//
+//        def bdgText(tp: Type): Text = {
+//          val subject = tp.cExpr.subject
+//          varOccs.get(subject) match {
+//            case Some(n) =>
+//              varOccs -= subject
+//              val tpText = toText(tp)
+//              if (n == 1) "⟦" ~ tpText ~ "⟧"
+//              else        s"($subject: " ~ tpText ~ ")"
+//            case None =>
+//              subject.toString()
+//          }
+//        }
+
+        val exprText = ConstraintExpr.prettyPrintExpr(tp)
+        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " ⇒ " ~ exprText ~ "}"
       case AppliedType(tycon, args) =>
         toTextLocal(tycon) ~ "[" ~ Text(args.map(argText), ", ") ~ "]"
       case tp: TypeVar =>

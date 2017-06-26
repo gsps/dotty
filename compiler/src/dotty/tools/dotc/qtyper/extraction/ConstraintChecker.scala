@@ -3,8 +3,6 @@ package qtyper.extraction
 
 import scala.annotation.tailrec
 
-import qtyper.extraction.ast.{trees => qt}
-
 import stainless._
 
 

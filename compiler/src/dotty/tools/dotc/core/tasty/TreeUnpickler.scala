@@ -19,6 +19,7 @@ import scala.collection.{ mutable, immutable }
 import config.Printers.pickling
 import typer.Checking
 import config.Config
+import qtyper.extraction.{ConstraintExpr, QTypeCExpr, UnaryPrimitiveCExpr, BinaryPrimitiveCExpr}
 
 /** Unpickler for typed trees
  *  @param reader          the reader from which to unpickle
@@ -246,8 +247,8 @@ class TreeUnpickler(reader: TastyReader, nameAtRef: NameRef => TermName, posUnpi
             case ANNOTATEDtype =>
               AnnotatedType(readType(), Annotation(readTerm()))
             case QUALIFIEDtype =>
-//              QualifiedType(readType(), readTerm())
-              QualifiedType(EmptyValDef, EmptyTree)
+              QualifiedType(readName(), readType(), readCExpr())
+//              QualifiedType(EmptyValDef, EmptyTree)
             case ANDtype =>
               AndType(readType(), readType())
             case ORtype =>
@@ -1025,8 +1026,8 @@ class TreeUnpickler(reader: TastyReader, nameAtRef: NameRef => TermName, posUnpi
             case ANNOTATEDtpt =>
               Annotated(readTpt(), readTerm())
             case QUALIFIEDtpt =>
-//              QualifiedTypeTree(readTerm(), readTpt(), readTerm())
-              QualifiedTypeTree(EmptyValDef, EmptyTree)
+              QualifiedTypeTree(readIndexedDef().asInstanceOf[ValDef], readTerm())
+//              QualifiedTypeTree(EmptyValDef, EmptyTree)
             case LAMBDAtpt =>
               val localCtx = localNonClassCtx
               val tparams = readParams[TypeDef](TYPEPARAM)(localCtx)
@@ -1072,6 +1073,58 @@ class TreeUnpickler(reader: TastyReader, nameAtRef: NameRef => TermName, posUnpi
       val rhs = readTerm()
       val guard = ifBefore(end)(readTerm(), EmptyTree)
       setPos(start, CaseDef(pat, guard, rhs))
+    }
+
+    def readCExpr()(implicit ctx: Context): ConstraintExpr = {
+      import stainless.Identifier
+      import stainless.{trees => st}
+      import ConstraintExpr.{UnaryPrimitive, BinaryPrimitive, Primitives}
+
+      def readStIdentifier(): Identifier = {
+        // TODO(gsps): val name = readString()
+        val globalId = readInt()
+        val id = readInt()
+        new Identifier("v", globalId, id)
+      }
+
+      def readStType(): st.Type = {
+        readByte() match {
+          case UNTYPEDsttp => st.Untyped
+          case BOOLEANsttp => st.BooleanType
+          case UNITsttp => st.UnitType
+          case INT32sttp => st.Int32Type
+          case _ => throw new IllegalArgumentException()
+        }
+      }
+
+      def readStVariable(): st.Variable = {
+        val id = readStIdentifier()
+        val tpe = readStType()
+        st.Variable(id, tpe, Set.empty)
+      }
+
+      readByte() match {
+        case QTYPEcexpr =>
+          val subject = readStVariable()
+          val subjectTp = readType()
+          val qualifierTp = readType()
+          QTypeCExpr(subject, subjectTp, qualifierTp)
+
+        case UNARYPRIMcexpr =>
+          val subject = readStVariable()
+          val tp1 = readType()
+          val prim = Primitives(readByte()).asInstanceOf[UnaryPrimitive]
+          UnaryPrimitiveCExpr(subject, tp1, prim)
+
+        case BINARYPRIMcexpr =>
+          val subject = readStVariable()
+          val tp1 = readType()
+          val tp2 = readType()
+          val prim = Primitives(readByte()).asInstanceOf[BinaryPrimitive]
+          BinaryPrimitiveCExpr(subject, tp1, tp2, prim)
+
+        case _ => throw new IllegalArgumentException()
+      }
     }
 
     def readLater[T <: AnyRef](end: Addr, op: TreeReader => Context => T): Trees.Lazy[T] = {

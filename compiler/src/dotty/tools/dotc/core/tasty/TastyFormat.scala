@@ -398,6 +398,17 @@ object TastyFormat {
   final val QUALIFIEDtype = 179
   final val QUALIFIEDtpt = 180
 
+  /* Constraint expressions */
+  final val QTYPEcexpr = 1
+  final val UNARYPRIMcexpr = 2
+  final val BINARYPRIMcexpr = 3
+
+  /* Stainless types */
+  final val UNTYPEDsttp = 1
+  final val BOOLEANsttp = 2
+  final val UNITsttp = 3
+  final val INT32sttp = 4
+
   final val firstSimpleTreeTag = UNITconst
   final val firstNatTreeTag = SHARED
   final val firstASTTreeTag = THIS

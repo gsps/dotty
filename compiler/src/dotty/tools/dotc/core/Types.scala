@@ -38,7 +38,7 @@ import language.implicitConversions
 import scala.util.hashing.{ MurmurHash3 => hashing }
 import config.Printers.{core, typr, cyclicErrors}
 import java.lang.ref.WeakReference
-import qtyper.extraction.{ConstraintExpr, TrivialCExpr, TermRefCExpr, ConstantCExpr}
+import qtyper.extraction.{ConstraintExpr, TrivialCExpr, TermRefCExpr, ConstantCExpr, QTypeCExpr}
 
 object Types {
 
@@ -3662,28 +3662,28 @@ object Types {
   // ----- Qualified types ----------------------------------------------------------
 
   /** An qualified type tpe with expr */
-  case class QualifiedType(subject: TermName, parent: Type, _cExpr: ConstraintExpr)
+  case class QualifiedType(subject: TermName, parent: Type, qtCExpr: ConstraintExpr)
     extends UncachedProxyType with BindingType with ValueType
   {
-    override def cExpr(implicit ctx: Context): ConstraintExpr = _cExpr
+    override def cExpr(implicit ctx: Context): ConstraintExpr = qtCExpr
 
     override def underlying(implicit ctx: Context): Type = parent
 
-    def derivedQualifiedType(subject: TermName, parent: Type, cExpr: ConstraintExpr)(
+    def derivedQualifiedType(subject: TermName, parent: Type, qtCExpr: ConstraintExpr)(
         implicit ctx: Context): QualifiedType =
-      if ((subject eq this.subject) && (parent eq this.parent) && (cExpr eq this._cExpr)) this
-      else new QualifiedType(subject, parent, cExpr)
+      if ((subject eq this.subject) && (parent eq this.parent) && (qtCExpr eq this.qtCExpr)) this
+      else new QualifiedType(subject, parent, qtCExpr)
 
     // TODO: computeHash
 //    override def computeHash = doHash(qualifier.hashCode(), doHash(precise.hashCode(), doHash(subject, parent)))
     override def equals(that: Any): Boolean = that match {
       case that: QualifiedType =>
-        (this.subject == that.subject) && (this.parent == that.parent) && (this._cExpr == that._cExpr)
+        (this.subject == that.subject) && (this.parent == that.parent) && (this.qtCExpr == that.qtCExpr)
       case _ =>
         false
     }
 
-    override def toString = s"QualifiedType($subject, $parent, ${_cExpr})"
+    override def toString = s"QualifiedType($subject, $parent, $qtCExpr)"
   }
 
   object QualifiedType {

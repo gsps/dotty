@@ -16,7 +16,9 @@ import util.Positions._
 import stainless.ast.SymbolIdentifier
 //import stainless.extraction.xlang.{trees => xt}
 
-import qtyper.extraction.ast.{ASTExtractors, Identifier, FreshIdentifier}
+//import qtyper.extraction.ast.{ASTExtractors, Identifier, FreshIdentifier}
+import qtyper.extraction.ast.ASTExtractors
+import stainless.{Identifier, FreshIdentifier}
 
 import scala.language.implicitConversions
 
@@ -38,6 +40,7 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
   lazy val reporter = inoxCtx.reporter
 
 
+/*
   protected def annotationsOf(sym: Symbol): Set[trees.Flag] = {
     val actualSymbol = sym // .accessedOrSelf
     (for {
@@ -49,6 +52,7 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
       trees.extractFlag(shortName, a.arguments.map(extractTree(_)(emptyDefContext)))
     }).toSet
   }
+*/
 
 
   /** An exception thrown when non-stainless compatible code is encountered. */
@@ -165,6 +169,7 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
   }
 
 
+/*
   protected val invSymbol = stainless.ast.Symbol("inv")
 
   protected def extractClass(td: tpd.TypeDef): (trees.ClassDef, Seq[trees.FunDef]) = {
@@ -355,10 +360,12 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
       flags
     ).setPos(sym.pos), allMethods)
   }
+*/
 
   //trim because sometimes Scala names end with a trailing space, looks nicer without the space
   protected def freshId(sym: Symbol): Identifier = FreshIdentifier(sym.name.toString.trim)
 
+/*
   protected def extractFunction(sym: Symbol, tdefs: Seq[tpd.TypeDef], vdefs: Seq[tpd.ValDef], rhs: tpd.Tree)
                                (implicit dctx: DefContext, pos: Position): trees.FunDef = {
 
@@ -1091,6 +1098,7 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
     // default behaviour is to complain :)
     case _ => outOfSubsetError(tr, "Could not extract tree " + tr + " ("+tr.getClass+")")
   }).setPos(tr.pos)
+*/
 
   protected def extractType(t: tpd.Tree)(implicit dctx: DefContext): trees.Type = {
     extractType(t.tpe)(dctx, t.pos)
