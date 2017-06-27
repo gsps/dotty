@@ -1048,6 +1048,7 @@ class Namer { typer: Typer =>
       // instead of widening to the underlying module class types.
       def widenRhs(tp: Type): Type = tp.widenTermRefExpr match {
         case ctp: ConstantType if isInline => ctp
+        case qtp: QualifiedType if isInline => qtp  // TODO(gsps): Revisit widening QTypes.
         case ref: TypeRef if ref.symbol.is(ModuleClass) => tp
         case _ => tp.widen.widenUnion
       }
@@ -1056,26 +1057,32 @@ class Namer { typer: Typer =>
       // it would be erased to BoxedUnit.
       def dealiasIfUnit(tp: Type) = if (tp.isRef(defn.UnitClass)) defn.UnitType else tp
 
-      val rhsCtx = ctx.addMode(Mode.InferringReturnType)
-      def rhsType = typedAheadExpr(mdef.rhs, inherited orElse rhsProto)(rhsCtx).tpe
+      lazy val lhsType = {
+        val rhsCtx = ctx.addMode(Mode.InferringReturnType)
+        def rhsType = typedAheadExpr(mdef.rhs, inherited orElse rhsProto)(rhsCtx).tpe
 
-      // Approximate a type `tp` with a type that does not contain skolem types.
-      val deskolemize = new ApproximatingTypeMap {
-        def apply(tp: Type) = /*trace(i"deskolemize($tp) at $variance", show = true)*/ {
-          tp match {
-            case tp: SkolemType => range(tp.bottomType, atVariance(1)(apply(tp.info)))
-            case _ => mapOver(tp)
+        // Approximate a type `tp` with a type that does not contain skolem types.
+        val deskolemize = new ApproximatingTypeMap {
+          def apply(tp: Type) = /*trace(i"deskolemize($tp) at $variance", show = true)*/ {
+            tp match {
+              case tp: SkolemType => range(tp.bottomType, atVariance(1)(apply(tp.info)))
+              case _ => mapOver(tp)
+            }
           }
         }
-      }
 
-      def cookedRhsType = deskolemize(dealiasIfUnit(widenRhs(rhsType)))
-      lazy val lhsType = fullyDefinedType(cookedRhsType, "right-hand side", mdef.pos)
+        def cookedRhsType = deskolemize(dealiasIfUnit(widenRhs(rhsType)))
+        fullyDefinedType(cookedRhsType, "right-hand side", mdef.pos)
+      }
       //if (sym.name.toString == "y") println(i"rhs = $rhsType, cooked = $cookedRhsType")
       if (inherited.exists)
-        if (sym.is(Final, butNot = Method) && lhsType.isInstanceOf[ConstantType])
-          lhsType // keep constant types that fill in for a non-constant (to be revised when inline has landed).
-        else inherited
+        lhsType match {
+          case _: ConstantType | _: QualifiedType if sym.is(Final, butNot = Method) =>
+            // keep constant types that fill in for a non-constant (to be revised when inline has landed).
+            lhsType
+          case _ =>
+            inherited
+        }
       else {
         def missingType(modifier: String) = {
           ctx.error(s"${modifier}type of implicit definition needs to be given explicitly", mdef.pos)
