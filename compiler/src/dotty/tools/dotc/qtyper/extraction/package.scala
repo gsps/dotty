@@ -28,9 +28,6 @@ package object extraction {
 
   /** Helpers **/
 
-  def normalizedScope(syms: Traversable[Symbol]): List[Symbol] =
-    syms.toSeq.sortBy(sym => sym.pos.start).toList
-
   def timeMe[T](what: String)(fn: => T): T = {
     val tStart = System.nanoTime()
     val res = fn

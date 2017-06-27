@@ -73,7 +73,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
     cachedTrivial.getOrElseUpdate(tp, {
       val stTp = stType(tp)(emptyDefContext, NoPosition)
       val subject = freshVar("u", stTp)
-      TrivialCExpr(subject, tp)
+      TrivialCExpr(subject)
     })
   }
 
@@ -236,55 +236,6 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   */
 
   def extractQualifier(subjectVd: tpd.ValDef, qualifier: tpd.Tree): QTypeCExpr = {
-    /*qualifier match {
-//      case Ex.StainlessIdent(sym) =>
-//        // TODO: Handle the case where a lone ident is really a function call?
-//        // ... Or would this be explicit at the point of extraction?
-//        val v = exState.getOrPutVariable(sym) {
-//          val name     = sym.name.toString
-//          val pos      = sym.pos
-//          val parentTp = stainlessType(sym.info)(emptyDefContext, pos)
-//          val vd = trees.ValDef(
-//            FreshIdentifier(name, true).setPos(pos),
-//            parentTp,
-//            Set.empty
-//          ).setPos(pos)
-//          vd.toVariable
-//        }
-////        val fd = newCExprFd("dummy", Seq(v.freshen.toVal), v, qualifier.pos)
-////        ConstraintExpr(Seq(sym.info), ???, Map.empty, Lowering(fd))
-//        ???
-
-      // TODO: Precise extraction of Apply -- for now should we simply defer to the result type
-//      case tree @ Ex.StainlessApply(sym, args) =>
-//        val id = exState.getIdentifier(sym)
-//
-//        val fparams = args.zipWithIndex.foldLeft(Seq.empty[trees.ValDef]) { case (params, (arg, i)) =>
-//          val tpe = arg.tpe
-//          val sym = arg.symbol
-//          val (name, pos) = if (sym ne NoSymbol) (sym.name.toString, sym.pos) else (s"arg${i+1}", arg.pos)
-//          val stainlessTp = stainlessType(tpe)(emptyDefContext, pos)
-//          val vd = newCExprParam(trees)(name, stainlessTp, pos)
-//          val expr = () => vd.toVariable
-//          params :+ vd
-//        }
-//        val body = trees.FunctionInvocation(id, Seq(), fparams.map(_.toVariable))
-//
-//        val fd = newCExprFd(fparams, body, tree.pos)
-//        ConstraintExpr(args.map(_.tpe), Lowering(fd))
-
-      case tree =>  // Fallback, just use the outermost type
-//        tree.tpe.cExpr
-
-        val tpe = tree.tpe
-        val pos = tree.pos
-        val stainlessTp = stainlessType(tpe)(emptyDefContext, pos)
-        val refVd = newCExprParam("result", stainlessTp, pos)
-        val fd    = newCExprFd("qualifier", Seq(refVd), refVd.toVariable, pos)
-        ConstraintExpr(Seq(tpe), Lowering(fd))
-    }
-    */
-
     val pos         = qualifier.pos
     val parentTp    = subjectVd.tpt.tpe
     val stainlessTp = stType(parentTp)(emptyDefContext, pos)

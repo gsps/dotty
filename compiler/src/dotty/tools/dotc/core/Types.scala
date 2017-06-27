@@ -2689,6 +2689,7 @@ object Types {
     private[this] var myParamDependencyStatus: DependencyStatus = Unknown
 
     private def depStatus(initial: DependencyStatus, tp: Type)(implicit ctx: Context): DependencyStatus = {
+      import qtyper.extraction.ExtDep
       def combine(x: DependencyStatus, y: DependencyStatus) = {
         val status = (x & StatusMask) max (y & StatusMask)
         val provisional = (x | y) & Provisional
@@ -2702,7 +2703,7 @@ object Types {
               case TermParamRef(`thisLambdaType`, _) => TrueDeps
               case tp: QualifiedType =>
                 val hasDep = tp.cExpr.scope.exists {
-                  case TermParamRef(`thisLambdaType`, _) => true
+                  case ExtDep(TermParamRef(`thisLambdaType`, _)) => true
                   case _ => false
                 }
                 if (hasDep) TrueDeps

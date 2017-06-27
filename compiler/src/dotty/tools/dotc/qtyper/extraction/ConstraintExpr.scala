@@ -8,32 +8,98 @@ import core.Types._
 import core.Symbols.{ClassSymbol, Symbol}
 
 import stainless.{trees => st}
+import st.{Expr, Variable}
 
 import ConstraintExpr.{UnaryPrimitive, BinaryPrimitive}
+
+
+/*
+  When referring to another type on the logical level we need to make sure that we
+  have a proper name to refer to it.
+  The following class expresses *Dep*endencies of ConstraintExprs and ensures that within a
+  cexpr we have a proper name, i.e., stainless variable, for each dependency.
+
+  For instance, for SingletonTypes we either have an explicit binding on the Dotty level or
+  the SingletonType simply describes a constant.  We call such dependencies *external* and
+  only postulate their constraints once on the top-level of the VC.
+  As a consequence, we simply keep around their subject variables and don't freshen anything.
+
+  For less precise types, on the other hand, i.e., those with more than one inhabitant,
+  we need to be more careful.  We call such dependencies *internal*.  When relying on an
+  internal dependency, we must freshen all names that dependency relies on, including its
+  subject variable.
+ */
+sealed trait Dep {
+  val tp: Type
+  val subject: Variable
+
+  /*
+    Fresh Left(cExpr.valExpr.get, cExpr.scopeExpr) if tp.cExpr.valExpr.isDefined
+    otherwise Right(cExpr.subject, cExpr.expr)
+   */
+  final def freshExprs(optSubst: Option[Map[Variable, Variable]] = None)(
+    implicit ctx: Context): Either[(Expr, Expr), (Variable, Expr)] =
+  {
+    val cExpr = tp.cExpr
+    //    println(i"XXX freshenedExpr($tp)  //  ${tp.toString}")
+    //    println(s"ooo => $optSubst")
+    val subst = optSubst.getOrElse {
+      this match {
+        case ExtDep(_) => Dep.freshSubst(cExpr.deps)
+        case IntDep(_) => Dep.freshSubst(cExpr.deps) + (cExpr.subject -> subject)
+      }
+    }
+    def substitute(e: Expr): Expr = st.exprOps.replaceFromSymbols(subst, e)
+
+    cExpr.valExpr match {
+      case Some(e) => Left(substitute(e) -> substitute(cExpr.scopeExpr))
+      case None    => Right(substitute(cExpr.subject).asInstanceOf[Variable] -> substitute(cExpr.expr))
+    }
+  }
+
+  final def freshExprsFlat()(implicit ctx: Context): (Expr, Expr) =
+    freshExprs() match {
+      case Left((e1, e2))  => (e1, e2)
+      case Right((v1, e2)) => (v1, e2)
+    }
+}
+
+final case class ExtDep(tp: Type /* really should be SingletonType */)(implicit ctx: Context) extends Dep {
+  val subject: Variable = tp.cExpr.subject
+}
+final case class IntDep(tp: Type)(implicit ctx: Context) extends Dep {
+  val subject: Variable = tp.cExpr.subject.freshen
+  @inline def substPair: (Variable, Variable) = tp.cExpr.subject -> subject
+}
+
+object Dep {
+  def apply(tp: Type)(implicit ctx: Context): Dep = {
+    tp match {
+      // FIXME: Make TermParamRef a SingletonType
+      case _: SingletonType | _: TermParamRef => ExtDep(tp)
+      case _                                  => IntDep(tp)
+    }
+  }
+
+  def freshSubst(deps: Set[Dep]): Map[Variable, Variable] =
+    deps.collect { case dep: IntDep => dep.substPair } .toMap
+}
 
 
 sealed trait ConstraintExpr {
   implicit val ctx: Context  // FIXME (gsps): Dubious whether we should really capture a Context here
 
-  final protected type OptExpr = Option[st.Expr]
+  final protected type OptExpr = Option[Expr]
 
-  val subject: st.Variable
+  val subject: Variable
 
-  def scopeExpr: st.Expr /* Inv: subject does *not* occur in scopeExpr */
+  def scopeExpr: Expr /* Inv: subject does *not* occur in scopeExpr */
   def valExpr: OptExpr
-  def propExpr: st.Expr
-  def expr: st.Expr      /* Inv: expr == st.and(scopeExpr, *an expr constraining `subject`*) */
+  def propExpr: Expr
+  def expr: Expr      /* Inv: expr == st.and(scopeExpr, *an expr constraining `subject`*) */
 
-  val scope: Seq[Type] //= Seq.empty
-
-  val nonSingletonDeps: Set[Type] //= Set.empty
-  val singletonDeps: Set[Type] //= Set.empty
-
-  lazy val depSubjectMap: Map[st.Variable, Type] =
-    scope.foldLeft(Map.empty[st.Variable, Type]) { (map, tp) =>
-      val cExpr = tp.cExpr
-      map + (cExpr.subject -> tp) ++ cExpr.depSubjectMap
-    }
+  val scope: Set[Dep] // types we directly depend on
+  val deps: Set[Dep]  // types we transitively depend on
 
 
   type ThisCExpr >: Null <: ConstraintExpr { type ThisCExpr = ConstraintExpr.this.ThisCExpr }
@@ -68,86 +134,88 @@ sealed trait ConstraintExpr {
   def exprStr(): String
 }
 
-protected trait LazyExprs { self: ConstraintExpr =>
-  protected[this] var myScopeExpr: st.Expr = _
+protected trait EmptyScope { self: ConstraintExpr =>
+  final val scope: Set[Dep] = Set.empty[Dep]
+  final val deps: Set[Dep]  = Set.empty[Dep]
+
+  final def mapScope(f: Type => Type): this.type = this
+}
+
+protected trait LazyExprsAndDeps { self: ConstraintExpr =>
+  protected[this] var myScopeExpr: Expr = _
   protected[this] var myValExpr: OptExpr = _
-  protected[this] var myPropExpr: st.Expr = _
-  protected[this] var myExpr: st.Expr = _
+  protected[this] var myPropExpr: Expr = _
+  protected[this] var myExpr: Expr = _
   protected def initExprs(): Unit
 
-  def scopeExpr: st.Expr = { if (myScopeExpr == null) { initExprs() }; myScopeExpr }
-  def valExpr: OptExpr   = { if (myValExpr == null) { initExprs() }; myValExpr }
-  def propExpr: st.Expr  = { if (myPropExpr == null) { initExprs() }; myPropExpr }
-  def expr: st.Expr      = { if (myExpr == null) { initExprs() }; myExpr }
+  final def scopeExpr: Expr   = { if (myScopeExpr == null) { initExprs() }; myScopeExpr }
+  final def valExpr: OptExpr  = { if (myValExpr == null) { initExprs() }; myValExpr }
+  final def propExpr: Expr    = { if (myPropExpr == null) { initExprs() }; myPropExpr }
+  final def expr: Expr        = { if (myExpr == null) { initExprs() }; myExpr }
+
+  final lazy val deps: Set[Dep] =
+    scope.foldLeft(scope) { (deps0, dep) => deps0 union dep.tp.cExpr.deps }
 }
 
 
-final case class ConstantCExpr(subject: st.Variable, lit: st.Literal[_])(implicit val ctx: Context)
-  extends ConstraintExpr
+final case class TrivialCExpr(subject: Variable)
+  extends ConstraintExpr with EmptyScope
 {
-  val scopeExpr: st.Expr = TrueLit
-  val valExpr: OptExpr   = Some(lit)
-  val propExpr: st.Expr  = st.Equals(subject, lit)
-  val expr: st.Expr      = propExpr
+  implicit val ctx: Context = null
 
-  val scope: Seq[Type] = Seq.empty
+  val scopeExpr: Expr   = TrueLit
+  val valExpr: OptExpr  = None
+  val propExpr: Expr    = TrueLit
+  val expr: Expr        = TrueLit
 
-  val nonSingletonDeps: Set[Type] = Set.empty
-  val singletonDeps: Set[Type] = Set.empty
+  type ThisCExpr = TrivialCExpr
+
+  def exprStr(): String = "true"
+}
+
+
+final case class ConstantCExpr(subject: Variable, lit: st.Literal[_])(implicit val ctx: Context)
+  extends ConstraintExpr with EmptyScope
+{
+  val scopeExpr: Expr   = TrueLit
+  val valExpr: OptExpr  = Some(lit)
+  val propExpr: Expr    = st.Equals(subject, lit)
+  val expr: Expr        = propExpr
 
   type ThisCExpr = ConstantCExpr
-  def mapScope(f: Type => Type): ThisCExpr = this
 
   def exprStr(): String = lit.toString
 }
 
 
-final case class TermRefCExpr(subject: st.Variable)(implicit val ctx: Context) extends ConstraintExpr
+final case class TermRefCExpr(subject: Variable)(implicit val ctx: Context)
+  extends ConstraintExpr with EmptyScope
 {
   // TermRefs don't explicitly include their dependency's constraint expression (but expose it separately)
-//  val expr: st.Expr = st.BooleanLiteral(true)
-  val scopeExpr: st.Expr = TrueLit
-  val valExpr: OptExpr   = Some(subject)
-  val propExpr: st.Expr  = TrueLit
-  val expr: st.Expr      = TrueLit
-
-  override val scope: Seq[Type] = Seq.empty
-
-  val nonSingletonDeps: Set[Type] = Set.empty
-  val singletonDeps: Set[Type] = Set.empty
+  val scopeExpr: Expr   = TrueLit
+  val valExpr: OptExpr  = Some(subject)
+  val propExpr: Expr    = TrueLit
+  val expr: Expr        = TrueLit
 
   type ThisCExpr = TermRefCExpr
-//  def mapScope(f: Type => Type): ThisCExpr = {
-//    val underlying1 = f(underlying)
-//    if (underlying != underlying1) TermRefCExpr(subject, underlying1) else this
-//  }
-  def mapScope(f: Type => Type): ThisCExpr = this
 
   def exprStr(): String = subject.toString
 }
 
 
-final case class UnaryPrimitiveCExpr(subject: st.Variable, tp1: Type, prim: UnaryPrimitive)(implicit val ctx: Context)
-  extends ConstraintExpr with LazyExprs
+final case class UnaryPrimitiveCExpr(subject: Variable, tp1: Type, prim: UnaryPrimitive)(implicit val ctx: Context)
+  extends ConstraintExpr with LazyExprsAndDeps
 {
-  import ConstraintExpr._
-
   protected[this] def initExprs(): Unit = {
-//    val (tp1Subject, tp1Expr) = freshExprFor(tp1)
-//    myScopeExpr = tp1Expr
-//    myValExpr   = Some(bodyFn(tp1Subject))
-
-    val (val1, scope1) = freshenedExprFlat(tp1)
+    val (val1, scope1) = dep1.freshExprsFlat()
     myScopeExpr = scope1
     myValExpr   = Some(prim.builder(val1))
     myPropExpr  = st.Equals(subject, myValExpr.get)
     myExpr      = st.and(myScopeExpr, myPropExpr)
   }
 
-  override lazy val scope: Seq[Type] = Seq(tp1)
-
-  override lazy val nonSingletonDeps: Set[Type] = nonSingletonDepsFor(tp1)
-  override lazy val singletonDeps: Set[Type] = singletonDepsFor(tp1)
+  lazy val dep1 = Dep(tp1)
+  lazy val scope = Set(dep1)
 
   type ThisCExpr = UnaryPrimitiveCExpr
   def mapScope(f: Type => Type): ThisCExpr = {
@@ -159,30 +227,22 @@ final case class UnaryPrimitiveCExpr(subject: st.Variable, tp1: Type, prim: Unar
 }
 
 
-final case class BinaryPrimitiveCExpr(subject: st.Variable, tp1: Type, tp2: Type, prim: BinaryPrimitive)(
+final case class BinaryPrimitiveCExpr(subject: Variable, tp1: Type, tp2: Type, prim: BinaryPrimitive)(
   implicit val ctx: Context)
-  extends ConstraintExpr with LazyExprs
+  extends ConstraintExpr with LazyExprsAndDeps
 {
-  import ConstraintExpr._
-
   protected[this] def initExprs(): Unit = {
-//    val (tp1Subject, tp1Expr) = freshExprFor(tp1)
-//    val (tp2Subject, tp2Expr) = freshExprFor(tp2)
-//    myScopeExpr = st.and(tp1Expr, tp2Expr)
-//    myValExpr   = Some(bodyFn(tp1Subject, tp2Subject))
-
-    val (val1, scope1) = freshenedExprFlat(tp1)
-    val (val2, scope2) = freshenedExprFlat(tp2)
+    val (val1, scope1) = dep1.freshExprsFlat()
+    val (val2, scope2) = dep2.freshExprsFlat()
     myScopeExpr = st.and(scope1, scope2)
     myValExpr   = Some(prim.builder(val1, val2))
     myPropExpr  = st.Equals(subject, myValExpr.get)
     myExpr      = st.and(myScopeExpr, myPropExpr)
   }
 
-  override lazy val scope: Seq[Type] = Seq(tp1, tp2)
-
-  override lazy val nonSingletonDeps: Set[Type] = nonSingletonDepsFor(tp1) ++ nonSingletonDepsFor(tp2)
-  override lazy val singletonDeps: Set[Type] = singletonDepsFor(tp1) ++ singletonDepsFor(tp2)
+  lazy val dep1 = Dep(tp1)
+  lazy val dep2 = Dep(tp2)
+  lazy val scope = Set(dep1, dep2)
 
   type ThisCExpr = BinaryPrimitiveCExpr
   def mapScope(f: Type => Type): ThisCExpr = {
@@ -195,47 +255,18 @@ final case class BinaryPrimitiveCExpr(subject: st.Variable, tp1: Type, tp2: Type
 }
 
 
-final case class QTypeCExpr(subject: st.Variable, subjectTp: Type, qualifierTp: Type)(implicit val ctx: Context)
-  extends ConstraintExpr with LazyExprs
+final case class QTypeCExpr(subject: Variable, subjectTp: Type, qualifierTp: Type)(implicit val ctx: Context)
+  extends ConstraintExpr with LazyExprsAndDeps
 {
-  import ConstraintExpr._
-
   protected[this] def initExprs(): Unit = {
     val cExprS = subjectTp.cExpr
     val cExprQ = qualifierTp.cExpr  // Inv: qualTp.widenDealias == BooleanType
 
-//////    myScopeExpr = st.and(cExprS.expr, cExprQ.expr, st.Equals(subject, cExprS.subject))
-////    myScopeExpr = {
-////      val subjectSubst = Map(cExprS.subject -> subject)
-////      st.and(
-////        st.exprOps.replaceFromSymbols(subjectSubst, cExprS.expr),
-////        st.exprOps.replaceFromSymbols(subjectSubst, cExprQ.expr))
-////    }
-////    myPropExpr  = cExprQ.subject
-////    myExpr      = st.and(myScopeExpr, myPropExpr)
-//
-//    val subjectSubst = Map[st.Variable, st.Expr](cExprS.subject -> subject)
-//    myScopeExpr = {
-//      st.and(
-//        st.exprOps.replaceFromSymbols(subjectSubst, cExprS.expr),
-//        st.exprOps.replaceFromSymbols(subjectSubst, cExprQ.scopeExpr))
-//    }
-//    myValExpr     = None  // In general we have no explicit form for our subject variable
-//    val qualSubst = subjectSubst + (cExprQ.subject -> st.BooleanLiteral(true))
-//    myPropExpr    = st.exprOps.replaceFromSymbols(qualSubst, cExprQ.propExpr.get)
-//    myExpr        = st.and(myScopeExpr, myPropExpr)
-
-
-    val subst = {
-      val nonSingDepsVars = (cExprS.nonSingletonDeps union cExprQ.nonSingletonDeps).toSeq.map(_.cExpr.subject)
-      val oldVars = cExprS.subject +: nonSingDepsVars
-      val newVars = subject        +: nonSingDepsVars.map(_.freshen)
-      (oldVars zip newVars).toMap
-    }
+    val subst = Dep.freshSubst(cExprS.deps union cExprQ.deps) + (cExprS.subject -> subject)
     val exprP = st.exprOps.replaceFromSymbols(subst, cExprS.expr)
 
-    freshenedExpr(qualifierTp, Some(subst)) match {
-      case Left((valQ, scopeQ))     =>
+    qualifierDep.freshExprs(Some(subst)) match {
+      case Left((valQ, scopeQ)) =>
         myScopeExpr = st.and(exprP, scopeQ)
         myPropExpr  = valQ
 
@@ -244,14 +275,14 @@ final case class QTypeCExpr(subject: st.Variable, subjectTp: Type, qualifierTp: 
         myPropExpr  = subjectQ
     }
 
-    myValExpr   = None  // In general we have no explicit form for our subject variable
-    myExpr      = st.and(myScopeExpr, myPropExpr)
+    myValExpr = None  // In general we have no explicit form for our subject variable
+    myExpr    = st.and(myScopeExpr, myPropExpr)
   }
 
-  override lazy val scope: Seq[Type] = Seq(subjectTp, qualifierTp)
-
-  override lazy val nonSingletonDeps: Set[Type] = nonSingletonDepsFor(subjectTp) ++ nonSingletonDepsFor(qualifierTp)
-  override lazy val singletonDeps: Set[Type] = singletonDepsFor(subjectTp) ++ singletonDepsFor(qualifierTp)
+  // NOTE: Potentially creating an IntDep with a fresh subject is a bit funky, since we'll never use it!
+  lazy val subjectDep   = Dep(subjectTp)
+  lazy val qualifierDep = Dep(qualifierTp)
+  lazy val scope: Set[Dep] = Set(subjectDep, qualifierDep)
 
   type ThisCExpr = QTypeCExpr
   def mapScope(f: Type => Type): ThisCExpr = {
@@ -264,109 +295,30 @@ final case class QTypeCExpr(subject: st.Variable, subjectTp: Type, qualifierTp: 
 }
 
 
-// TODO(gsps): It might make sense to remove underlying, create subjects that have st.Untyped and then
-//  erase the trivial constraints.  This would mean trivial cExprs on most types are almost completely free.
-//@sharable object TrivialCExpr extends ConstraintExpr {
-final case class TrivialCExpr(subject: st.Variable, underlying: Type) extends ConstraintExpr {
-  implicit val ctx: Context = null
-
-  val scopeExpr: st.Expr = TrueLit
-  val valExpr: OptExpr   = None
-  val propExpr: st.Expr  = TrueLit
-  val expr: st.Expr      = TrueLit
-
-  val scope: Seq[Type] = Seq.empty
-
-  val nonSingletonDeps: Set[Type] = Set.empty
-  val singletonDeps: Set[Type] = Set.empty
-
-  type ThisCExpr = TrivialCExpr
-  def mapScope(f: Type => Type): ThisCExpr = {
-    val underlying1 = f(underlying)
-    if (underlying != underlying1) TrivialCExpr(subject, underlying1) else this
-  }
-
-  def exprStr(): String = "true"
-}
-
-
 object ConstraintExpr {
-//  def freshExprFor(tp: Type)(implicit ctx: Context): (st.Variable, st.Expr) = {
-//    val cExpr = tp.cExpr
-//    val subject = cExpr.subject
-//    ctx.warning(i"XXX freshExprFor($tp)  //  ${tp.toString}", ctx.tree.pos)
-//
-//    tp match {
-//      case _: SingletonType => (subject, cExpr.expr)
-//      case _ =>
-//        val oldVars = subject +: cExpr.nonSingletonDeps.toSeq.map(_.cExpr.subject)
-//        val newVars = oldVars.map(_.freshen)
-//        (newVars.head, st.exprOps.replaceFromSymbols((oldVars zip newVars).toMap, cExpr.expr))
-//    }
-//  }
-
-  // Fresh Left(cExpr.valExpr.get, cExpr.scopeExpr) if tp.cExpr.valExpr.isDefined, owse Right(cExpr.subject, cExpr.expr)
-  def freshenedExpr(tp: Type, optSubst: Option[Map[st.Variable, st.Variable]] = None)(
-    implicit ctx: Context): Either[(st.Expr, st.Expr), (st.Variable, st.Expr)] =
-  {
+  def depSubjectMap(tp: Type)(implicit ctx: Context): Map[Variable, Type] = {
     val cExpr = tp.cExpr
-//    println(i"XXX freshenedExpr($tp)  //  ${tp.toString}")
-//    println(s"ooo => $optSubst")
-    val subst = optSubst.getOrElse {
-      var oldVars = cExpr.nonSingletonDeps.toSeq.map(_.cExpr.subject)
-      if (!tp.isInstanceOf[SingletonType] && !tp.isInstanceOf[TermParamRef])
-        oldVars = cExpr.subject +: oldVars
-      oldVars.map { v => v -> v.freshen } .toMap
-    }
-    def substitute(e: st.Expr): st.Expr = st.exprOps.replaceFromSymbols(subst, e)
-
-    cExpr.valExpr match {
-      case Some(e) => Left(substitute(e) -> substitute(cExpr.scopeExpr))
-      case None    => Right(substitute(cExpr.subject).asInstanceOf[st.Variable] -> substitute(cExpr.expr))
-    }
+    val depSubjectMap0: Map[Variable, Type] = cExpr.deps.map(dep => dep.subject -> dep.tp).toMap
+    depSubjectMap0 + (cExpr.subject -> tp)
   }
-
-  def freshenedExprFlat(tp: Type)(implicit ctx: Context): (st.Expr, st.Expr) =
-    freshenedExpr(tp) match {
-      case Left((e1, e2))  => (e1, e2)
-      case Right((v1, e2)) => (v1, e2)
-    }
-
-
-  def nonSingletonDepsFor(tp: Type)(implicit ctx: Context): Set[Type] = tp match {
-    case _: SingletonType => tp.cExpr.nonSingletonDeps
-    case _                => tp.cExpr.nonSingletonDeps + tp
-  }
-
-  def singletonDepsFor(tp: Type)(implicit ctx: Context): Set[Type] = tp match {
-    case _: SingletonType => tp.cExpr.singletonDeps + tp
-    case _                => tp.cExpr.singletonDeps
-  }
-
-  def depSubjectMap(tp: Type)(implicit ctx: Context): Map[st.Variable, Type] = {
-    val cExpr = tp.cExpr
-    cExpr.depSubjectMap + (cExpr.subject -> tp)
-  }
-
-
 
   sealed trait Primitive { val id: Int }
-  final case class UnaryPrimitive(id: Int, builder: (st.Expr) => st.Expr) extends Primitive
-  final case class BinaryPrimitive(id: Int, builder: (st.Expr, st.Expr) => st.Expr) extends Primitive
+  final case class UnaryPrimitive(id: Int, builder: (Expr) => Expr) extends Primitive
+  final case class BinaryPrimitive(id: Int, builder: (Expr, Expr) => Expr) extends Primitive
 
   object Primitives {
     import scala.collection.mutable.{Map => MutableMap}
 
     private val idMap = MutableMap.empty[Int, Primitive]
 
-    private def unary(builder: (st.Expr) => st.Expr): UnaryPrimitive = {
+    private def unary(builder: (Expr) => Expr): UnaryPrimitive = {
       val prim = UnaryPrimitive(nextId, builder)
       idMap(nextId) = prim
       nextId += 1
       prim
     }
 
-    private def binary(builder: (st.Expr, st.Expr) => st.Expr): BinaryPrimitive = {
+    private def binary(builder: (Expr, Expr) => Expr): BinaryPrimitive = {
       val prim = BinaryPrimitive(nextId, builder)
       idMap(nextId) = prim
       nextId += 1
@@ -378,10 +330,10 @@ object ConstraintExpr {
     private var nextId: Int = 1
 
     val Equals    = binary(st.Equals)
-    val NotEquals = binary((a: st.Expr, b: st.Expr) => st.Not(st.Equals(a, b)))
+    val NotEquals = binary((a: Expr, b: Expr) => st.Not(st.Equals(a, b)))
     val Not       = unary(st.Not)
-    val And       = binary((a: st.Expr, b: st.Expr) => st.And(a, b))
-    val Or        = binary((a: st.Expr, b: st.Expr) => st.Or(a, b))
+    val And       = binary((a: Expr, b: Expr) => st.And(a, b))
+    val Or        = binary((a: Expr, b: Expr) => st.Or(a, b))
 
     val UMinus    = unary(st.UMinus)
     val Plus      = binary(st.Plus)
@@ -407,13 +359,13 @@ object ConstraintExpr {
 
   def prettyPrintExpr(tp: QualifiedType)(implicit ctx: Context): String = {
     val cExpr   = tp.cExpr
-    val varOccs = new collection.mutable.ListMap[st.Variable, Int]
+    val varOccs = new collection.mutable.ListMap[Variable, Int]
     val varTps  = ConstraintExpr.depSubjectMap(tp)
     val expr    = cExpr.expr
     val subject = cExpr.subject
 
     stainless.trees.exprOps.preTraversal {
-      case v: st.Variable => varOccs(v) = varOccs.getOrElse(v, 0) + 1
+      case v: Variable => varOccs(v) = varOccs.getOrElse(v, 0) + 1
       case _ => //
     } (expr)
 

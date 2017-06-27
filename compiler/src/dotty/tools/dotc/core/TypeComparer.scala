@@ -272,11 +272,13 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       //  that equals tp1.
       isSubType(tp1, parent2) && {
         if (ctx.phase.isTyper) {
-          println(i"SUBTYPING QT!  $tp1  <:?  $tp2")
-//          (new Throwable()).printStackTrace()
+          def printRes(res: Boolean) = {
+            val mark = if (res) "\t\u001b[32m✓\u001b[39m" else "\t\u001b[31m×\u001b[39m"
+            println(i"$mark SUBTYPING QT!  $tp1  <:?  $tp2")
+          }
           ctx.checkQTypeConstraint(tp1, tp2) match {
-            case Some(true)   => true
-            case Some(false)  => false
+            case Some(true)   => printRes(true); true
+            case Some(false)  => printRes(false); false
             case None         => ???
           }
         } else {

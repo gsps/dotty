@@ -21,48 +21,48 @@ object QTypeConstraint {
     val cExpr1 = tp1.cExpr
     val cExpr2 = tp2.cExpr
 
-    def termRefUnderlying(tp: TermRef): Type = ctx.extractionState.getVarSymbol(tp.cExpr.subject).info
-    def mpUnderlying(tp: TermParamRef): Type = ctx.extractionState.getVarMp(tp.cExpr.subject).underlying
+    val singletonExprs = {
+      def termRefUnderlying(tp: TermRef): Type = ctx.extractionState.getVarSymbol(tp.cExpr.subject).info
+      def mpUnderlying(tp: TermParamRef): Type = ctx.extractionState.getVarMp(tp.cExpr.subject).underlying
 
-    import ConstraintExpr.singletonDepsFor
-    def recSingletonDeps(tp: Type, deps: Set[Type] = Set.empty): Set[Type] = {
-      singletonDepsFor(tp).foldLeft(deps) {
-        case (deps0, tp: TermRef)      => recSingletonDeps(termRefUnderlying(tp), deps0 + tp)
-        case (deps0, tp: TermParamRef) => recSingletonDeps(mpUnderlying(tp), deps0 + tp)
-        case (deps0, _)                => deps0
+      def recSingletonDeps(tp: Type, deps: Set[Type] = Set.empty): Set[Type] = {
+        tp.cExpr.deps.foldLeft(deps) {
+          case (deps0, ExtDep(tp: TermRef)) => recSingletonDeps(termRefUnderlying(tp), deps0 + tp)
+          case (deps0, ExtDep(tp: TermParamRef)) => recSingletonDeps(mpUnderlying(tp), deps0 + tp)
+          case (deps0, _) => deps0
+        }
       }
+
+      def singletonExpr(tp: Type): st.Expr = {
+        val underlying = tp match {
+          case tp: TermRef      => termRefUnderlying(tp)
+          case tp: TermParamRef => mpUnderlying(tp)
+        }
+        val undCExpr = underlying.cExpr
+//        println(i"TERMREF: $tp  //  ${tp.toString}")
+//        println(s"\tsubject: $subject")
+//        println(s"\tunderlying: $underlying")
+//        println(s"\tundSubject: ${undCExpr.subject}")
+//        println(s"\tundExpr: ${undCExpr.expr}")
+
+        val subst = Dep.freshSubst(undCExpr.deps) + (undCExpr.subject -> tp.cExpr.subject)
+        val expr  = st.exprOps.replaceFromSymbols(subst, undCExpr.expr)
+//        println(s"SINGLETON EXPR for $tp\n\tunderlying:  $underlying\n\texpr:  $expr")
+        expr
+      }
+
+      val singletons = recSingletonDeps(tp1) ++ recSingletonDeps(tp2)
+      // println(s"SINGLETONS:  $singletons")
+      val singletonSeq = singletons.toSeq.sortBy(_.uniqId)
+      // println(s"SingletonSeq:"); for (s <- singletonSeq) println(s"\t| $s")
+      singletonSeq.filter {
+        // (Constants are simply constrained in exprs at their usage site; we could share these constraints here)
+        case _: ConstantType                    => false
+        case TermRef(_, _) | TermParamRef(_, _) => true
+        case _                                  => false
+      } .map(singletonExpr)
     }
 
-    def singletonExpr(tp: Type): st.Expr = {
-      val underlying = tp match {
-        case tp: TermRef      => termRefUnderlying(tp)
-        case tp: TermParamRef => mpUnderlying(tp)
-      }
-      // FIXME FIXME FIXME: FRESHEN!
-      val undSubject = underlying.cExpr.subject
-      val undExpr    = underlying.cExpr.expr
-//      println(i"TERMREF: $tp  //  ${tp.toString}")
-//      println(s"\tsubject: $subject")
-//      println(s"\tunderlying: $underlying")
-//      println(s"\tundSubject: $undSubject")
-//      println(s"\tundExpr: $undExpr")
-
-//      st.And(undExpr, st.Equals(tp.cExpr.subject, undSubject))
-      val expr = st.exprOps.replaceFromSymbols(Map(undSubject -> tp.cExpr.subject), undExpr)
-//      println(s"SINGLETON EXPR for $tp\n\tunderlying:  $underlying\n\texpr:  $expr")
-      expr
-    }
-
-    val singletons      = recSingletonDeps(tp1) ++ recSingletonDeps(tp2)
-//    println(s"SINGLETONS:  $singletons")
-    val singletonSeq    = singletons.toSeq.sortBy(_.uniqId)
-    val singletonExprs  = singletonSeq.filter {
-      // (Constants are simply constrained in exprs at their usage site; we could share these constraints here)
-      case _: ConstantType                    => false
-      case TermRef(_, _) | TermParamRef(_, _) => true
-      case _                                  => false
-    } .map(singletonExpr)
-//    println(s"SingletonSeq:"); for (s <- singletonSeq) println(s"\t| $s")
 //    println(s"Components:");
 //    println(s"\tsingletonExprs: $singletonExprs")
 //    println(s"\tcExpr1: ${cExpr1.expr}")
@@ -86,6 +86,5 @@ object QTypeConstraint {
     }
     QTypeConstraint(vc)
   }
-
 
 }

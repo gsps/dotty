@@ -111,7 +111,7 @@ trait TypeAssigner {
         case tp: QualifiedType =>
           val parent1 = apply(tp.parent)
           // TODO: Do something smarter than widening the QType in case toAvoid is true
-          tp.cExpr.scope.find(toAvoid) match {
+          tp.cExpr.scope.find(dep => toAvoid(dep.tp)) match {
             case Some(badTp) =>
               typr.println(i"Dropping qualification to $tp since its dependency on $badTp conflicts with $forbidden")
               parent1
