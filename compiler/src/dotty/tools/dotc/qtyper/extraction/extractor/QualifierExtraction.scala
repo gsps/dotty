@@ -99,11 +99,29 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
     val sym = termRef.symbol
     assert(sym ne NoSymbol)
+    // TODO: Assert that termRef is normalized
 
-    val subject = exState.getOrPutVar(sym, () => {
+    val qualVarName = {
+      val sb = StringBuilder.newBuilder
+      def refStr(tp: Type): Unit = tp match {
+        case tp: TermRef      => prefixStr(tp.prefix); sb.append(tp.name)
+        case tp: ThisType     => sb.append(tp.cls.name); sb.append(".this")
+        case tp: TermParamRef => sb.append(tp.paramName)
+        case _ => throw new IllegalArgumentException(i"Unexpected type in TermRef prefix: $tp")
+      }
+      def prefixStr(tp: Type): Unit = tp match {
+        case NoPrefix          => //
+        case tp: SingletonType => refStr(tp); sb.append(".")
+        case _                 => sb.append("{???}#")  // TODO
+      }
+      refStr(termRef); sb.toString()
+    }
+
+    val subject = exState.getOrPutVar(termRef, () => {
+      // TODO: We actually want the position of the term carrying the TermRef here, no?
       val pos = sym.pos
       val stainlessTp = stType(termRef.widenTermRefExpr)(emptyDefContext, pos)
-      freshVar(sym.name.toString, stainlessTp, pos)
+      freshVar(qualVarName, stainlessTp, pos)
     })
     TermRefCExpr(subject)
   }

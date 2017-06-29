@@ -4,7 +4,7 @@ package qtyper.extraction
 import core.Contexts._
 import core.Names._
 import core.Symbols._
-import core.Types.TermParamRef
+import core.Types.{TermRef, TermParamRef}
 
 import stainless.ast.SymbolIdentifier
 import stainless.{FreshIdentifier, Identifier}
@@ -21,7 +21,7 @@ class ExtractionState {
 
   protected val symbolsCache: MutableMap[Symbol, SymbolIdentifier] = MutableMap.empty
   protected val namesCache: MutableMap[Name, Identifier] = MutableMap.empty
-  protected val symVars: Bijection[Symbol, trees.Variable] = Bijection()
+  protected val termRefVars: Bijection[TermRef, trees.Variable] = Bijection()
   protected val mpVars: Bijection[TermParamRef, trees.Variable] = Bijection()
 
 
@@ -43,12 +43,12 @@ class ExtractionState {
   }
 
 
-  def getOrPutVar(sym: Symbol, builder: () => trees.Variable): trees.Variable =
-    symVars.getB(sym) match {
+  def getOrPutVar(termRef: TermRef, builder: () => trees.Variable): trees.Variable =
+    termRefVars.getB(termRef) match {
       case Some(v) => v
       case None =>
         val v = builder()
-        symVars += sym -> v
+        termRefVars += termRef -> v
         v
     }
 
@@ -61,9 +61,9 @@ class ExtractionState {
         v
     }
 
-  def getVarSymbol(variable: trees.Variable): Symbol =
-    symVars.toA(variable)
+  def getTermRefVar(variable: trees.Variable): TermRef =
+    termRefVars.toA(variable)
 
-  def getVarMp(variable: trees.Variable): TermParamRef =
+  def getMpVar(variable: trees.Variable): TermParamRef =
     mpVars.toA(variable)
 }

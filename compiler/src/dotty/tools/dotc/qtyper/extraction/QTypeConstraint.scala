@@ -22,23 +22,27 @@ object QTypeConstraint {
     val cExpr2 = tp2.cExpr
 
     val singletonExprs = {
-      def termRefUnderlying(tp: TermRef): Type = ctx.extractionState.getVarSymbol(tp.cExpr.subject).info
-      def mpUnderlying(tp: TermParamRef): Type = ctx.extractionState.getVarMp(tp.cExpr.subject).underlying
+      def singletonUnderlying(tp: Type): Type = tp match {
+        case tp: TermRef      => ctx.extractionState.getTermRefVar(tp.cExpr.subject).underlying
+        case tp: TermParamRef => ctx.extractionState.getMpVar(tp.cExpr.subject).underlying
+        case _ => ???
+      }
 
-      def recSingletonDeps(tp: Type, deps: Set[Type] = Set.empty): Set[Type] = {
-        tp.cExpr.deps.foldLeft(deps) {
-          case (deps0, ExtDep(tp: TermRef)) => recSingletonDeps(termRefUnderlying(tp), deps0 + tp)
-          case (deps0, ExtDep(tp: TermParamRef)) => recSingletonDeps(mpUnderlying(tp), deps0 + tp)
-          case (deps0, _) => deps0
+      def singletonDeps(tp: Type): Set[Type] = {
+        def rec(tp: Type, deps: Set[Type]): Set[Type] =
+          tp.cExpr.deps.foldLeft(deps) {
+            case (deps0, ExtDep(_: ConstantType)) => deps0
+            case (deps0, ExtDep(depTp))           => rec(singletonUnderlying(depTp), deps0 + depTp)
+            case (deps0, _)                       => deps0
+          }
+        tp match {
+          case _: TermRef | _: TermParamRef => rec(singletonUnderlying(tp), Set(tp))
+          case _                            => rec(tp, Set.empty)
         }
       }
 
       def singletonExpr(tp: Type): st.Expr = {
-        val underlying = tp match {
-          case tp: TermRef      => termRefUnderlying(tp)
-          case tp: TermParamRef => mpUnderlying(tp)
-        }
-        val undCExpr = underlying.cExpr
+        val undCExpr = singletonUnderlying(tp).cExpr
 //        println(i"TERMREF: $tp  //  ${tp.toString}")
 //        println(s"\tsubject: $subject")
 //        println(s"\tunderlying: $underlying")
@@ -51,8 +55,7 @@ object QTypeConstraint {
         expr
       }
 
-      val singletons = recSingletonDeps(tp1) ++ recSingletonDeps(tp2)
-      // println(s"SINGLETONS:  $singletons")
+      val singletons = singletonDeps(tp1) ++ singletonDeps(tp2)
       val singletonSeq = singletons.toSeq.sortBy(_.uniqId)
       // println(s"SingletonSeq:"); for (s <- singletonSeq) println(s"\t| $s")
       singletonSeq.filter {
