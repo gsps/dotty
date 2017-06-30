@@ -19,15 +19,22 @@ import ConstraintExpr.{UnaryPrimitive, BinaryPrimitive}
   The following class expresses *Dep*endencies of ConstraintExprs and ensures that within a
   cexpr we have a proper name, i.e., stainless variable, for each dependency.
 
-  For instance, for SingletonTypes we either have an explicit binding on the Dotty level or
-  the SingletonType simply describes a constant.  We call such dependencies *external* and
-  only postulate their constraints once on the top-level of the VC.
-  As a consequence, we simply keep around their subject variables and don't freshen anything.
+  Consider SingletonTypes, for which we either have an explicit binding on the Dotty level or
+  the SingletonType can be described locally, such as with constants.
 
-  For less precise types, on the other hand, i.e., those with more than one inhabitant,
-  we need to be more careful.  We call such dependencies *internal*.  When relying on an
-  internal dependency, we must freshen all names that dependency relies on, including its
-  subject variable.
+  We call the former *external* dependencies, since they may be shared across multiple
+  subexpressions.  Concretely, these arise from TermRefs and TermParamsRefs.
+  We postulate the corresponding constraints once on the top-level of the VC.
+  As a consequence, for external dependencies we simply keep subject variables around and
+  don't freshen anything.
+
+  For other types, e.g., those with more than one inhabitant, we need to be more careful.
+  We call such dependencies *internal*.  When relying on an internal dependency, we must
+  usually freshen all (internal) names that dependency relies on, including its subject
+  variable.
+  Similarly, we treat ConstantTypes and SkolemTypes as internal dependencies, with the notable
+  optimizations that ConstantTypes always have an explicit form (`valExpr`) and SkolemTypes
+  do not require freshening of their subject variable, since SkolemTypes are always fresh.
  */
 sealed trait Dep {
   val tp: Type
@@ -73,12 +80,12 @@ final case class IntDep(tp: Type)(implicit ctx: Context) extends Dep {
 }
 
 object Dep {
-  def apply(tp: Type)(implicit ctx: Context): Dep = {
-    tp match {
-      // FIXME: Make TermParamRef a SingletonType
-      case _: SingletonType | _: TermParamRef => ExtDep(tp)
-      case _                                  => IntDep(tp)
-    }
+  def apply(tp: Type)(implicit ctx: Context): Dep =
+    if (isExternal(tp)) ExtDep(tp) else IntDep(tp)
+
+  def isExternal(tp: Type): Boolean = tp match {
+    case _: TermRef | _: TermParamRef => true
+    case _                            => false
   }
 
   def freshSubst(deps: Set[Dep]): Map[Variable, Variable] =
@@ -200,6 +207,31 @@ final case class TermRefCExpr(subject: Variable)(implicit val ctx: Context)
   type ThisCExpr = TermRefCExpr
 
   def exprStr(): String = subject.toString
+}
+
+
+final case class SkolemCExpr(tp: Type)(implicit val ctx: Context)
+  extends ConstraintExpr with LazyExprsAndDeps
+{
+  protected[this] def initExprs(): Unit = {
+    val (val1, scope1) = dep.freshExprsFlat()
+    myScopeExpr = scope1
+    myValExpr   = Some(val1)
+    myPropExpr  = st.Equals(subject, myValExpr.get)
+    myExpr      = st.and(myScopeExpr, myPropExpr)
+  }
+
+  val dep     = Dep(tp)
+  val subject = dep.subject
+  val scope   = Set(dep)
+
+  type ThisCExpr = SkolemCExpr
+  def mapScope(f: Type => Type): ThisCExpr = {
+    val tp1 = f(tp)
+    if (tp != tp1) SkolemCExpr(tp1) else this
+  }
+
+  def exprStr(): String = expr.toString
 }
 
 

@@ -38,7 +38,7 @@ import language.implicitConversions
 import scala.util.hashing.{ MurmurHash3 => hashing }
 import config.Printers.{core, typr, cyclicErrors}
 import java.lang.ref.WeakReference
-import qtyper.extraction.{ConstraintExpr, TrivialCExpr, TermRefCExpr, ConstantCExpr, QTypeCExpr}
+import qtyper.extraction.{ConstraintExpr, TermRefCExpr, ConstantCExpr, SkolemCExpr}
 
 object Types {
 
@@ -3335,7 +3335,7 @@ object Types {
 
     override def toString = s"Skolem($hashCode)"
 
-    // TODO (gsps): Override cExpr???
+    override def cExpr(implicit ctx: Context): ConstraintExpr = SkolemCExpr(info)
   }
 
   // ------------ Type variables ----------------------------------------
