@@ -340,8 +340,10 @@ trait TypeAssigner {
    */
   def safeSubstParam(tp: Type, pref: ParamRef, argType: Type)(implicit ctx: Context) = {
     val tp1 = tp.substParam(pref, argType)
-    if ((tp1 eq tp) || argType.isStable) tp1
-    else tp.substParam(pref, SkolemType(argType.widen))
+    if ((tp1 eq tp) || argType.isStable)
+      tp1
+    else  // TODO(gsps): Revisit widening argType here; (Deviation from Scala, might be too precise!)
+      tp.substParam(pref, SkolemType(argType))
   }
 
   def assignType(tree: untpd.Apply, fn: Tree, args: List[Tree])(implicit ctx: Context) = {
