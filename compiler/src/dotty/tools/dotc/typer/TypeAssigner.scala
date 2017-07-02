@@ -558,9 +558,14 @@ trait TypeAssigner {
 
   def assignType(tree: untpd.QualifiedTypeTree, subject: ValDef, expr: Tree)(implicit ctx: Context) = {
     val tpe =
-      if (subject.tpe.isError)   subject.tpe
-      else if (expr.tpe.isError) expr.tpe
-      else                       QualifiedType(subject, expr)
+      if (subject.tpe.isError)
+        subject.tpe
+      else {
+        val exprTpe = expr.tpe
+        if (exprTpe.isError)        exprTpe
+        else if (exprTpe eq NoType) new ErrorType("Missing type for qualifier expression")
+        else                        QualifiedType(subject, expr)
+      }
     tree.withType(tpe)
   }
 
