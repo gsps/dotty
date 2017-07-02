@@ -1076,13 +1076,15 @@ class Namer { typer: Typer =>
       }
       //if (sym.name.toString == "y") println(i"rhs = $rhsType, cooked = $cookedRhsType")
       if (inherited.exists)
-        lhsType match {
-          case _: ConstantType | _: QualifiedType if sym.is(Final, butNot = Method) =>
-            // keep constant types that fill in for a non-constant (to be revised when inline has landed).
-            lhsType
-          case _ =>
-            inherited
-        }
+        // NOTE(gsps): Tricky evaluation. `lhsType` may ONLY be evaluated if `!sym.is(...)`
+        if (sym.is(Final, butNot = Method))
+          lhsType match {
+            case _: ConstantType | _: QualifiedType =>
+              // keep constant types that fill in for a non-constant (to be revised when inline has landed).
+              lhsType
+            case _ => inherited
+          }
+        else inherited
       else {
         def missingType(modifier: String) = {
           ctx.error(s"${modifier}type of implicit definition needs to be given explicitly", mdef.pos)
