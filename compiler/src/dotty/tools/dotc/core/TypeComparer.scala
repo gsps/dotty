@@ -270,15 +270,17 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       // TODO: Rather than only delegating to isSubtype(tp1, parent2), we could be more liberal:
       //  E.g. we could also allow the case where tp1 is a SingletonType and tp2 is QualifiedType
       //  that equals tp1.
-      def relaxed =
+      def relaxed: Boolean =
         // NOTE: Bail for similar reasons as in the case of SkolemType (TreeChecker otherwise fails)
-        !ctx.phase.isTyper || {
-          // TODO(gsps): Revisit and find more general solution (also consider Null)
-          // NOTE: Bail because stainless can't reason about Nothing-typed subjects
-          (tp1.cExpr.subject.tpe == stainless.trees.Untyped) &&
-            (tp1.widenDealias.classSymbol eq NothingClass)
-        }
-      isSubType(tp1, parent2) && (relaxed || {
+        // NOTE: `!ctx.phase.isTyper` is *too* liberal: e.g. when inferring types in the body of
+        //  synthetic methods during PostTyper this introduce unsoundness.
+        ctx.phase.isInstanceOf[transform.TreeChecker]
+      def isNothing: Boolean =
+        // TODO(gsps): Revisit and find more general solution (also consider Null)
+        // NOTE: Bail because stainless can't reason about Nothing-typed subjects
+        (tp1.cExpr.subject.tpe == stainless.trees.Untyped) &&
+          (tp1.widenDealias.classSymbol eq NothingClass)
+      isSubType(tp1, parent2) && (relaxed || isNothing || {
         def printRes(res: Boolean) = {
           val mark = if (res) "\t\u001b[32m✓\u001b[39m" else "\t\u001b[31m×\u001b[39m"
           println(i"$mark SUBTYPING QT!  $tp1  <:?  $tp2")
