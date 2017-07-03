@@ -608,7 +608,9 @@ object Build {
             // used for tests that compile dotty
             path.contains("scala-asm") ||
             // needed for the xsbti interface
-            path.contains("sbt-interface")
+            path.contains("sbt-interface") ||
+            // used for stainless
+            path.contains("lara") || path.contains("z3") || path.contains("smtlib")  // FIXME(gsps): Which exactly?
         } yield "-Xbootclasspath/p:" + path
 
         val ci_build = // propagate if this is a ci build
