@@ -99,17 +99,39 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
     val sym = termRef.symbol
     assert(sym ne NoSymbol)
-    // TODO: Assert that termRef is normalized
 
     val qualVarName = {
       val sb = StringBuilder.newBuilder
+
+      // TODO(gsps): Homogenize from PlainPrinter; factor out
+      def homogenize(tp: Type): Type = tp match {
+        case tp: ThisType if tp.cls.is(Package) && !tp.cls.isEffectiveRoot =>
+          ctx.requiredPackage(tp.cls.fullName).termRef
+        case tp: TypeVar if tp.isInstantiated =>
+          homogenize(tp.instanceOpt)
+        case AndType(tp1, tp2) =>
+          homogenize(tp1) & homogenize(tp2)
+        case OrType(tp1, tp2) =>
+          homogenize(tp1) | homogenize(tp2)
+        case tp: SkolemType =>
+          homogenize(tp.info)
+        case tp: LazyRef =>
+          homogenize(tp.ref)
+        case HKApply(tycon, args) =>
+          tycon.dealias.appliedTo(args)
+        case _ =>
+          tp
+      }
+
       def refStr(tp: Type): Unit = tp match {
         case tp: TermRef      => prefixStr(tp.prefix); sb.append(tp.name)
         case tp: ThisType     => sb.append(tp.cls.name); sb.append(".this")
         case tp: TermParamRef => sb.append(tp.paramName)
+        case tp: SkolemType   => sb.append(tp.show)  // FIXME?
         case _ => throw new IllegalArgumentException(i"Unexpected type in TermRef prefix: $tp")
       }
-      def prefixStr(tp: Type): Unit = tp match {
+
+      def prefixStr(tp: Type): Unit = homogenize(tp) match {
         case NoPrefix          => //
         case tp: SingletonType => refStr(tp); sb.append(".")
         case _                 => sb.append("{???}#")  // TODO
