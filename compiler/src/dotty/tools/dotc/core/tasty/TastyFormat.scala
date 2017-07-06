@@ -462,7 +462,8 @@ object TastyFormat {
        | ANDtpt
        | ORtpt
        | BYNAMEtpt
-       | BIND => true
+       | BIND
+       | QUALIFIEDtpt => true
     case _ => false
   }
 

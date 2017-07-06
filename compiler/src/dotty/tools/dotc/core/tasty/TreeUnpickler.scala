@@ -1026,8 +1026,9 @@ class TreeUnpickler(reader: TastyReader, nameAtRef: NameRef => TermName, posUnpi
             case ANNOTATEDtpt =>
               Annotated(readTpt(), readTerm())
             case QUALIFIEDtpt =>
-              QualifiedTypeTree(readIndexedDef().asInstanceOf[ValDef], readTerm())
-//              QualifiedTypeTree(EmptyValDef, EmptyTree)
+              val sym = ctx.newSymbol(ctx.owner, readName(), EmptyFlags, readType())
+              registerSym(start, sym)
+              QualifiedTypeTree(ValDef(sym), readTerm())
             case LAMBDAtpt =>
               val localCtx = localNonClassCtx
               val tparams = readParams[TypeDef](TYPEPARAM)(localCtx)
