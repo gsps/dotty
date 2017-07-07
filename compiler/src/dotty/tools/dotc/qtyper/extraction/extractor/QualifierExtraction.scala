@@ -123,18 +123,19 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
           tp
       }
 
-      def refStr(tp: Type): Unit = tp match {
+      def refStr(tp: Type): Unit = homogenize(tp) match {
         case tp: TermRef      => prefixStr(tp.prefix); sb.append(tp.name)
         case tp: ThisType     => sb.append(tp.cls.name); sb.append(".this")
         case tp: TermParamRef => sb.append(tp.paramName)
-        case tp: SkolemType   => sb.append(tp.show)  // FIXME?
+        case tp: SkolemType   => refStr(tp.underlying); sb.append("(?)")  // FIXME?
         case _ => throw new IllegalArgumentException(i"Unexpected type in TermRef prefix: $tp")
       }
 
       def prefixStr(tp: Type): Unit = homogenize(tp) match {
-        case NoPrefix          => //
-        case tp: SingletonType => refStr(tp); sb.append(".")
-        case _                 => sb.append("{???}#")  // TODO
+        case NoPrefix                           => //
+        case _: SingletonType | _: TermParamRef => refStr(tp); sb.append(".")
+        case tp: TypeRef                        => prefixStr(tp.prefix); sb.append(tp.symbol.name); sb.append(".")
+        case _                                  => sb.append("{???}")  // FIXME?
       }
       refStr(termRef); sb.toString()
     }
