@@ -126,8 +126,11 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
       def refStr(tp: Type): Unit = homogenize(tp) match {
         case tp: TermRef      => prefixStr(tp.prefix); sb.append(tp.name)
         case tp: ThisType     => sb.append(tp.cls.name); sb.append(".this")
+        case tp: SuperType    => sb.append("Super(...)")  // FIXME?
         case tp: TermParamRef => sb.append(tp.paramName)
         case tp: SkolemType   => refStr(tp.underlying); sb.append("(?)")  // FIXME?
+        case tp: ConstantType => sb.append(tp.value.show)
+        case tp: RecThis      => sb.append("{...}.this")
         case _ => throw new IllegalArgumentException(i"Unexpected type in TermRef prefix: $tp")
       }
 
