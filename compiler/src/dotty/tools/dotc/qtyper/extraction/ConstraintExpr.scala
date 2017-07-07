@@ -71,7 +71,7 @@ sealed trait Dep {
     }
 }
 
-final case class ExtDep(tp: Type /* really should be SingletonType */)(implicit ctx: Context) extends Dep {
+final case class ExtDep(tp: Type)(implicit ctx: Context) extends Dep {
   val subject: Variable = tp.cExpr.subject
 }
 final case class IntDep(tp: Type)(implicit ctx: Context) extends Dep {
@@ -94,24 +94,22 @@ object Dep {
 
 
 sealed trait ConstraintExpr {
-  implicit val ctx: Context  // FIXME (gsps): Dubious whether we should really capture a Context here
-
   final protected type OptExpr = Option[Expr]
 
-  val subject: Variable
+  def subject(implicit ctx: Context): Variable
 
-  def scopeExpr: Expr /* Inv: subject does *not* occur in scopeExpr */
-  def valExpr: OptExpr
-  def propExpr: Expr
-  def expr: Expr      /* Inv: expr == st.and(scopeExpr, *an expr constraining `subject`*) */
+  def scopeExpr(implicit ctx: Context): Expr /* Inv: subject does *not* occur in scopeExpr */
+  def valExpr(implicit ctx: Context): OptExpr
+  def propExpr(implicit ctx: Context): Expr
+  def expr(implicit ctx: Context): Expr      /* Inv: expr == st.and(scopeExpr, *an expr constraining `subject`*) */
 
-  val scope: Set[Dep] // types we directly depend on
-  val deps: Set[Dep]  // types we transitively depend on
+  def scope(implicit ctx: Context): Set[Dep] // types we directly depend on
+  def deps(implicit ctx: Context): Set[Dep]  // types we transitively depend on
 
 
   type ThisCExpr >: Null <: ConstraintExpr { type ThisCExpr = ConstraintExpr.this.ThisCExpr }
 
-  def mapScope(f: Type => Type): ThisCExpr
+  def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr
 
   def subst(from: BindingType, to: BindingType)(implicit ctx: Context): ThisCExpr =
     mapScope(_.subst(from, to))
@@ -138,166 +136,200 @@ sealed trait ConstraintExpr {
     mapScope(_.substParams(from, to))
 
 
-  def exprStr(): String
+  def exprStr(implicit ctx: Context): String
 }
 
 protected trait EmptyScope { self: ConstraintExpr =>
-  final val scope: Set[Dep] = Set.empty[Dep]
-  final val deps: Set[Dep]  = Set.empty[Dep]
+  final def scope(implicit ctx: Context): Set[Dep] = Set.empty[Dep]
+  final def deps(implicit ctx: Context): Set[Dep]  = Set.empty[Dep]
 
-  final def mapScope(f: Type => Type): this.type = this
+  final def mapScope(f: Type => Type)(implicit ctx: Context): this.type = this
 }
 
 protected trait LazyExprsAndDeps { self: ConstraintExpr =>
+  protected def init()(implicit ctx: Context): Unit
+
   protected[this] var myScopeExpr: Expr = _
   protected[this] var myValExpr: OptExpr = _
   protected[this] var myPropExpr: Expr = _
   protected[this] var myExpr: Expr = _
-  protected def initExprs(): Unit
 
-  final def scopeExpr: Expr   = { if (myScopeExpr == null) { initExprs() }; myScopeExpr }
-  final def valExpr: OptExpr  = { if (myValExpr == null) { initExprs() }; myValExpr }
-  final def propExpr: Expr    = { if (myPropExpr == null) { initExprs() }; myPropExpr }
-  final def expr: Expr        = { if (myExpr == null) { initExprs() }; myExpr }
+  final def scopeExpr(implicit ctx: Context): Expr   = { if (myScopeExpr == null) { init() }; myScopeExpr }
+  final def valExpr(implicit ctx: Context): OptExpr  = { if (myValExpr == null) { init() }; myValExpr }
+  final def propExpr(implicit ctx: Context): Expr    = { if (myPropExpr == null) { init() }; myPropExpr }
+  final def expr(implicit ctx: Context): Expr        = { if (myExpr == null) { init() }; myExpr }
 
-  final lazy val deps: Set[Dep] =
-    scope.foldLeft(scope) { (deps0, dep) => deps0 union dep.tp.cExpr.deps }
+  protected[this] var myScope: Set[Dep] = _
+  protected[this] var myDeps: Set[Dep] = _
+
+  final def scope(implicit ctx: Context): Set[Dep] = { if (myScope == null) { init() }; myScope }
+
+  final def deps(implicit ctx: Context): Set[Dep] = {
+    if (myDeps == null)
+      myDeps = scope.foldLeft(scope) { (deps0, dep) => deps0 union dep.tp.cExpr.deps }
+    myDeps
+  }
 }
 
 
-final case class TrivialCExpr(subject: Variable)
+final case class TrivialCExpr(_subject: Variable)
   extends ConstraintExpr with EmptyScope
 {
-  implicit val ctx: Context = null
+  def subject(implicit ctx: Context) = _subject
 
-  val scopeExpr: Expr   = TrueLit
-  val valExpr: OptExpr  = None
-  val propExpr: Expr    = TrueLit
-  val expr: Expr        = TrueLit
+  def scopeExpr(implicit ctx: Context): Expr   = TrueLit
+  def valExpr(implicit ctx: Context): OptExpr  = None
+  def propExpr(implicit ctx: Context): Expr    = TrueLit
+  def expr(implicit ctx: Context): Expr        = TrueLit
 
   type ThisCExpr = TrivialCExpr
 
-  def exprStr(): String = "true"
+  def exprStr(implicit ctx: Context): String = "true"
 }
 
 
-final case class ConstantCExpr(subject: Variable, lit: st.Literal[_])(implicit val ctx: Context)
+final case class ConstantCExpr(_subject: Variable, lit: st.Literal[_])
   extends ConstraintExpr with EmptyScope
 {
-  val scopeExpr: Expr   = TrueLit
-  val valExpr: OptExpr  = Some(lit)
-  val propExpr: Expr    = st.Equals(subject, lit)
-  val expr: Expr        = propExpr
+  def subject(implicit ctx: Context) = _subject
+
+  def scopeExpr(implicit ctx: Context): Expr   = TrueLit
+  def valExpr(implicit ctx: Context): OptExpr  = Some(lit)
+  def propExpr(implicit ctx: Context): Expr    = st.Equals(subject, lit)
+  def expr(implicit ctx: Context): Expr        = propExpr
 
   type ThisCExpr = ConstantCExpr
 
-  def exprStr(): String = lit.toString
+  def exprStr(implicit ctx: Context): String = lit.toString
 }
 
 
-final case class TermRefCExpr(subject: Variable)(implicit val ctx: Context)
+final case class TermRefCExpr(_subject: Variable)
   extends ConstraintExpr with EmptyScope
 {
+  def subject(implicit ctx: Context) = _subject
+
   // TermRefs don't explicitly include their dependency's constraint expression (but expose it separately)
-  val scopeExpr: Expr   = TrueLit
-  val valExpr: OptExpr  = Some(subject)
-  val propExpr: Expr    = TrueLit
-  val expr: Expr        = TrueLit
+  def scopeExpr(implicit ctx: Context): Expr   = TrueLit
+  def valExpr(implicit ctx: Context): OptExpr  = Some(subject)
+  def propExpr(implicit ctx: Context): Expr    = TrueLit
+  def expr(implicit ctx: Context): Expr        = TrueLit
 
   type ThisCExpr = TermRefCExpr
 
-  def exprStr(): String = subject.toString
+  def exprStr(implicit ctx: Context): String = subject.toString
 }
 
 
-final case class SkolemCExpr(tp: Type)(implicit val ctx: Context)
+final case class SkolemCExpr(tp: Type)
   extends ConstraintExpr with LazyExprsAndDeps
 {
-  protected[this] def initExprs(): Unit = {
-    val (val1, scope1) = dep.freshExprsFlat()
+  private var myDep: Dep = _
+
+  def subject(implicit ctx: Context) = { if (myDep == null) { init() }; myDep.subject }
+
+  protected[this] def init()(implicit ctx: Context): Unit = {
+    myDep = Dep(tp)
+    myScope = Set(myDep)
+
+    val (val1, scope1) = myDep.freshExprsFlat()
     myScopeExpr = scope1
     myValExpr   = Some(val1)
     myPropExpr  = st.Equals(subject, myValExpr.get)
     myExpr      = st.and(myScopeExpr, myPropExpr)
   }
 
-  val dep     = Dep(tp)
-  val subject = dep.subject
-  val scope   = Set(dep)
-
   type ThisCExpr = SkolemCExpr
-  def mapScope(f: Type => Type): ThisCExpr = {
+  def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr = {
     val tp1 = f(tp)
     if (tp != tp1) SkolemCExpr(tp1) else this
   }
 
-  def exprStr(): String = expr.toString
+  def exprStr(implicit ctx: Context): String = expr.toString
 }
 
 
-final case class UnaryPrimitiveCExpr(subject: Variable, tp1: Type, prim: UnaryPrimitive)(implicit val ctx: Context)
+final case class UnaryPrimitiveCExpr(_subject: Variable, tp1: Type, prim: UnaryPrimitive)
   extends ConstraintExpr with LazyExprsAndDeps
 {
-  protected[this] def initExprs(): Unit = {
-    val (val1, scope1) = dep1.freshExprsFlat()
+  private var myDep1: Dep = _
+
+  def subject(implicit ctx: Context) = _subject
+
+  protected[this] def init()(implicit ctx: Context): Unit = {
+    myDep1 = Dep(tp1)
+    myScope = Set(myDep1)
+
+    val (val1, scope1) = myDep1.freshExprsFlat()
     myScopeExpr = scope1
     myValExpr   = Some(prim.builder(val1))
     myPropExpr  = st.Equals(subject, myValExpr.get)
     myExpr      = st.and(myScopeExpr, myPropExpr)
   }
 
-  lazy val dep1 = Dep(tp1)
-  lazy val scope = Set(dep1)
-
   type ThisCExpr = UnaryPrimitiveCExpr
-  def mapScope(f: Type => Type): ThisCExpr = {
+  def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr = {
     val tp11 = f(tp1)
     if (tp1 != tp11) UnaryPrimitiveCExpr(subject, tp11, prim) else this
   }
 
-  def exprStr(): String = expr.toString()
+  def exprStr(implicit ctx: Context): String = expr.toString()
 }
 
 
-final case class BinaryPrimitiveCExpr(subject: Variable, tp1: Type, tp2: Type, prim: BinaryPrimitive)(
-  implicit val ctx: Context)
+final case class BinaryPrimitiveCExpr(_subject: Variable, tp1: Type, tp2: Type, prim: BinaryPrimitive)
   extends ConstraintExpr with LazyExprsAndDeps
 {
-  protected[this] def initExprs(): Unit = {
-    val (val1, scope1) = dep1.freshExprsFlat()
-    val (val2, scope2) = dep2.freshExprsFlat()
+  private var myDep1: Dep = _
+  private var myDep2: Dep = _
+
+  def subject(implicit ctx: Context) = _subject
+
+  protected[this] def init()(implicit ctx: Context): Unit = {
+    myDep1 = Dep(tp1)
+    myDep2 = Dep(tp2)
+    myScope = Set(myDep1, myDep2)
+
+    val (val1, scope1) = myDep1.freshExprsFlat()
+    val (val2, scope2) = myDep2.freshExprsFlat()
     myScopeExpr = st.and(scope1, scope2)
     myValExpr   = Some(prim.builder(val1, val2))
     myPropExpr  = st.Equals(subject, myValExpr.get)
     myExpr      = st.and(myScopeExpr, myPropExpr)
   }
 
-  lazy val dep1 = Dep(tp1)
-  lazy val dep2 = Dep(tp2)
-  lazy val scope = Set(dep1, dep2)
-
   type ThisCExpr = BinaryPrimitiveCExpr
-  def mapScope(f: Type => Type): ThisCExpr = {
+  def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr = {
     val tp11 = f(tp1)
     val tp21 = f(tp2)
     if (tp1 != tp11 || tp2 != tp21) BinaryPrimitiveCExpr(subject, tp11, tp21, prim) else this
   }
 
-  def exprStr(): String = expr.toString()
+  def exprStr(implicit ctx: Context): String = expr.toString()
 }
 
 
-final case class QTypeCExpr(subject: Variable, subjectTp: Type, qualifierTp: Type)(implicit val ctx: Context)
+final case class QTypeCExpr(_subject: Variable, subjectTp: Type, qualifierTp: Type)
   extends ConstraintExpr with LazyExprsAndDeps
 {
-  protected[this] def initExprs(): Unit = {
+  private var mySubjectDep: Dep = _
+  private var myQualifierDep: Dep = _
+
+  def subject(implicit ctx: Context) = _subject
+
+  protected[this] def init()(implicit ctx: Context): Unit = {
+    // NOTE: Potentially creating an IntDep with a fresh subject is a bit funky, since we'll never use it!
+    mySubjectDep   = Dep(subjectTp)
+    myQualifierDep = Dep(qualifierTp)
+    myScope        = Set(mySubjectDep, myQualifierDep)
+
     val cExprS = subjectTp.cExpr
     val cExprQ = qualifierTp.cExpr  // Inv: qualTp.widenDealias == BooleanType
 
     val subst = Dep.freshSubst(cExprS.deps union cExprQ.deps) + (cExprS.subject -> subject)
     val exprP = st.exprOps.replaceFromSymbols(subst, cExprS.expr)
 
-    qualifierDep.freshExprs(Some(subst)) match {
+    myQualifierDep.freshExprs(Some(subst)) match {
       case Left((valQ, scopeQ)) =>
         myScopeExpr = st.and(exprP, scopeQ)
         myPropExpr  = valQ
@@ -311,19 +343,15 @@ final case class QTypeCExpr(subject: Variable, subjectTp: Type, qualifierTp: Typ
     myExpr    = st.and(myScopeExpr, myPropExpr)
   }
 
-  // NOTE: Potentially creating an IntDep with a fresh subject is a bit funky, since we'll never use it!
-  lazy val subjectDep   = Dep(subjectTp)
-  lazy val qualifierDep = Dep(qualifierTp)
-  lazy val scope: Set[Dep] = Set(subjectDep, qualifierDep)
-
   type ThisCExpr = QTypeCExpr
-  def mapScope(f: Type => Type): ThisCExpr = {
+  def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr = {
     val subjectTp1   = f(subjectTp)
     val qualifierTp1 = f(qualifierTp)
-    if (subjectTp != subjectTp1 || qualifierTp != qualifierTp1) QTypeCExpr(subject, subjectTp1, qualifierTp1) else this
+    if (subjectTp != subjectTp1 || qualifierTp != qualifierTp1) QTypeCExpr(subject, subjectTp1, qualifierTp1)
+    else this
   }
 
-  def exprStr(): String = qualifierTp.cExpr.subject.toString() //expr.toString()
+  def exprStr(implicit ctx: Context): String = qualifierTp.cExpr.subject.toString() //expr.toString()
 }
 
 
@@ -419,7 +447,11 @@ object ConstraintExpr {
                     p"(${v.id}: ${tp.show})"
                   case None => p"${v.id}"
                 }
-              case None => p"!${v.id}@${v.id.globalId}!"
+              case None =>
+                // TODO(gsps): We miss some var -> tp mappings here because variables which have been
+                //  freshened in Dep#freshExprs are not reflected in depSubjectMap.
+//                p"!${v.id}@${v.id.globalId}!"
+                p"${v.id}"
             }
           case _ => super.ppBody(tree)
         }
