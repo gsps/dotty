@@ -291,7 +291,7 @@ trait ASTExtractors {
 
     object ExADT {
       def unapply(tree: tpd.Tree): Option[(Type, Seq[tpd.Tree])] = tree match {
-        case Apply(Select(New(tpt), CONSTRUCTOR), args) =>
+        case Apply(Select(New(tpt), nme.CONSTRUCTOR), args) =>
           Some((tpt.tpe, args))
 
         case _ =>
