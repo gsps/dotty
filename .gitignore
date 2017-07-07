@@ -71,3 +71,8 @@ compiler/test/debug/Gen.jar
 compiler/before-pickling.txt
 compiler/after-pickling.txt
 *.dotty-ide-version
+
+# Stainless-related
+compiler/tip-sessions/
+tip-sessions/
+smt-sessions/
