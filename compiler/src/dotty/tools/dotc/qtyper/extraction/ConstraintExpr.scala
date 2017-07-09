@@ -438,7 +438,8 @@ object ConstraintExpr {
             p"${v.id}"
           case v: trees.Variable =>
             varTps.get(v) match {
-              case Some(tp) =>
+//              case Some(tp) =>  // TODO: Temporarily hiding imprecise types
+              case Some(tp) if tp.isInstanceOf[TermRef] || tp.isInstanceOf[TermParamRef] =>
                 varOccs.get(v) match {
                   case Some(n) =>
                     varOccs -= v
@@ -447,7 +448,7 @@ object ConstraintExpr {
                     p"(${v.id}: ${tp.show})"
                   case None => p"${v.id}"
                 }
-              case None =>
+              case _ =>
                 // TODO(gsps): We miss some var -> tp mappings here because variables which have been
                 //  freshened in Dep#freshExprs are not reflected in depSubjectMap.
 //                p"!${v.id}@${v.id.globalId}!"

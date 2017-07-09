@@ -129,7 +129,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
         case tp: SuperType    => sb.append("Super(...)")  // FIXME?
         case tp: TermParamRef => sb.append(tp.paramName)
         case tp: SkolemType   => refStr(tp.underlying); sb.append("(?)")  // FIXME?
-        case tp: ConstantType => sb.append(tp.value.show)
+        case tp: ConstantType => sb.append("cnst"); sb.append(tp.value.show)
         case tp: RecThis      => sb.append("{...}.this")
         case _ => throw new IllegalArgumentException(i"Unexpected type in TermRef prefix: $tp")
       }
