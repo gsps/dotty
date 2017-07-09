@@ -610,7 +610,7 @@ object Build {
             // needed for the xsbti interface
             path.contains("sbt-interface") ||
             // used for stainless
-            path.contains("lara") || path.contains("z3") || path.contains("smtlib")  // FIXME(gsps): Which exactly?
+            path.contains("lara") || path.contains("stainless") || path.contains("z3") || path.contains("smtlib")  // FIXME(gsps): Which exactly?
         } yield "-Xbootclasspath/p:" + path
 
         val ci_build = // propagate if this is a ci build
