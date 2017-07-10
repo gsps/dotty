@@ -147,6 +147,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
         toTextRef(tp) ~ ".type"
       case tp: TermRef if tp.denot.isOverloaded =>
         "<overloaded " ~ toTextRef(tp) ~ ">"
+      case tp: TermParamRef =>
+        ParamRefNameString(tp) ~ ".type"
       case tp: SingletonType =>
         toTextLocal(tp.underlying) ~ "(" ~ toTextRef(tp) ~ ")"
       case tp: TypeRef =>
@@ -199,8 +201,6 @@ class PlainPrinter(_ctx: Context) extends Printer {
         }
       case tp: TypeParamRef =>
         ParamRefNameString(tp) ~ lambdaHash(tp.binder)
-      case tp: TermParamRef =>
-        ParamRefNameString(tp) ~ ".type"
       case AnnotatedType(tpe, annot) =>
         toTextLocal(tpe) ~ " " ~ toText(annot)
       case tp @ QualifiedType(subject, parent, _) =>
