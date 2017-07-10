@@ -2701,13 +2701,6 @@ object Types {
           else
             tp match {
               case TermParamRef(`thisLambdaType`, _) => TrueDeps
-              case tp: QualifiedType =>
-                val hasDep = tp.cExpr.scope.exists {
-                  case ExtDep(TermParamRef(`thisLambdaType`, _)) => true
-                  case _ => false
-                }
-                if (hasDep) TrueDeps
-                else apply(status, tp.parent)
               case tp: TypeRef =>
                 val status1 = foldOver(status, tp)
                 tp.info match { // follow type alias to avoid dependency
@@ -4360,10 +4353,9 @@ object Types {
         this(applyToAnnot(x, annot), underlying)
 
       case tp: QualifiedType =>
-//        // TODO: Evaluate the performance impact of folding over the qualifier trees here.
-//        val x1 = this(x, tp.tpe)
-//        tp.qualifier.deepFold(x1)((x: T, tree: Tree) => this(x, tree.tpe))
-        this(x, tp.parent)
+        // TODO: Evaluate the performance impact of folding over the qualifier trees here.
+        val x1 = this(x, tp.parent)
+        tp.qtCExpr.scope.foldLeft(x1) { (x, dep) => this(x, dep.tp) }
 
       case tp: ProtoType =>
         tp.fold(x, this)
