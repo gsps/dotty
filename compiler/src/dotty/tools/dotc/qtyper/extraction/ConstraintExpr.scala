@@ -84,8 +84,8 @@ object Dep {
     if (isExternal(tp)) ExtDep(tp) else IntDep(tp)
 
   def isExternal(tp: Type): Boolean = tp match {
-    case _: TermRef | _: TermParamRef => true
-    case _                            => false
+    case _: TermRef | _: TermParamRef | _: QualifierSubject => true
+    case _                                                  => false
   }
 
   def freshSubst(deps: Set[Dep]): Map[Variable, Variable] =
@@ -107,7 +107,7 @@ sealed trait ConstraintExpr {
   def deps(implicit ctx: Context): Set[Dep]  // types we transitively depend on
 
 
-  type ThisCExpr >: Null <: ConstraintExpr { type ThisCExpr = ConstraintExpr.this.ThisCExpr }
+  type ThisCExpr >: Null <: ConstraintExpr { type ThisCExpr <: ConstraintExpr.this.ThisCExpr }
 
   def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr
 
@@ -204,18 +204,18 @@ final case class ConstantCExpr(_subject: Variable, lit: st.Literal[_])
 }
 
 
-final case class TermRefCExpr(_subject: Variable)
+final case class RefCExpr(_subject: Variable)
   extends ConstraintExpr with EmptyScope
 {
   def subject(implicit ctx: Context) = _subject
 
-  // TermRefs don't explicitly include their dependency's constraint expression (but expose it separately)
+  // TermRefs etc. don't explicitly include their dependency's constraint expression (but expose it separately)
   def scopeExpr(implicit ctx: Context): Expr   = TrueLit
   def valExpr(implicit ctx: Context): OptExpr  = Some(subject)
   def propExpr(implicit ctx: Context): Expr    = TrueLit
   def expr(implicit ctx: Context): Expr        = TrueLit
 
-  type ThisCExpr = TermRefCExpr
+  type ThisCExpr = RefCExpr
 
   def exprStr(implicit ctx: Context): String = subject.toString
 }
@@ -249,8 +249,13 @@ final case class SkolemCExpr(tp: Type)
 }
 
 
+trait PrimitiveCExpr extends ConstraintExpr {
+  type ThisCExpr >: Null <: PrimitiveCExpr { type ThisCExpr <: PrimitiveCExpr.this.ThisCExpr }
+}
+
+
 final case class UnaryPrimitiveCExpr(_subject: Variable, tp1: Type, prim: UnaryPrimitive)
-  extends ConstraintExpr with LazyExprsAndDeps
+  extends PrimitiveCExpr with LazyExprsAndDeps
 {
   private var myDep1: Dep = _
 
@@ -278,7 +283,7 @@ final case class UnaryPrimitiveCExpr(_subject: Variable, tp1: Type, prim: UnaryP
 
 
 final case class BinaryPrimitiveCExpr(_subject: Variable, tp1: Type, tp2: Type, prim: BinaryPrimitive)
-  extends ConstraintExpr with LazyExprsAndDeps
+  extends PrimitiveCExpr with LazyExprsAndDeps
 {
   private var myDep1: Dep = _
   private var myDep2: Dep = _
@@ -309,7 +314,7 @@ final case class BinaryPrimitiveCExpr(_subject: Variable, tp1: Type, tp2: Type, 
 }
 
 
-final case class QTypeCExpr(_subject: Variable, subjectTp: Type, qualifierTp: Type)
+final case class ComplexCExpr(_subject: Variable, subjectTp: QualifierSubject, qualifierTp: Type)
   extends ConstraintExpr with LazyExprsAndDeps
 {
   private var mySubjectDep: Dep = _
@@ -343,11 +348,11 @@ final case class QTypeCExpr(_subject: Variable, subjectTp: Type, qualifierTp: Ty
     myExpr    = st.and(myScopeExpr, myPropExpr)
   }
 
-  type ThisCExpr = QTypeCExpr
+  type ThisCExpr = ComplexCExpr
   def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr = {
-    val subjectTp1   = f(subjectTp)
+    val subjectTp1   = f(subjectTp).asInstanceOf[QualifierSubject]
     val qualifierTp1 = f(qualifierTp)
-    if (subjectTp != subjectTp1 || qualifierTp != qualifierTp1) QTypeCExpr(subject, subjectTp1, qualifierTp1)
+    if (subjectTp != subjectTp1 || qualifierTp != qualifierTp1) ComplexCExpr(subject, subjectTp1, qualifierTp1)
     else this
   }
 
@@ -417,11 +422,11 @@ object ConstraintExpr {
   }
 
 
-  def prettyPrintExpr(tp: QualifiedType)(implicit ctx: Context): String = {
+  def prettyPrintExpr(tp: QualifiedType, useValExpr: Boolean = false)(implicit ctx: Context): String = {
     val cExpr   = tp.cExpr
     val varOccs = new collection.mutable.ListMap[Variable, Int]
     val varTps  = ConstraintExpr.depSubjectMap(tp)
-    val expr    = cExpr.expr
+    val expr    = if (useValExpr) cExpr.valExpr.get else cExpr.expr
     val subject = cExpr.subject
 
     stainless.trees.exprOps.preTraversal {
@@ -439,7 +444,7 @@ object ConstraintExpr {
           case v: trees.Variable =>
             varTps.get(v) match {
 //              case Some(tp) =>  // TODO: Temporarily hiding imprecise types
-              case Some(tp) if tp.isInstanceOf[TermRef] || tp.isInstanceOf[TermParamRef] =>
+              case Some(tp) if Dep.isExternal(tp) =>
                 varOccs.get(v) match {
                   case Some(n) =>
                     varOccs -= v

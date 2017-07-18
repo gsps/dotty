@@ -11,16 +11,14 @@ import core.StdNames._
 import core.Symbols._
 import core.Types._
 import core.Flags._
-import typer.{ForceDegree, Inferencing}
 import util.Positions._
 
 import qtyper.extraction.{ast => qtAst}
 //import qtAst.{trees => qt}
 
-import stainless.{Identifier, FreshIdentifier}
+import stainless.FreshIdentifier
 import stainless.{trees => st}
 
-//import scala.language.implicitConversions
 import scala.collection.mutable.{Map => MutableMap}
 
 /**
@@ -55,8 +53,8 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
 
   // TODO(gsps): Convert DottyExtraction to support st. directly (instead of stainless.extraction.oo.trees.)
-  def stType(tp: Type)(implicit dctx: DefContext, pos: Position): st.Type = {
-    stainlessType(tp)(dctx, pos) match {
+  protected def stType(tp: Type, pos: Position = NoPosition): st.Type = {
+    stainlessType(tp)(emptyDefContext, pos) match {
       case trees.Untyped      => st.Untyped
       case trees.BooleanType  => st.BooleanType
       case trees.UnitType     => st.UnitType
@@ -66,14 +64,17 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
     }
   }
 
+  protected def stSubject(name: String, tp: Type, pos: Position = NoPosition): st.Variable = {
+    val stainlessResTp = stType(tp, pos)
+    freshVar(name, stainlessResTp, pos)
+  }
+
 
   protected var cachedTrivial: MutableMap[Type, TrivialCExpr] = MutableMap()
 
   def extractTrivialQualifier(tp: Type): TrivialCExpr = {
     cachedTrivial.getOrElseUpdate(tp, {
-      val stTp = stType(tp)(emptyDefContext, NoPosition)
-      val subject = freshVar("u", stTp)
-      TrivialCExpr(subject)
+      TrivialCExpr(stSubject("u", tp))
     })
   }
 
@@ -91,7 +92,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
 
   // Case for Idents referring to a term-level symbol in scope
-  def extractTermRefQualifier(termRef: TermRef): TermRefCExpr = {
+  def extractTermRefQualifier(termRef: TermRef): RefCExpr = {
     // !!!
     // FIXME: ONLY introduce the alias for things we can be sure are equivalent, e.g. in case of a
     //  TermRef(NoPrefix, _) with a Symbol. Otherwise go via ... termRef.widen?
@@ -145,21 +146,24 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
     val subject = exState.getOrPutVar(termRef, () => {
       // TODO: We actually want the position of the term carrying the TermRef here, no?
-      val pos = sym.pos
-      val stainlessTp = stType(termRef.widenTermRefExpr)(emptyDefContext, pos)
-      freshVar(qualVarName, stainlessTp, pos)
+      stSubject(qualVarName, termRef.widenTermRefExpr, sym.pos)
     })
-    TermRefCExpr(subject)
+    RefCExpr(subject)
   }
 
 
-  def extractMethodParam(mp: TermParamRef): TermRefCExpr = {
+  def extractMethodParamQualifier(mp: TermParamRef): RefCExpr = {
     val subject = exState.getOrPutVar(mp, () => {
-      val pos = NoPosition
-      val stainlessTp = stType(mp.underlying.widen)(emptyDefContext, pos)
-      freshVar(mp.paramName.toString, stainlessTp, pos)
+      stSubject(mp.paramName.toString, mp.underlying.widen)
     })
-    TermRefCExpr(subject)
+    RefCExpr(subject)
+  }
+
+  def extractQualifierSubjectQualifier(qs: QualifierSubject): RefCExpr = {
+    val subject = exState.getOrPutVar(qs, () => {
+      stSubject(qs.binder.subjectName.toString, qs.underlying.widen)
+    })
+    RefCExpr(subject)
   }
 
 
@@ -167,21 +171,17 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
     import ConstraintExpr.{Primitives => P}
 
     @inline def depParam(opTp: MethodType): TermParamRef = TermParamRef(opTp, 0)
-
-    def subject(resTp: Type): st.Variable = {
-      val stainlessResTp = stType(resTp)(emptyDefContext, NoPosition)
-      freshVar("pv", stainlessResTp)
-    }
+    @inline def subject(opTp: MethodicType): st.Variable = stSubject("pv", opTp.resultType)
 
     def unaryPrim(opTp: ExprType, argTp1: Type, prim: ConstraintExpr.UnaryPrimitive): ExprType = {
-      val cExpr = UnaryPrimitiveCExpr(subject(opTp.resultType), argTp1, prim)
-      val qtp   = QualifiedType("pv".toTermName, opTp.resultType, cExpr)
+      val cExpr = UnaryPrimitiveCExpr(subject(opTp), argTp1, prim)
+      val qtp   = PrimitiveQType(opTp.resultType, cExpr)
       opTp.derivedExprType(qtp)
     }
 
     def binaryPrim(opTp: MethodType, argTp1: Type, argTp2: Type, prim: ConstraintExpr.BinaryPrimitive): MethodType = {
-      val cExpr = BinaryPrimitiveCExpr(subject(opTp.resultType), argTp1, argTp2, prim)
-      val qtp   = QualifiedType("pv".toTermName, opTp.resultType, cExpr)
+      val cExpr = BinaryPrimitiveCExpr(subject(opTp), argTp1, argTp2, prim)
+      val qtp   = PrimitiveQType(opTp.resultType, cExpr)
       opTp.derivedLambdaType(resType = qtp)
     }
 
@@ -230,7 +230,6 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
           case nme.GE   => P.GreaterEquals
           case _ => ???
         }
-//        println(s"!!!!! Injecting Primitive Int.$opName ( $paramTp )  :  $resTp")
         binaryPrim(opTp, IntClass.thisType, depParam(opTp), bodyFn)
 
       case (IntClass, _, opTp @ MethodTpe(_, List(_), resTp)) =>
@@ -240,53 +239,17 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
       case _ =>
         throw new NotImplementedError(s"Missing injectPrimitive implementation for $clazz.$opName @ $opTp")
     }
-//    if (opTp ne tp1) {
-//      println(s"injectPrimitive($clazz.$opName @ $opTp)  =>  $tp1\n")
-//    }
     tp1
   }
 
 
-  /*
-  object Ex {
-    import ast.tpd._
-
-    object StainlessIdent {
-      def unapply(tree: Tree): Option[Symbol] = tree match {
-        case ident: Ident =>
-          val sym = ident.symbol
-          if (sym ne NoSymbol) Some(sym)
-          else None
-        case _ =>
-          None
-      }
-    }
-
-    object StainlessApply {
-      def unapply(tree: Tree): Option[(Symbol, Seq[Tree])] = tree match {
-        case select: Select =>
-          val sym = select.symbol
-          if (sym ne NoSymbol) Some((sym, Seq()))
-          else None
-        case Apply(fn, args) =>
-          val sym = fn.symbol
-          if (sym ne NoSymbol) Some((sym, args))
-          else None
-        case _ =>
-          None
-      }
-    }
-  }
-  */
-
-  def extractQualifier(subjectVd: tpd.ValDef, qualifier: tpd.Tree): QTypeCExpr = {
-    val pos         = qualifier.pos
-    val parentTp    = subjectVd.tpt.tpe
-    val stainlessTp = stType(parentTp)(emptyDefContext, pos)
-    val subject     = freshVar(subjectVd.name.toString, stainlessTp, pos)
-    val qualTp      = qualifier.tpe
+  def extractQualifier(qtp: ComplexQType, subjectVd: tpd.ValDef, qualifier: tpd.Tree): ComplexCExpr = {
+    val subjectSym = subjectVd.symbol
+    val subject    = stSubject(subjectVd.name.toString, subjectVd.tpt.tpe, qualifier.pos)
+    // TODO(gsps): Specialize subst for Type#subst(Symbol, Type)
+    val qualTp     = qualifier.tpe.subst(List(subjectSym), List(qtp.subject))
     assert(qualTp.widenDealias == BooleanType, s"Expected Boolean qualifier, but found $qualTp")
-    QTypeCExpr(subject, subjectVd.symbol.termRef, qualTp)
+    ComplexCExpr(subject, qtp.subject, qualTp)
   }
 
   /* To test:

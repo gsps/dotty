@@ -19,7 +19,7 @@ trait Substituters { this: Context =>
       case tp: QualifiedType =>
         val parent1 = subst(tp.parent, from, to, theMap)
         val cExpr1 = tp.cExpr.subst(from, to)
-        tp.derivedQualifiedType(tp.subject, parent1, cExpr1)
+        tp.derivedQualifiedType(parent1, cExpr1)
       case _: ThisType | NoPrefix =>
         tp
       case _ =>
@@ -37,7 +37,7 @@ trait Substituters { this: Context =>
       case tp: QualifiedType =>
         val parent1 = subst1(tp.parent, from, to, theMap)
         val cExpr1 = tp.cExpr.subst(List(from), List(to))
-        tp.derivedQualifiedType(tp.subject, parent1, cExpr1)
+        tp.derivedQualifiedType(parent1, cExpr1)
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -57,7 +57,7 @@ trait Substituters { this: Context =>
       case tp: QualifiedType =>
         val parent1 = subst2(tp.parent, from1, to1, from2, to2, theMap)
         val cExpr1 = tp.cExpr.subst(List(from1, from2), List(to1, to2))
-        tp.derivedQualifiedType(tp.subject, parent1, cExpr1)
+        tp.derivedQualifiedType(parent1, cExpr1)
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -82,7 +82,7 @@ trait Substituters { this: Context =>
       case tp: QualifiedType =>
         val parent1 = subst(tp.parent, from, to, theMap)
         val cExpr1 = tp.cExpr.subst(from, to)
-        tp.derivedQualifiedType(tp.subject, parent1, cExpr1)
+        tp.derivedQualifiedType(parent1, cExpr1)
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -115,7 +115,7 @@ trait Substituters { this: Context =>
       case tp: QualifiedType =>
         val parent1 = substDealias(tp.parent, from, to, theMap)
         val cExpr1 = tp.cExpr.substDealias(from, to)
-        tp.derivedQualifiedType(tp.subject, parent1, cExpr1)
+        tp.derivedQualifiedType(parent1, cExpr1)
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -144,7 +144,7 @@ trait Substituters { this: Context =>
       case tp: QualifiedType =>
         val parent1 = substSym(tp.parent, from, to, theMap)
         val cExpr1 = tp.cExpr.substSym(from, to)
-        tp.derivedQualifiedType(tp.subject, parent1, cExpr1)
+        tp.derivedQualifiedType(parent1, cExpr1)
       case tp: ThisType =>
         val sym = tp.cls
         var fs = from
@@ -172,7 +172,7 @@ trait Substituters { this: Context =>
       case tp: QualifiedType =>
         val parent1 = substThis(tp.parent, from, to, theMap)
         val cExpr1 = tp.cExpr.substThis(from, to)
-        tp.derivedQualifiedType(tp.subject, parent1, cExpr1)
+        tp.derivedQualifiedType(parent1, cExpr1)
       case _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -190,7 +190,7 @@ trait Substituters { this: Context =>
       case tp: QualifiedType =>
         val parent1 = substRecThis(tp.parent, from, to, theMap)
         val cExpr1 = tp.cExpr.substRecThis(from, to)
-        tp.derivedQualifiedType(tp.subject, parent1, cExpr1)
+        tp.derivedQualifiedType(parent1, cExpr1)
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -208,7 +208,7 @@ trait Substituters { this: Context =>
       case tp: QualifiedType =>
         val parent1 = substParam(tp.parent, from, to, theMap)
         val cExpr1 = tp.cExpr.substParam(from, to)
-        tp.derivedQualifiedType(tp.subject, parent1, cExpr1)
+        tp.derivedQualifiedType(parent1, cExpr1)
       case _: ThisType | NoPrefix =>
         tp
       case _ =>
@@ -226,7 +226,7 @@ trait Substituters { this: Context =>
       case tp: QualifiedType =>
         val parent1 = substParams(tp.parent, from, to, theMap)
         val cExpr1 = tp.cExpr.substParams(from, to)
-        tp.derivedQualifiedType(tp.subject, parent1, cExpr1)
+        tp.derivedQualifiedType(parent1, cExpr1)
       case _: ThisType | NoPrefix =>
         tp
       case _ =>

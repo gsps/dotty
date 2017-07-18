@@ -24,8 +24,10 @@ object QTypeConstraint {
     // Expressions for external dependencies
     val extExprs = {
       def extUnderlying(tp: Type): Type = tp match {
-        case tp: TermRef      => ctx.extractionState.getTermRefVar(tp.cExpr.subject).underlying
-        case tp: TermParamRef => ctx.extractionState.getMpVar(tp.cExpr.subject).underlying
+//        case tp: TermRef      => ctx.extractionState.getTermRefVar(tp.cExpr.subject).underlying
+//        case tp: TermParamRef => ctx.extractionState.getMpVar(tp.cExpr.subject).underlying
+        // TESTME(gsps): Do we really need the extraction state here? Dotty already keeps unique TermRefs etc.!
+        case _ if Dep.isExternal(tp) => tp.asInstanceOf[TypeProxy].underlying
         case _ => throw new IllegalArgumentException(s"Unexpected type for extUnderlying: $tp")
       }
 

@@ -60,12 +60,8 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
             if (sym.isStatic) tp
             else derivedSelect(tp, atVariance(variance max 0)(this(tp.prefix)))
           case tp: QualifiedType =>
-            val cExpr1 = tp.cExpr.mapScope(apply)
-            tp.derivedQualifiedType(
-              tp.subject,
-              apply(tp.parent),
-              tp.precise,
-              cExpr1)
+            val cExpr1: tp.CExpr = tp.cExpr.mapScope(apply)
+            tp.derivedQualifiedType(apply(tp.parent), cExpr1)
           case tp: ThisType =>
             toPrefix(pre, cls, tp.cls)
           case _: BoundType | NoPrefix =>

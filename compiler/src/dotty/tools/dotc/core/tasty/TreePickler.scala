@@ -15,7 +15,7 @@ import TastyBuffer._
 import TypeApplications._
 import transform.SymUtils._
 import config.Config
-import qtyper.extraction.{ConstraintExpr, QTypeCExpr, UnaryPrimitiveCExpr, BinaryPrimitiveCExpr}
+import qtyper.extraction.{ConstraintExpr, ComplexCExpr, UnaryPrimitiveCExpr, BinaryPrimitiveCExpr}
 
 class TreePickler(pickler: TastyPickler) {
   val buf = new TreeBuffer
@@ -200,6 +200,11 @@ class TreePickler(pickler: TastyPickler) {
       val binderAddr = pickledTypes.get(tpe.binder)
       assert(binderAddr != null, tpe.binder)
       writeRef(binderAddr.asInstanceOf[Addr])
+    case tpe: QualifierSubject =>
+      writeByte(COMPLEXQsubject)
+      val binderAddr = pickledTypes.get(tpe.binder)
+      assert(binderAddr != null, tpe.binder)
+      writeRef(binderAddr.asInstanceOf[Addr])
     case tpe: SkolemType =>
       pickleType(tpe.info)
     case tpe: RefinedType =>
@@ -221,9 +226,12 @@ class TreePickler(pickler: TastyPickler) {
     case tpe: AnnotatedType =>
       writeByte(ANNOTATEDtype)
       withLength { pickleType(tpe.tpe, richTypes); pickleTree(tpe.annot.tree) }
-    case tpe: QualifiedType =>
-      writeByte(QUALIFIEDtype)
-      withLength { pickleName(tpe.subject); pickleType(tpe.parent, richTypes); pickleCExpr(tpe.qtCExpr, richTypes) }
+    case tpe: PrimitiveQType =>
+      writeByte(PRIMITIVEQtype)
+      withLength { pickleType(tpe.parent, richTypes); pickleCExpr(tpe.cExpr, richTypes) }
+    case tpe: ComplexQType =>
+      writeByte(COMPLEXQtype)
+      withLength { pickleType(tpe.parent, richTypes); pickleName(tpe.subjectName); pickleCExpr(tpe.cExpr, richTypes) }
     case tpe: AndOrType =>
       writeByte(if (tpe.isAnd) ANDtype else ORtype)
       withLength { pickleType(tpe.tp1, richTypes); pickleType(tpe.tp2, richTypes) }
@@ -516,8 +524,8 @@ class TreePickler(pickler: TastyPickler) {
         case QualifiedTypeTree(subject, expr) =>
           val sym = subject.symbol
           registerDef(sym)
-          writeByte(QUALIFIEDtpt)
-          withLength { pickleName(sym.name); pickleType(sym.info); pickleTree(expr) }
+          writeByte(COMPLEXQtpt)
+          withLength { pickleType(sym.info); pickleName(sym.name); pickleTree(expr) }
         case LambdaTypeTree(tparams, body) =>
           writeByte(LAMBDAtpt)
           withLength { pickleParams(tparams); pickleTree(body) }
@@ -620,7 +628,7 @@ class TreePickler(pickler: TastyPickler) {
     }
 
     cExpr match {
-      case QTypeCExpr(subject, subjectTp, qualifierTp) =>
+      case ComplexCExpr(subject, subjectTp, qualifierTp) =>
         writeByte(QTYPEcexpr)
         pickleStVariable(subject)
         pickleType(subjectTp, richTypes)

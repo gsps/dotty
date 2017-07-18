@@ -116,7 +116,7 @@ trait TypeAssigner {
               typr.println(i"Dropping qualification to $tp since its dependency on $badTp conflicts with $forbidden")
               parent1
             case None =>
-              tp.derivedQualifiedType(tp.subject, parent1, tp.cExpr)
+              tp.derivedQualifiedType(parent1, tp.cExpr)
           }
         case tp: ThisType if toAvoid(tp.cls) =>
           range(tp.bottomType, apply(classBound(tp.cls.classInfo)))
@@ -564,7 +564,7 @@ trait TypeAssigner {
         val exprTpe = expr.tpe
         if (exprTpe.isError)        exprTpe
         else if (exprTpe eq NoType) new ErrorType("Missing type for qualifier expression")
-        else                        QualifiedType(subject, expr)
+        else                        ComplexQType(subject, expr)
       }
     tree.withType(tpe)
   }

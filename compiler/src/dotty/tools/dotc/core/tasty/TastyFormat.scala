@@ -395,8 +395,10 @@ object TastyFormat {
   final val TYPEARGtype = 176
   final val TERMREFin = 177
   final val TYPEREFin = 178
-  final val QUALIFIEDtype = 179
-  final val QUALIFIEDtpt = 180
+  final val PRIMITIVEQtype = 179
+  final val COMPLEXQtype = 180
+  final val COMPLEXQtpt = 181
+  final val COMPLEXQsubject = 182
 
   /* Constraint expressions */
   final val QTYPEcexpr = 1
@@ -463,7 +465,7 @@ object TastyFormat {
        | ORtpt
        | BYNAMEtpt
        | BIND
-       | QUALIFIEDtpt => true
+       | COMPLEXQtpt => true
     case _ => false
   }
 
@@ -615,6 +617,10 @@ object TastyFormat {
     case ANNOTATION => "ANNOTATION"
     case PRIVATEqualified => "PRIVATEqualified"
     case PROTECTEDqualified => "PROTECTEDqualified"
+    case PRIMITIVEQtype => "PRIMITIVEQtype"
+    case COMPLEXQtype => "COMPLEXQtype"
+    case COMPLEXQtpt => "COMPLEXQtpt"
+    case COMPLEXQsubject => "COMPLEXQsubject"
   }
 
   /** @return If non-negative, the number of leading references (represented as nats) of a length/trees entry.

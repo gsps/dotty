@@ -641,6 +641,18 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
     def subst(from: List[Symbol], to: List[Symbol])(implicit ctx: Context): ThisTree =
       new TreeTypeMap(substFrom = from, substTo = to).apply(tree)
 
+    /** Replace types of idents referring to `sym` by QualifierSubject referring to `qtp`.
+      */
+    def substQualifierSubject(fromSym: Symbol, toQtp: ComplexQType)(implicit ctx: Context): ThisTree = {
+      def treeMap(t: Tree): Tree = t match {
+        case t: Ident if t.symbol eq fromSym =>
+          cpy.Ident(t)(t.name).withType(QualifierSubject(toQtp))
+        case _ =>
+          t
+      }
+      new TreeTypeMap(treeMap = treeMap).apply(tree)
+    }
+
     /** Change owner from `from` to `to`. If `from` is a weak owner, also change its
      *  owner to `to`, and continue until a non-weak owner is reached.
      */

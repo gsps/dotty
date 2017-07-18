@@ -266,10 +266,11 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
           secondTry(tp1, tp2)
       }
       compareErasedValueType
-    case tp2 @ QualifiedType(_, parent2, _) =>
+    case tp2: QualifiedType =>
       // TODO: Rather than only delegating to isSubtype(tp1, parent2), we could be more liberal:
       //  E.g. we could also allow the case where tp1 is a SingletonType and tp2 is QualifiedType
       //  that equals tp1.
+      val parent2 = tp2.parent
       def relaxed: Boolean =
         // NOTE: Bail for similar reasons as in the case of SkolemType (TreeChecker otherwise fails)
         // NOTE: `!ctx.phase.isTyper` is *too* liberal: e.g. when inferring types in the body of
@@ -372,10 +373,10 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
           false
       }
       joinOK || isSubType(tp11, tp2) && isSubType(tp12, tp2)
-    case QualifiedType(_, parent, _) =>
+    case tp1: QualifiedType =>
       // TODO: Rather than only delegating to isSubtype(parent, tp2), try to check precisely
       //  whether tp1 (with its qualifier) is a subtype of tp2 (which may, e.g., be a SingletonType).
-      isSubType(parent, tp2)
+      isSubType(tp1.parent, tp2)
     case _: FlexType =>
       true
     case _ =>

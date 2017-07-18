@@ -203,46 +203,12 @@ class PlainPrinter(_ctx: Context) extends Printer {
         ParamRefNameString(tp) ~ lambdaHash(tp.binder)
       case AnnotatedType(tpe, annot) =>
         toTextLocal(tpe) ~ " " ~ toText(annot)
-      case tp @ QualifiedType(subject, parent, _) =>
-////        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " => " ~ tp.cExpr.fd.fullBody.toString ~ "}"
-////        val deps = tp.cExpr.scope.map(toText)
-//        val deps = tp.cExpr.scope.map { tp =>
-//          tp.cExpr.subject.toString() ~ " -> " ~ toText(tp)
-//        }
-//        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " => " ~ tp.cExpr.exprStr() ~ "} @ [" ~
-//          Text(deps, "; ") ~ "]"
-
-//        var scope = tp.cExpr.scope.toSet
-
-//        val varOccs = new collection.mutable.ListMap[st.Variable, Int].withDefaultValue(0)
-//        val varTps = new collection.mutable.HashMap[st.Variable, Type]
-//
-//        def populateVarTps(tp: Type): Unit = {
-//          val cExpr = tp.cExpr
-//          varTps(cExpr.subject) = tp
-//          cExpr.scope.foreach(tp => populateVarTps(tp.cExpr))
-//        }
-//        populateVarTps(tp)
-//
-//        stainless.trees.exprOps.preTraversal {
-//          case v: st.Variable => varOccs(v) += 1
-//        } (tp.cExpr.expr)
-//
-//        def bdgText(tp: Type): Text = {
-//          val subject = tp.cExpr.subject
-//          varOccs.get(subject) match {
-//            case Some(n) =>
-//              varOccs -= subject
-//              val tpText = toText(tp)
-//              if (n == 1) "⟦" ~ tpText ~ "⟧"
-//              else        s"($subject: " ~ tpText ~ ")"
-//            case None =>
-//              subject.toString()
-//          }
-//        }
-
+      case tp: PrimitiveQType =>
+        val exprText = ConstraintExpr.prettyPrintExpr(tp, useValExpr = true)
+        "(" ~ exprText ~ ").type"
+      case tp @ ComplexQType(parent, subjectName) =>
         val exprText = ConstraintExpr.prettyPrintExpr(tp)
-        "{" ~ toText(subject) ~ ": " ~ toText(parent) ~ " ⇒ " ~ exprText ~ "}"
+        "{" ~ toText(subjectName) ~ ": " ~ toText(parent) ~ " ⇒ " ~ exprText ~ "}"
       case AppliedType(tycon, args) =>
         toTextLocal(tycon) ~ "[" ~ Text(args.map(argText), ", ") ~ "]"
       case tp: TypeVar =>
