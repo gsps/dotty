@@ -342,8 +342,8 @@ trait TypeAssigner {
     val tp1 = tp.substParam(pref, argType)
     if ((tp1 eq tp) || argType.isStable)
       tp1
-    else  // TODO(gsps): Revisit widening argType here; (Deviation from Scala, might be too precise!)
-      tp.substParam(pref, SkolemType(argType))
+    else
+      tp.substParam(pref, SkolemType(argType.widenTermRefExpr))
   }
 
   def assignType(tree: untpd.Apply, fn: Tree, args: List[Tree])(implicit ctx: Context) = {
@@ -563,7 +563,7 @@ trait TypeAssigner {
       else {
         val exprTpe = expr.tpe
         if (exprTpe.isError)        exprTpe
-        else if (exprTpe eq NoType) new ErrorType("Missing type for qualifier expression")
+        else if (exprTpe eq NoType) ErrorType("Missing type for qualifier expression")
         else                        ComplexQType(subject, expr)
       }
     tree.withType(tpe)
