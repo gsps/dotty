@@ -134,7 +134,13 @@ object Build {
     resourceDirectory in Test       := baseDirectory.value / "test-resources",
 
     // Prevent sbt from rewriting our dependencies
-    ivyScala ~= (_ map (_ copy (overrideScalaVersion = false)))
+    ivyScala ~= (_ map (_ copy (overrideScalaVersion = false))),
+
+    resolvers ++= Seq(
+      "Sonatype OSS Snapshots" at "https://oss.sonatype.org/content/repositories/snapshots",
+      "Sonatype OSS Releases" at "https://oss.sonatype.org/content/repositories/releases",
+      "uuverifiers" at "http://logicrunch.it.uu.se:4096/~wv/maven"
+    )
   )
 
   // Settings used for projects compiled only with Scala 2
@@ -610,7 +616,8 @@ object Build {
             // needed for the xsbti interface
             path.contains("sbt-interface") ||
             // used for stainless
-            path.contains("lara") || path.contains("stainless") || path.contains("z3") || path.contains("smtlib")  // FIXME(gsps): Which exactly?
+            path.contains("lara") || path.contains("stainless") ||
+            path.contains("z3") || path.contains("smtlib") || path.contains("princess") || path.contains("/ap/")   // FIXME(gsps): Which exactly?
         } yield "-Xbootclasspath/p:" + path
 
         val ci_build = // propagate if this is a ci build
@@ -715,12 +722,7 @@ object Build {
     },
     packageSrc in Compile := (packageSrc in Compile).dependsOn(cleanSbtBridge).value,
     description := "sbt compiler bridge for Dotty",
-    resolvers ++= Seq(
-      Resolver.typesafeIvyRepo("releases"), // For org.scala-sbt stuff
-      "Sonatype OSS Snapshots" at "https://oss.sonatype.org/content/repositories/snapshots",
-      "Sonatype OSS Releases" at "https://oss.sonatype.org/content/repositories/releases",
-      "uuverifiers" at "http://logicrunch.it.uu.se:4096/~wv/maven"
-    ),
+    resolvers += Resolver.typesafeIvyRepo("releases"), // For org.scala-sbt stuff
     libraryDependencies ++= Seq(
       "com.typesafe.sbt" % "sbt-interface" % sbtVersion.value,
       "org.scala-sbt" % "api" % sbtVersion.value % "test",
