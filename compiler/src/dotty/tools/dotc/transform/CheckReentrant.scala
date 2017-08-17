@@ -54,9 +54,15 @@ class CheckReentrant extends MiniPhaseTransform { thisTransformer =>
   private val unsharedAnnot = new CtxLazy(implicit ctx =>
     ctx.requiredClass("dotty.tools.unshared"))
 
+  private val inoxPositioned = new CtxLazy(implicit ctx =>
+    ctx.requiredClass("inox.utils.Positioned"))
+  def isSafeInInox(sym: Symbol)(implicit ctx: Context) =
+    sym.owner.symbol == inoxPositioned()
+
   def isIgnored(sym: Symbol)(implicit ctx: Context) =
     sym.hasAnnotation(sharableAnnot()) ||
-    sym.hasAnnotation(unsharedAnnot())
+    sym.hasAnnotation(unsharedAnnot()) ||
+    isSafeInInox(sym)
 
   def scanning(sym: Symbol)(op: => Unit)(implicit ctx: Context): Unit = {
     ctx.log(i"${"  " * indent}scanning $sym")
