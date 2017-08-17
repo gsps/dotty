@@ -76,7 +76,7 @@ final case class ExtDep(tp: Type)(implicit ctx: Context) extends Dep {
 }
 final case class IntDep(tp: Type)(implicit ctx: Context) extends Dep {
   val subject: Variable = tp.cExpr.subject.freshen
-  @inline def substPair: (Variable, Variable) = tp.cExpr.subject -> subject
+  /*@inline [Dotty hack]*/ def substPair: (Variable, Variable) = tp.cExpr.subject -> subject
 }
 
 object Dep {
@@ -107,7 +107,10 @@ sealed trait ConstraintExpr {
   def deps(implicit ctx: Context): Set[Dep]  // types we transitively depend on
 
 
+  /* [Dotty hack]
   type ThisCExpr >: Null <: ConstraintExpr { type ThisCExpr <: ConstraintExpr.this.ThisCExpr }
+  */
+  type ThisCExpr = ConstraintExpr
 
   def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr
 
@@ -182,7 +185,7 @@ final case class TrivialCExpr(_subject: Variable)
   def propExpr(implicit ctx: Context): Expr    = TrueLit
   def expr(implicit ctx: Context): Expr        = TrueLit
 
-  type ThisCExpr = TrivialCExpr
+  // type ThisCExpr = TrivialCExpr  // [Dotty hack]
 
   def exprStr(implicit ctx: Context): String = "true"
 }
@@ -198,7 +201,7 @@ final case class ConstantCExpr(_subject: Variable, lit: st.Literal[_])
   def propExpr(implicit ctx: Context): Expr    = st.Equals(subject, lit)
   def expr(implicit ctx: Context): Expr        = propExpr
 
-  type ThisCExpr = ConstantCExpr
+  // type ThisCExpr = ConstantCExpr  // [Dotty hack]
 
   def exprStr(implicit ctx: Context): String = lit.toString
 }
@@ -215,7 +218,7 @@ final case class RefCExpr(_subject: Variable)
   def propExpr(implicit ctx: Context): Expr    = TrueLit
   def expr(implicit ctx: Context): Expr        = TrueLit
 
-  type ThisCExpr = RefCExpr
+  // type ThisCExpr = RefCExpr  // [Dotty hack]
 
   def exprStr(implicit ctx: Context): String = subject.toString
 }
@@ -239,7 +242,7 @@ final case class SkolemCExpr(tp: Type)
     myExpr      = st.and(myScopeExpr, myPropExpr)
   }
 
-  type ThisCExpr = SkolemCExpr
+  // type ThisCExpr = SkolemCExpr  // [Dotty hack]
   def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr = {
     val tp1 = f(tp)
     if (tp != tp1) SkolemCExpr(tp1) else this
@@ -250,7 +253,7 @@ final case class SkolemCExpr(tp: Type)
 
 
 trait PrimitiveCExpr extends ConstraintExpr {
-  type ThisCExpr >: Null <: PrimitiveCExpr { type ThisCExpr <: PrimitiveCExpr.this.ThisCExpr }
+//  type ThisCExpr >: Null <: PrimitiveCExpr { type ThisCExpr <: PrimitiveCExpr.this.ThisCExpr }
 }
 
 
@@ -272,7 +275,7 @@ final case class UnaryPrimitiveCExpr(_subject: Variable, tp1: Type, prim: UnaryP
     myExpr      = st.and(myScopeExpr, myPropExpr)
   }
 
-  type ThisCExpr = UnaryPrimitiveCExpr
+  // type ThisCExpr = UnaryPrimitiveCExpr  // [Dotty hack]
   def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr = {
     val tp11 = f(tp1)
     if (tp1 != tp11) UnaryPrimitiveCExpr(subject, tp11, prim) else this
@@ -303,7 +306,7 @@ final case class BinaryPrimitiveCExpr(_subject: Variable, tp1: Type, tp2: Type, 
     myExpr      = st.and(myScopeExpr, myPropExpr)
   }
 
-  type ThisCExpr = BinaryPrimitiveCExpr
+  // type ThisCExpr = BinaryPrimitiveCExpr  // [Dotty hack]
   def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr = {
     val tp11 = f(tp1)
     val tp21 = f(tp2)
@@ -348,7 +351,7 @@ final case class ComplexCExpr(_subject: Variable, subjectTp: QualifierSubject, q
     myExpr    = st.and(myScopeExpr, myPropExpr)
   }
 
-  type ThisCExpr = ComplexCExpr
+  // type ThisCExpr = ComplexCExpr  // [Dotty hack]
   def mapScope(f: Type => Type)(implicit ctx: Context): ThisCExpr = {
     val subjectTp1   = f(subjectTp).asInstanceOf[QualifierSubject]
     val qualifierTp1 = f(qualifierTp)
@@ -392,7 +395,7 @@ object ConstraintExpr {
 
     def apply(id: Int): Primitive = idMap(id)
 
-    private var nextId: Int = 1
+    @dotty.tools.sharable private[this] var nextId: Int = 1
 
     val Equals    = binary(st.Equals)
     val NotEquals = binary((a: Expr, b: Expr) => st.Not(st.Equals(a, b)))

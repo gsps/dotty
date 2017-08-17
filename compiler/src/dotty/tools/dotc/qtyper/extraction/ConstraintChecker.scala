@@ -27,7 +27,7 @@ object ConstraintChecker {
   }
 
   object DebugSectionVerification extends inox.DebugSection("verification")
-  implicit val debugSection = DebugSectionVerification
+  implicit val debugSection: DebugSectionVerification.type = DebugSectionVerification
 
 
   def check(cnstr: QTypeConstraint): Option[Boolean] = {
@@ -108,7 +108,8 @@ object ConstraintChecker {
     import program.symbols._
 
     try {
-      val cond = simplifyLets(vc) // ~0ms
+//      val cond = simplifyLets(vc) // TODO: [Dotty hack] Dotty can't infer equivalence of program.trees and program.symbols.trees
+      val cond = vc
       ctx.reporter.synchronized { // ~1ms
         ctx.reporter.info(s" - Now considering VC $vc @${vc.getPos}...")
 //        ctx.reporter.info(s"\t${program.symbols.functions}")

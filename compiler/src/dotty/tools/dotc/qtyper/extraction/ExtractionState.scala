@@ -16,7 +16,7 @@ import scala.collection.mutable.{Map => MutableMap}
  * Created by gs on 27.03.17.
  */
 class ExtractionState {
-  val trees: stainless.trees.type = stainless.trees
+  final lazy val trees: stainless.trees.type = stainless.trees
 //  val trees: qtyper.extraction.ast.trees.type = qtyper.extraction.ast.trees
 
   // TODO: Introduce RefType as a marker trait in Dotty type representation with member "prettySubjectVarName: String"

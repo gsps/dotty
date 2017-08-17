@@ -903,8 +903,8 @@ object Types {
      *  <o.x.type>.widen = o.C
      */
     final def widen(implicit ctx: Context): Type = widenSingleton match {
-      case tp: QualifiedType => tp.parent.widen
       case tp: ExprType => tp.resultType.widen
+      case tp: QualifiedType => tp.parent.widen
       case tp => tp
     }
 
@@ -2184,8 +2184,8 @@ object Types {
 
     override def computeHash = doHash(value)
 
-    private[this] var myCExpr: ConstantCExpr = _
-    override def cExpr(implicit ctx: Context): ConstantCExpr = {
+    private[this] var myCExpr: ConstraintExpr = _
+    override def cExpr(implicit ctx: Context): ConstraintExpr = {
       if (myCExpr == null)
         myCExpr = ctx.qualifierExtraction.extractConstantQualifier(this)
       myCExpr
@@ -3682,8 +3682,12 @@ object Types {
   /** An qualified type tpe with expr */
   abstract class QualifiedType(val parent: Type) extends UncachedProxyType with BindingType with ValueType
   { self =>
+    /* [Dotty hack]
     type CExpr >: Null <: ConstraintExpr { type ThisCExpr <: self.CExpr }
     type This >: this.type <: QualifiedType { type CExpr <: self.CExpr }
+    */
+    type CExpr = ConstraintExpr
+    type This = QualifiedType
 
     override def underlying(implicit ctx: Context): Type = parent
 
@@ -3702,8 +3706,10 @@ object Types {
     cExprBuilder: ComplexQType => ComplexCExpr)
     extends QualifiedType(parent)
   {
+    /* [Dotty hack]
     type CExpr = ComplexCExpr
     type This = ComplexQType
+    */
 
     private var myCExpr: CExpr = _
     override def cExpr(implicit ctx: Context): CExpr = {
@@ -3712,8 +3718,8 @@ object Types {
       myCExpr
     }
 
-    def newLikeThis(parent: Type, cExpr: CExpr)(implicit ctx: Context): This =
-      ComplexQType(parent, this.subjectName){ newQtp => cExpr.subst(this, newQtp) }
+    def newLikeThis(parent: Type, cExpr: CExpr)(implicit ctx: Context): This =  // [Dotty hack]
+      ComplexQType(parent, this.subjectName){ newQtp => cExpr.subst(this, newQtp).asInstanceOf[ComplexCExpr] }
 
     val subject: QualifierSubject = QualifierSubject(this)
 
@@ -3737,13 +3743,15 @@ object Types {
   case class PrimitiveQType(override val parent: Type, primCExpr: PrimitiveCExpr)
     extends QualifiedType(parent)
   {
+    /* [Dotty hack]
     type CExpr = PrimitiveCExpr
     type This = PrimitiveQType
+    */
 
     override def cExpr(implicit ctx: Context): CExpr = primCExpr
 
-    def newLikeThis(parent: Type, primCExpr: CExpr)(implicit ctx: Context): This =
-      PrimitiveQType(parent, primCExpr)
+    def newLikeThis(parent: Type, primCExpr: CExpr)(implicit ctx: Context): This =  // [Dotty hack]
+      PrimitiveQType(parent, primCExpr.asInstanceOf[PrimitiveCExpr])
 
     override def toString = s"PrimitiveQType($parent, $primCExpr)"
   }

@@ -61,7 +61,7 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
             else derivedSelect(tp, atVariance(variance max 0)(this(tp.prefix)))
           case tp: QualifiedType =>
             val cExpr1: tp.CExpr = tp.cExpr.mapScope(apply)
-            tp.derivedQualifiedType(apply(tp.parent), cExpr1)
+            (tp.derivedQualifiedType(apply(tp.parent), cExpr1): Type)  // widening to avoid issue #2941
           case tp: ThisType =>
             toPrefix(pre, cls, tp.cls)
           case _: BoundType | NoPrefix =>

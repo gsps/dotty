@@ -79,12 +79,13 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   }
 
 
-  def extractConstantQualifier(ctp: ConstantType): ConstantCExpr = {
+  def extractConstantQualifier(ctp: ConstantType): ConstraintExpr = {
     val (stTp, lit) = ctp.value.value match {
       case _: Unit    => (st.UnitType, st.UnitLiteral())
       case x: Boolean => (st.BooleanType, st.BooleanLiteral(x))
       case x: Int     => (st.Int32Type, st.IntLiteral(x))
-      case _ => ???
+//      case _ => throw new NotImplementedError(i"Missing constant qualifier extraction for type $ctp")
+      case _          => return extractTrivialQualifier(ctp)  // TODO(gsps): Implement for all constant types
     }
     val subject = freshVar("C", stTp)
     ConstantCExpr(subject, lit)
@@ -125,7 +126,9 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
       }
 
       def refStr(tp: Type): Unit = homogenize(tp) match {
-        case tp: TermRef      => prefixStr(tp.prefix); sb.append(tp.name)
+        case tp: TermRef      =>
+          if (!ctx.settings.YtestPickler.value) prefixStr(tp.prefix)
+          sb.append(tp.name)
         case tp: ThisType     => sb.append(tp.cls.name); sb.append(".this")
         case tp: SuperType    => sb.append("Super(...)")  // FIXME?
         case tp: TermParamRef => sb.append(tp.paramName)
@@ -171,7 +174,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
     import ConstraintExpr.{Primitives => P}
 
     @inline def depParam(opTp: MethodType): TermParamRef = TermParamRef(opTp, 0)
-    @inline def subject(opTp: MethodicType): st.Variable = stSubject("pv", opTp.resultType)
+    /*@inline [Dotty hack]*/ def subject(opTp: MethodicType): st.Variable = stSubject("pv", opTp.resultType)
 
     def unaryPrim(opTp: ExprType, argTp1: Type, prim: ConstraintExpr.UnaryPrimitive): ExprType = {
       val cExpr = UnaryPrimitiveCExpr(subject(opTp), argTp1, prim)
