@@ -309,11 +309,9 @@ trait ParallelTesting extends RunnerOrchestration { self =>
     /** Wrapper function to make sure that the compiler itself did not crash -
      *  if it did, the test should automatically fail.
      */
-    protected def tryCompile(testSource: TestSource)(op: => Unit): Unit =
+    protected def tryCompile(testSource: TestSource)(op: => Unit): Unit = {
+      val tStart = System.nanoTime()
       try {
-        val testing = s"Testing ${testSource.title}"
-        summaryReport.echoToLog(testing)
-        if (!isInteractive) realStdout.println(testing)
         op
       } catch {
         case e: Throwable => {
@@ -324,7 +322,14 @@ trait ParallelTesting extends RunnerOrchestration { self =>
           registerCompletion(1)
           throw e
         }
+      } finally {
+        val tDur = (System.nanoTime() - tStart) / 1000000L
+        val testing = s"Testing ${testSource.title}; took $tDur ms"
+        summaryReport.echoToLog(testing)
+//        if (!isInteractive)
+          realStdout.println(testing)
       }
+    }
 
     protected def compile(files0: Array[JFile], flags0: TestFlags, suppressErrors: Boolean, targetDir: JFile): TestReporter = {
 
