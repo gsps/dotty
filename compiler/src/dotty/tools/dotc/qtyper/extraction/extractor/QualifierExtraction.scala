@@ -246,11 +246,19 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   }
 
 
+  private def assertNoEscapingSubject(subjectSym: Symbol, qualTp: Type): Unit =
+    qualTp.foreachPart {
+      case tp: TermRef =>
+        assert(tp.symbol != subjectSym, i"Qualifier variable ${subjectSym.name} escapes from qualifier $qualTp")
+      case _ => //
+    }
+
   def extractQualifier(qtp: ComplexQType, subjectVd: tpd.ValDef, qualifier: tpd.Tree): ComplexCExpr = {
     val subjectSym = subjectVd.symbol
     val subject    = stSubject(subjectVd.name.toString, subjectVd.tpt.tpe, qualifier.pos)
     // TODO(gsps): Specialize subst for Type#subst(Symbol, Type)
     val qualTp     = qualifier.tpe.subst(List(subjectSym), List(qtp.subject))
+    assertNoEscapingSubject(subjectSym, qualTp)
     assert(qualTp.widenDealias == BooleanType, s"Expected Boolean qualifier, but found $qualTp")
     ComplexCExpr(subject, qtp.subject, qualTp)
   }

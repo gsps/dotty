@@ -40,6 +40,9 @@ trait Substituters { this: Context =>
         (tp.derivedQualifiedType(parent1, cExpr1): Type)  // widening to avoid issue #2941
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
+      case tp: SkolemType if to.isInstanceOf[QualifierSubject] =>
+        // Special case for introducing QualifierSubjects even in skolemized types
+        tp.derivedSkolemType(subst1(tp.info, from, to, theMap))
       case _ =>
         (if (theMap != null) theMap else new Subst1Map(from, to))
           .mapOver(tp)
