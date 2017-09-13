@@ -4055,10 +4055,8 @@ object Types {
 
         case tp: QualifiedType =>
           // TODO(gsps): Evaluate the performance impact of mapping over the cExpr's dependencies here.
-//          val cExpr1: tp.CExpr = tp.cExpr.mapScope(this)
-//          derivedQualifiedType(tp, this(tp.parent))(cExpr1)
-          // TODO(gsps): REINSTATE ABOVE LINES
-          derivedQualifiedType(tp, this(tp.parent))(tp.cExpr)
+          val cExpr1: tp.CExpr = tp.cExpr.mapScope(this)
+          derivedQualifiedType(tp, this(tp.parent))(cExpr1)
 
         case tp: WildcardType =>
           derivedWildcardType(tp, mapOver(tp.optBounds))
