@@ -1083,6 +1083,9 @@ class Definitions {
 
   // ----- Qualified Types ----------------------------------------------------------
 
+  def maybeQTypePrimitive(clazz: ClassSymbol, name: Name): Boolean =
+    QTypePrimitiveClasses().contains(clazz) && nme.QTypePrimitiveOpNames.contains(name)
+
   /**
     * The Scala standard library contains various methods that ought to carry qualified type
     * signatures. Rather than changing scala-library itself, we modify its denotations upon
@@ -1090,9 +1093,8 @@ class Definitions {
     */
   def augmentScalaLibDenotWithQTypes(denot: SymDenotation, tp: Type): Type = {
     denot.owner match {
-      case clazz: ClassSymbol
-        if QTypePrimitiveClasses().contains(clazz) && nme.QTypePrimitiveOpNames.contains(denot.name) =>
-          ctx.qualifierExtraction.injectPrimitive(clazz, denot.name, tp)
+      case clazz: ClassSymbol if maybeQTypePrimitive(clazz, denot.name) =>
+        ctx.qualifierExtraction.refinePrimitive(clazz, denot.name, tp)
       case _ =>
         tp
     }

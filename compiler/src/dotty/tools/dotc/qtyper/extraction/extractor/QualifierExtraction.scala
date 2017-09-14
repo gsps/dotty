@@ -170,7 +170,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   }
 
 
-  def injectPrimitive(clazz: ClassSymbol, opName: Name, opTp: Type): Type = {
+  def refinePrimitive(clazz: ClassSymbol, opName: Name, opTp: Type): Type = {
     import ConstraintExpr.{Primitives => P}
 
     @inline def depParam(opTp: MethodType): TermParamRef = TermParamRef(opTp, 0)

@@ -177,10 +177,11 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
           NoType
         else {
           val pre = imp.site
-          val denot = pre.member(name).accessibleFrom(pre)(refctx)
+          val name1 = injectPrecisePrimitive(pre, name)
+          val denot = pre.member(name1).accessibleFrom(pre)(refctx)
             // Pass refctx so that any errors are reported in the context of the
             // reference instead of the
-          if (reallyExists(denot)) pre.select(name, denot) else NoType
+          if (reallyExists(denot)) pre.select(name1, denot) else NoType
         }
 
       /** The type representing a named import with enclosing name when imported
@@ -1245,8 +1246,7 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
   def typedQualifiedTypeTree(tree: untpd.QualifiedTypeTree)(implicit ctx: Context): QualifiedTypeTree =
     track("typedQualifiedTypeTree")
   {
-//    System.out.println(i"TYPING QualifiedTypeTree:\n\tqtpt: $tree\n\t\t=> ${tree.toString}")
-    val exprCtx = index(tree.subject)
+    val exprCtx = index(tree.subject).retractMode(Mode.ImplicitsEnabled).addMode(Mode.PreciseTyping)
     val subject1 = typed(tree.subject).asInstanceOf[ValDef]
     val expr1 = typedExpr(tree.expr, defn.BooleanType)(exprCtx)
     assignType(cpy.QualifiedTypeTree(tree)(subject1, expr1), subject1, expr1)
@@ -1309,7 +1309,7 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     // TODO: Re-add this check once we have an implementation for CExprs!
 //    checkNoSymbolDependenciesInQualifiers(sym.info.widenSingleton.asInstanceOf[MethodType])
 
-    var rhsCtx = ctx
+    var rhsCtx = ctx.addMode(Mode.PreciseTyping)  // TODO (gsps): Revert this to just `= ctx;`
     if (sym.isConstructor && !sym.isPrimaryConstructor && tparams1.nonEmpty) {
       // for secondary constructors we need a context that "knows"
       // that their type parameters are aliases of the class type parameters.

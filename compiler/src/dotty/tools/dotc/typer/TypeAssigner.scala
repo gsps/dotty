@@ -178,6 +178,16 @@ trait TypeAssigner {
     case ex: StaleSymbol => false
   }
 
+  /** Replace name by a precise version if we're in PreciseTyping mode and a primitive is being referenced. */
+  def injectPrecisePrimitive(site: Type, name: Name)(implicit ctx: Context): Name =
+    if (ctx.mode.is(Mode.PreciseTyping))
+      site.widenSingleton.classSymbol match {
+        case owner: ClassSymbol if ctx.definitions.maybeQTypePrimitive(owner, name) =>
+          NameKinds.PrecisePrimName(name.asTermName)
+        case _ => name
+      }
+    else name
+
   /** If `tpe` is a named type, check that its denotation is accessible in the
    *  current context. Return the type with those alternatives as denotations
    *  which are accessible.
@@ -253,7 +263,8 @@ trait TypeAssigner {
   def accessibleSelectionType(tree: untpd.RefTree, qual1: Tree)(implicit ctx: Context): Type = {
     var qualType = qual1.tpe.widenIfUnstable
     if (qualType.isHK) qualType = errorType(em"$qualType takes type parameters", qual1.pos)
-    val ownType = selectionType(qualType, tree.name, tree.pos)
+    val name1 = injectPrecisePrimitive(qualType, tree.name)
+    val ownType = selectionType(qualType, name1, tree.pos)
     ensureAccessible(ownType, qual1.isInstanceOf[Super], tree.pos)
   }
 

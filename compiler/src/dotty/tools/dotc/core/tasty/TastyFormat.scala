@@ -257,6 +257,7 @@ object TastyFormat {
   final val ADAPTEDCLOSURE = 34
   final val OBJECTVAR = 39
   final val OBJECTCLASS = 40
+  final val PRECISEPRIM = 41
 
   final val SIGNED = 63
 

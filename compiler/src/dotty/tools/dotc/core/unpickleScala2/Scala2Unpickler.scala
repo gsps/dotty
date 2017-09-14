@@ -9,7 +9,7 @@ import java.lang.Double.longBitsToDouble
 
 import Contexts._, Symbols._, Types._, Scopes._, SymDenotations._, Names._, NameOps._
 import StdNames._, Denotations._, NameOps._, Flags._, Constants._, Annotations._
-import NameKinds.{Scala2MethodNameKinds, SuperAccessorName, ExpandedName}
+import NameKinds.{Scala2MethodNameKinds, SuperAccessorName, ExpandedName, PrecisePrimName}
 import dotty.tools.dotc.typer.ProtoTypes.{FunProtoTyped, FunProto}
 import util.Positions._
 import dotty.tools.dotc.ast.{tpd, Trees, untpd}, ast.tpd._
@@ -126,7 +126,22 @@ object Scala2Unpickler {
       registerCompanionPair(scalacCompanion, denot.classSymbol)
     }
 
-    tempInfo.finalize(denot, normalizedParents) // install final info, except possibly for typeparams ordering
+    // Synthesize precise primitive methods
+    if (ctx.definitions.QTypePrimitiveClasses().contains(cls)) {
+      for (primName <- nme.QTypePrimitiveOpNames)
+        for (sym <- decls.lookupAll(primName)) {
+          val augTp = defn.augmentScalaLibDenotWithQTypes(sym.denot, sym.info)
+          if (sym.info ne augTp) {
+            val augName = PrecisePrimName(primName.asTermName)
+            val precSym = ctx.newSymbol(cls, augName, sym.flags, augTp,
+              coord = sym.coord, privateWithin = sym.privateWithin)
+            assert(denot.symbol.asClass == cls)
+            cls.enter(precSym, decls)
+          }
+        }
+    }
+
+    tempInfo.finalize(denot, parentRefs) // install final info, except possibly for typeparams ordering
     denot.ensureTypeParamsInCorrectOrder()
   }
 }
@@ -554,14 +569,12 @@ class Scala2Unpickler(bytes: Array[Byte], classRoot: ClassDenotation, moduleClas
             setClassInfo(denot, tp, selfInfo)
           case denot =>
             val tp1 = translateTempPoly(tp)
-            // For certain methods we augment the signature with QualifiedTypes
-            val tp2 = defn.augmentScalaLibDenotWithQTypes(denot, tp1)
             denot.info =
-              if (tag == ALIASsym) TypeAlias(tp2)
-              else if (denot.isType) checkNonCyclic(denot.symbol, tp2, reportErrors = false)
+              if (tag == ALIASsym) TypeAlias(tp1)
+              else if (denot.isType) checkNonCyclic(denot.symbol, tp1, reportErrors = false)
                 // we need the checkNonCyclic call to insert LazyRefs for F-bounded cycles
-              else if (!denot.is(Param)) tp2.underlyingIfRepeated(isJava = false)
-              else tp2
+              else if (!denot.is(Param)) tp1.underlyingIfRepeated(isJava = false)
+              else tp1
 
             if (!denot.isType) { // Only terms might have leaky aliases, see the documentation of `checkNoPrivateLeaks`
               val sym = denot.symbol

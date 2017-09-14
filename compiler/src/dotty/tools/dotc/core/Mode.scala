@@ -96,4 +96,7 @@ object Mode {
 
   /** We are in the IDE */
   val Interactive = newMode(20, "Interactive")
+
+  /** Retain and infer precise types */
+  val PreciseTyping = newMode(21, "PreciseTyping")
 }
