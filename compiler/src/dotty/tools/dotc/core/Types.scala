@@ -2029,6 +2029,8 @@ object Types {
 
     def withPrefix(prefix: Type)(implicit ctx: Context): NamedType =
       TypeRef(prefix, designator)
+
+    override def cExpr(implicit ctx: Context): ConstraintExpr = info.cExpr
   }
 
   final class CachedTermRef(prefix: Type, designator: TermDesignator, hc: Int) extends TermRef(prefix, designator) {
@@ -3638,6 +3640,9 @@ object Types {
       case that: TypeAlias => alias.eq(that.alias)
       case _ => false
     }
+
+    // FIXME (gsps): Unsound in case variance != 0?
+    override def cExpr(implicit ctx: Context): ConstraintExpr = alias.cExpr
   }
 
   class CachedTypeAlias(alias: Type) extends TypeAlias(alias)
