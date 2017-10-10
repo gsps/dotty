@@ -390,8 +390,10 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     checkValue(tree1, pt)
   }
 
-  private def typedSelect(tree: untpd.Select, pt: Type, qual: Tree)(implicit ctx: Context): Select =
-    checkValue(assignType(cpy.Select(tree)(qual, tree.name), qual), pt)
+  private def typedSelect(tree: untpd.Select, pt: Type, qual: Tree)(implicit ctx: Context): Select = {
+    val name = injectPrecisePrimitive(qual.tpe, tree.name)
+    checkValue(assignType(cpy.Select(tree)(qual, name), qual), pt)
+  }
 
   def typedSelect(tree: untpd.Select, pt: Type)(implicit ctx: Context): Tree = track("typedSelect") {
     def typeSelectOnTerm(implicit ctx: Context): Tree = {
@@ -1856,11 +1858,14 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
   def tryInsertImplicitOnQualifier(tree: Tree, pt: Type)(implicit ctx: Context): Option[Tree] = trace(i"try insert impl on qualifier $tree $pt") {
     tree match {
       case Select(qual, name) =>
-        val qualProto = SelectionProto(name, pt, NoViewsAllowed, privateOK = false)
+        // Fall back to imprecise primitives on the implicitly converted qualifier
+        // TODO(gsps): Should not strip precise prim if we implicitly convert to another primitive class
+        val name1 = name.stripPrecise
+        val qualProto = SelectionProto(name1, pt, NoViewsAllowed, privateOK = false)
         tryEither { implicit ctx =>
           val qual1 = adaptInterpolated(qual, qualProto)
           if ((qual eq qual1) || ctx.reporter.hasErrors) None
-          else Some(typed(cpy.Select(tree)(untpd.TypedSplice(qual1), name), pt))
+          else Some(typed(cpy.Select(tree)(untpd.TypedSplice(qual1), name1), pt))
         } { (_, _) => None
         }
       case _ => None

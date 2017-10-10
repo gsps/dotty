@@ -14,7 +14,7 @@ class ElimPrecisePrimitives extends MiniPhaseTransform with IdentityDenotTransfo
 
   override def phaseName: String = "elimPrecisePrimitives"
 
-  override def runsAfter: Set[Class[_ <: Phase]] = Set(classOf[Erasure])
+  override def runsAfter: Set[Class[_ <: Phase]] = Set(classOf[Pickler])
 
   // TODO (gsps): We could unlink all the synthetic precise primitive methods
   /*
@@ -33,12 +33,19 @@ class ElimPrecisePrimitives extends MiniPhaseTransform with IdentityDenotTransfo
   }
   */
 
-  override def transformSelect(tree: Select)(implicit ctx: Context, info: TransformerInfo): Tree = {
-    tree.name match {
-      case PrecisePrimName(primName) =>
-        tree.qualifier.selectWithSig(primName, tree.tpe.asInstanceOf[NamedType].denot.signature)
+  override def transformIdent(tree: Ident)(implicit ctx: Context, info: TransformerInfo): Tree =
+    tree.tpe match {
+      case tp @ TermRef(prefix, PrecisePrimName(primName)) =>
+        Ident(TermRef.withSig(prefix, primName, tp.signature))
       case _ =>
         tree
     }
-  }
+
+  override def transformSelect(tree: Select)(implicit ctx: Context, info: TransformerInfo): Tree =
+    tree.tpe match {
+      case tp @ TermRef(prefix, PrecisePrimName(primName)) =>
+        tree.qualifier.selectWithSig(primName, tp.signature)
+      case _ =>
+        tree
+    }
 }

@@ -263,8 +263,7 @@ trait TypeAssigner {
   def accessibleSelectionType(tree: untpd.RefTree, qual1: Tree)(implicit ctx: Context): Type = {
     var qualType = qual1.tpe.widenIfUnstable
     if (qualType.isHK) qualType = errorType(em"$qualType takes type parameters", qual1.pos)
-    val name1 = injectPrecisePrimitive(qualType, tree.name)
-    val ownType = selectionType(qualType, name1, tree.pos)
+    val ownType = selectionType(qualType, tree.name, tree.pos)
     ensureAccessible(ownType, qual1.isInstanceOf[Super], tree.pos)
   }
 

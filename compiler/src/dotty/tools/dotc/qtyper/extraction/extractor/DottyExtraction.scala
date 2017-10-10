@@ -1214,6 +1214,14 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
 
     /** <== */
 
+    /** ==> Dotty types that have a special meaning, but should be sound to interpret as "normal" types */
+
+    case WildcardType(TypeBounds(lo, hi)) if lo == defn.NothingType =>
+      // This specific pattern occurs in implicit search (in place of parameter types)
+      extractType(hi)
+
+    /** <== */
+
     // @nv: we want this case to be close to the end as it otherwise interferes with other cases
     case tpe if tpe.typeSymbol == defn.NothingClass => trees.Untyped
 

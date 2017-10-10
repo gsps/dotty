@@ -126,21 +126,6 @@ object Scala2Unpickler {
       registerCompanionPair(scalacCompanion, denot.classSymbol)
     }
 
-    // Synthesize precise primitive methods
-    if (ctx.definitions.QTypePrimitiveClasses().contains(cls)) {
-      for (primName <- nme.QTypePrimitiveOpNames)
-        for (sym <- decls.lookupAll(primName)) {
-          val augTp = defn.augmentScalaLibDenotWithQTypes(sym.denot, sym.info)
-          if (sym.info ne augTp) {
-            val augName = PrecisePrimName(primName.asTermName)
-            val precSym = ctx.newSymbol(cls, augName, sym.flags, augTp,
-              coord = sym.coord, privateWithin = sym.privateWithin)
-            assert(denot.symbol.asClass == cls)
-            cls.enter(precSym, decls)
-          }
-        }
-    }
-
     tempInfo.finalize(denot, parentRefs) // install final info, except possibly for typeparams ordering
     denot.ensureTypeParamsInCorrectOrder()
   }

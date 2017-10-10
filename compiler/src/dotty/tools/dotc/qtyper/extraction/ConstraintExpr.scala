@@ -80,8 +80,10 @@ final case class IntDep(tp: Type)(implicit ctx: Context) extends Dep {
 }
 
 object Dep {
-  def apply(tp: Type)(implicit ctx: Context): Dep =
+  def apply(tp: Type)(implicit ctx: Context): Dep = {
+    assert(!tp.widen.isError, i"Unexpected ErrorTypes as dependency of QualifiedType: $tp")
     if (isExternal(tp)) ExtDep(tp) else IntDep(tp)
+  }
 
   def isExternal(tp: Type): Boolean = tp match {
     case _: TermRef | _: TermParamRef | _: QualifierSubject => true

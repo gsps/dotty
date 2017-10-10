@@ -3548,9 +3548,42 @@ object Types {
   final class TempClassInfo(prefix: Type, cls: ClassSymbol, decls: Scope, selfInfo: TypeOrSymbol)
   extends CachedClassInfo(prefix, cls, Nil, decls, selfInfo) {
 
+    // Synthesize precise primitive methods
+    private def addPrecisePrimitives(denot: SymDenotation)(implicit ctx: Context): Unit = denot match {
+      case denot: ClassDenotation =>
+        val cls = denot.classSymbol
+
+        def enterPrecise(sym: Symbol, augTp: Type): Unit = {
+          val augName = NameKinds.PrecisePrimName(sym.name.asTermName)
+          val precSym = ctx.newSymbol(cls, augName, sym.flags, augTp,
+            coord = sym.coord, privateWithin = sym.privateWithin)
+          assert(denot.symbol.asClass == cls)
+          cls.enter(precSym, decls)
+        }
+        def enterSame(sym: Symbol): Unit =
+          enterPrecise(sym, sym.info)
+
+        if (ctx.definitions.QTypePrimitiveClasses().contains(cls)) {
+          for (primName <- nme.QTypePrimitiveOpNames)
+            for (sym <- decls.lookupAll(primName)) {
+              val augTp = defn.augmentScalaLibDenotWithQTypes(sym.denot, sym.info)
+//              if (sym.info ne augTp)
+              enterPrecise(sym, augTp)
+            }
+
+          // Also add not-actually-more-precise versions of Any.{==,!=,equals}(Any)
+          enterSame(defn.Any_==.symbol)
+          enterSame(defn.Any_!=.symbol)
+          enterSame(defn.Any_equals.symbol)
+        }
+      case _ => //
+    }
+
     /** Install classinfo with known parents in `denot` s */
-    def finalize(denot: SymDenotation, parents: List[Type])(implicit ctx: Context) =
+    def finalize(denot: SymDenotation, parents: List[Type])(implicit ctx: Context) = {
+      addPrecisePrimitives(denot)
       denot.info = ClassInfo(prefix, cls, parents, decls, selfInfo)
+    }
 
     override def derivedClassInfo(prefix: Type)(implicit ctx: Context) =
       if (prefix eq this.prefix) this

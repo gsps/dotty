@@ -50,7 +50,8 @@ class Compiler {
       List(new LinkAll),            // Reload compilation units from TASTY for library code (if needed)
       List(new FirstTransform,      // Some transformations to put trees into a canonical form
            new CheckReentrant,      // Internal use only: Check that compiled program has no data races involving global vars
-           new ElimJavaPackages),   // Eliminate syntactic references to Java packages
+           new ElimJavaPackages,    // Eliminate syntactic references to Java packages
+           new ElimPrecisePrimitives), // Revert precise primitives to standard ones which are understood by codegen
       List(new CheckStatic,         // Check restrictions that apply to @static members
            new ElimRepeated,        // Rewrite vararg parameters and arguments
            new RefChecks,           // Various checks mostly related to abstract members and overriding
@@ -89,8 +90,7 @@ class Compiler {
            new LazyVals,            // Expand lazy vals
            new Memoize,             // Add private fields to getters and setters
            new NonLocalReturns,     // Expand non-local returns
-           new CapturedVars,        // Represent vars captured by closures as heap objects
-           new ElimPrecisePrimitives), // Revert precise primitives to standard ones which are understood by codegen
+           new CapturedVars),       // Represent vars captured by closures as heap objects
       List(new Constructors,        // Collect initialization code in primary constructors
                                     // Note: constructors changes decls in transformTemplate, no InfoTransformers should be added after it
            new FunctionalInterfaces, // Rewrites closures to implement @specialized types of Functions.
