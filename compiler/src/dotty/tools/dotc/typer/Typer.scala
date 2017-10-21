@@ -1245,13 +1245,18 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     typed(annot, defn.AnnotationType)
   }
 
-  def typedQualifiedTypeTree(tree: untpd.QualifiedTypeTree)(implicit ctx: Context): QualifiedTypeTree =
+  def typedQualifiedTypeTree(tree: untpd.QualifiedTypeTree)(implicit ctx: Context): Tree =
     track("typedQualifiedTypeTree")
   {
-    val exprCtx = index(tree.subject).retractMode(Mode.ImplicitsEnabled).addMode(Mode.PreciseTyping)
-    val subject1 = typed(tree.subject).asInstanceOf[ValDef]
-    val expr1 = typedExpr(tree.expr, defn.BooleanType)(exprCtx)
-    assignType(cpy.QualifiedTypeTree(tree)(subject1, expr1), subject1, expr1)
+    if (ctx.settings.Xqtypes.value) {
+      val exprCtx = index(tree.subject).retractMode(Mode.ImplicitsEnabled).addMode(Mode.PreciseTyping)
+      val subject1 = typed(tree.subject).asInstanceOf[ValDef]
+      val expr1 = typedExpr(tree.expr, defn.BooleanType)(exprCtx)
+      assignType(cpy.QualifiedTypeTree(tree)(subject1, expr1), subject1, expr1)
+    } else {
+      ctx.warning(i"Qualified types are widened unless -Xqtypes is set.", tree.pos)
+      typed(tree.subject.tpt)
+    }
   }
 
   def typedValDef(vdef: untpd.ValDef, sym: Symbol)(implicit ctx: Context) = track("typedValDef") {
@@ -1311,7 +1316,10 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     // TODO: Re-add this check once we have an implementation for CExprs!
 //    checkNoSymbolDependenciesInQualifiers(sym.info.widenSingleton.asInstanceOf[MethodType])
 
-    var rhsCtx = ctx.addMode(Mode.PreciseTyping)  // TODO (gsps): Revert this to just `= ctx;`
+    var rhsCtx = ctx
+//    if (???) // TODO(gsps): Enable only in particular user-annotated methods
+    if (ctx.settings.Xqtypes.value)
+      rhsCtx = rhsCtx.addMode(Mode.PreciseTyping)
     if (sym.isConstructor && !sym.isPrimaryConstructor && tparams1.nonEmpty) {
       // for secondary constructors we need a context that "knows"
       // that their type parameters are aliases of the class type parameters.

@@ -14,6 +14,7 @@ object Printers {
   val dottydoc: Printer = noPrinter
   val core: Printer = noPrinter
   val typr: Printer = noPrinter
+  val qtypes: Printer = noPrinter
   val constr: Printer = noPrinter
   val checks: Printer = noPrinter
   val overload: Printer = noPrinter

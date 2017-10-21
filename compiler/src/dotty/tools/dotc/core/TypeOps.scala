@@ -60,8 +60,7 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
             if (sym.isStatic) tp
             else derivedSelect(tp, atVariance(variance max 0)(this(tp.prefix)))
           case tp: QualifiedType =>
-            val cExpr1: tp.CExpr = tp.cExpr.mapScope(apply)
-            (tp.derivedQualifiedType(apply(tp.parent), cExpr1): Type)  // widening to avoid issue #2941
+            tp.map(asSeenFrom(_, pre, cls, theMap))
           case tp: ThisType =>
             toPrefix(pre, cls, tp.cls)
           case _: BoundType | NoPrefix =>
@@ -312,9 +311,10 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
   /** QualifiedType extraction and constraint checking */
   def checkQTypeConstraint(tp1: Type, tp2: QualifiedType): Option[Boolean] = {
     import qtyper.extraction.timeMe
-    val cnstr = timeMe("Extracting QTypeConstraint") { QTypeConstraint(tp1, tp2) } // ~10ms
-    val res = timeMe("Checking QTypeConstraint") { qtyper.extraction.ConstraintChecker.check(cnstr) } // ~40ms
-    res
+    val cnstr = timeMe("Extracting QTypeConstraint") { QTypeConstraint(tp1, tp2) }
+    cnstr.flatMap { vc =>
+      timeMe("Checking QTypeConstraint") { qtyper.extraction.ConstraintChecker.check(vc) }
+    }
   }
 
   /** Is auto-tupling enabled? */

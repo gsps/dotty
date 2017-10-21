@@ -108,16 +108,19 @@ trait TypeAssigner {
             case _ =>
               range(tp.bottomType, tp.topType) // should happen only in error cases
           }
-        case tp: QualifiedType =>
-          val parent1 = apply(tp.parent)
-          // TODO: Do something smarter than widening the QType in case toAvoid is true
-          tp.cExpr.scope.find(dep => toAvoid(dep.tp)) match {
-            case Some(badTp) =>
-              typr.println(i"Dropping qualification to $tp since its dependency on $badTp conflicts with $forbidden")
-              parent1
-            case None =>
-              tp.derivedQualifiedType(parent1, tp.cExpr)
-          }
+
+        case tp: ComplexQType =>
+          if (toAvoid(tp.subjectTp) || toAvoid(tp.qualifierTp))
+            errorType(i"Forced to avoid qualified type $tp", NoPosition)
+          else
+            tp
+        case tp: UnaryPrimitiveQType =>
+          assert(!toAvoid(tp.parent))  // Only primitive classes occur as parents
+          if (toAvoid(tp.tp1)) tp.parent else tp
+        case tp: BinaryPrimitiveQType =>
+          assert(!toAvoid(tp.parent))  // Only primitive classes occur as parents
+          if (toAvoid(tp.tp1) || toAvoid(tp.tp2)) tp.parent else tp
+
         case tp: ThisType if toAvoid(tp.cls) =>
           range(tp.bottomType, apply(classBound(tp.cls.classInfo)))
         case tp: TypeVar if ctx.typerState.constraint.contains(tp) =>

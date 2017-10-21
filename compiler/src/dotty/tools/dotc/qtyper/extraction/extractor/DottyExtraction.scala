@@ -1206,6 +1206,8 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
 
     case AnnotatedType(tpe, _) => extractType(tpe)
 
+    case QualifierSubject(qtp) => extractType(qtp.subjectTp)
+
     /** ==> Dotty types that we may or may not wanna handle in special ways, but will just widen for now: */
 
     case tp: SkolemType => extractType(tp.underlying)

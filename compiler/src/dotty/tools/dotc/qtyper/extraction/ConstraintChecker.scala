@@ -30,10 +30,9 @@ object ConstraintChecker {
   implicit val debugSection: DebugSectionVerification.type = DebugSectionVerification
 
 
-  def check(cnstr: QTypeConstraint): Option[Boolean] = {
+  def check(vc: trees.Expr): Option[Boolean] = {
 //    val program = getProgram(cnstr.fds)
     val program = getProgram(Seq())
-    val vc      = generateVC(cnstr)
     checkVC(program)(vc) match {
       case CStatus.Invalid(_) => Some(false)
       case CStatus.Valid      => Some(true)

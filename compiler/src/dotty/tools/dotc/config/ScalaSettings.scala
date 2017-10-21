@@ -61,6 +61,8 @@ class ScalaSettings extends Settings.SettingGroup {
   val XnoValueClasses = BooleanSetting("-Xno-value-classes", "Do not use value classes. Helps debugging.")
   val XreplLineWidth = IntSetting("-Xrepl-line-width", "Maximial number of columns per line for REPL output", 390)
   val XfatalWarnings = BooleanSetting("-Xfatal-warnings", "Fail the compilation if there are any warnings.")
+  val Xqtypes = BooleanSetting("-Xqtypes", "Check and propagate predicate-qualified types.", initialValue = true)
+  val XlogQtypes = BooleanSetting("-Xlog-qtypes", "Log subtyping checks among qualified types.")
 
   /** -Y "Private" settings */
   val overrideVars = BooleanSetting("-Yoverride-vars", "Allow vars to be overridden.")

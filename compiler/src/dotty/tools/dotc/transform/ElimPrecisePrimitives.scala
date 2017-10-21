@@ -44,7 +44,10 @@ class ElimPrecisePrimitives extends MiniPhaseTransform with IdentityDenotTransfo
   override def transformSelect(tree: Select)(implicit ctx: Context, info: TransformerInfo): Tree =
     tree.tpe match {
       case tp @ TermRef(prefix, PrecisePrimName(primName)) =>
-        tree.qualifier.selectWithSig(primName, tp.signature)
+        val newDenots = prefix.member(primName).atSignature(tp.signature, prefix).alternatives
+        assert(newDenots.size == 1)
+        val newDenot = newDenots.head
+        Select(tree.qualifier, primName).withType(prefix.select(primName, newDenot))
       case _ =>
         tree
     }

@@ -4,7 +4,7 @@ package qtyper.extraction
 import core.Contexts._
 import core.Names._
 import core.Symbols._
-import core.Types.{Type, TermRef, TermParamRef, ComplexQType}
+import core.Types.{Type, RefType, TermRef, TermParamRef, ComplexQType}
 
 import stainless.ast.SymbolIdentifier
 import stainless.{FreshIdentifier, Identifier}
@@ -20,7 +20,6 @@ class ExtractionState {
 //  val trees: qtyper.extraction.ast.trees.type = qtyper.extraction.ast.trees
 
   // TODO: Introduce RefType as a marker trait in Dotty type representation with member "prettySubjectVarName: String"
-  type RefType = Type  /* TermRef | TermParamRef | QualifierSubject */
 
   protected val symbolsCache: MutableMap[Symbol, SymbolIdentifier] = MutableMap.empty
   protected val namesCache: MutableMap[Name, Identifier] = MutableMap.empty

@@ -220,6 +220,12 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
       // Dotty deviation: called with an untpd.Tree, so cannot be a untpd.Tree[T] (seems to be a Scala2 problem to allow this)
       // More deviations marked below as // DD
 
+    def optAscriptionWithoutSubject(tpt: untpd.Tree) = tpt match {
+      case QualifiedTypeTree(subject, expr) =>
+        ": {" ~ toText(subject.tpt) ~ " ⇒ " ~ toText(expr) ~ "}"
+      case _ => optAscription(tpt)
+    }
+
     def tparamsText[T >: Untyped](params: List[Tree]): Text =
       "[" ~ toText(params, ", ") ~ "]" provided params.nonEmpty
 
@@ -444,7 +450,7 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
       case tree @ ValDef(name, tpt, _) =>
         dclTextOr {
           modText(tree.mods, if (tree.mods is Mutable) "var" else "val") ~~
-          nameIdText(tree) ~ optAscription(tpt) ~
+          nameIdText(tree) ~ optAscriptionWithoutSubject(tpt) ~
           withEnclosingDef(tree) { optText(tree.rhs)(" = " ~ _) }
         }
       case tree @ DefDef(name, tparams, vparamss, tpt, _) =>
@@ -500,7 +506,7 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
       case Annotated(arg, annot) =>
         toTextLocal(arg) ~~ annotText(annot)
       case QualifiedTypeTree(subject, expr) =>
-        "{" ~ toText(subject.name) ~ ": " ~ toText(subject.tpt) ~ " => " ~ toText(expr) ~ "}"
+        "{" ~ toText(subject.name) ~ ": " ~ toText(subject.tpt) ~ " ⇒ " ~ toText(expr) ~ "}"
       case EmptyTree =>
         "<empty>"
       case TypedSplice(t) =>

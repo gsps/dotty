@@ -53,7 +53,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
 
   // TODO(gsps): Convert DottyExtraction to support st. directly (instead of stainless.extraction.oo.trees.)
-  protected def stType(tp: Type, pos: Position = NoPosition): st.Type = {
+  def stType(tp: Type, pos: Position = NoPosition): st.Type = {
     stainlessType(tp)(emptyDefContext, pos) match {
       case trees.Untyped      => st.Untyped
       case trees.BooleanType  => st.BooleanType
@@ -64,109 +64,79 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
     }
   }
 
-  protected def stSubject(name: String, tp: Type, pos: Position = NoPosition): st.Variable = {
-    val stainlessResTp = stType(tp, pos)
-    freshVar(name, stainlessResTp, pos)
+  def stLiteral(ctp: ConstantType): st.Literal[_] = ctp.value.value match {
+    case _: Unit    => st.UnitLiteral()
+    case x: Boolean => st.BooleanLiteral(x)
+    case x: Int     => st.IntLiteral(x)
+    case _ => throw new NotImplementedError(i"Missing constant qualifier extraction for type $ctp")
   }
 
 
-  protected var cachedTrivial: MutableMap[Type, TrivialCExpr] = MutableMap()
-
-  def extractTrivialQualifier(tp: Type): TrivialCExpr = {
-    cachedTrivial.getOrElseUpdate(tp, {
-      TrivialCExpr(stSubject("u", tp))
-    })
-  }
+  def freshSubject(name: String, tp: Type, pos: Position = NoPosition): st.Variable =
+    freshVar(name, stType(tp, pos), pos)
 
 
-  def extractConstantQualifier(ctp: ConstantType): ConstraintExpr = {
-    val (stTp, lit) = ctp.value.value match {
-      case _: Unit    => (st.UnitType, st.UnitLiteral())
-      case x: Boolean => (st.BooleanType, st.BooleanLiteral(x))
-      case x: Int     => (st.Int32Type, st.IntLiteral(x))
-//      case _ => throw new NotImplementedError(i"Missing constant qualifier extraction for type $ctp")
-      case _          => return extractTrivialQualifier(ctp)  // TODO(gsps): Implement for all constant types
+  def refSubject(refTp: RefType): st.Variable = {
+    def register(refTp: RefType, name: => String, underlyingTp: Type, pos: Position = NoPosition): st.Variable =
+      exState.getOrPutVar(refTp, () => freshSubject(name, underlyingTp, pos))
+
+    refTp match {
+      case refTp: TermRef =>
+        val sym = refTp.symbol
+        assert(sym ne NoSymbol)
+
+        def qualVarName = {
+          val sb = StringBuilder.newBuilder
+
+          // TODO(gsps): Homogenize from PlainPrinter; factor out
+          def homogenize(tp: Type): Type = tp match {
+            case tp: ThisType if tp.cls.is(Package) && !tp.cls.isEffectiveRoot =>
+              ctx.requiredPackage(tp.cls.fullName).termRef
+            case tp: TypeVar if tp.isInstantiated =>
+              homogenize(tp.instanceOpt)
+            case AndType(tp1, tp2) =>
+              homogenize(tp1) & homogenize(tp2)
+            case OrType(tp1, tp2) =>
+              homogenize(tp1) | homogenize(tp2)
+            case tp: SkolemType =>
+              homogenize(tp.info)
+            case tp: LazyRef =>
+              homogenize(tp.ref)
+            case HKApply(tycon, args) =>
+              tycon.dealias.appliedTo(args)
+            case _ =>
+              tp
+          }
+
+          def refStr(tp: Type): Unit = homogenize(tp) match {
+            case tp: TermRef      =>
+              if (!ctx.settings.YtestPickler.value) prefixStr(tp.prefix)
+              sb.append(tp.name)
+            case tp: ThisType     => sb.append(tp.cls.name); sb.append(".this")
+            case tp: SuperType    => sb.append("Super(...)")  // FIXME?
+            case tp: TermParamRef => sb.append(tp.paramName)
+            case tp: SkolemType   => refStr(tp.underlying); sb.append("(?)")  // FIXME?
+            case tp: ConstantType => sb.append("cnst"); sb.append(tp.value.show)
+            case tp: RecThis      => sb.append("{...}.this")
+            case _ => throw new IllegalArgumentException(i"Unexpected type in TermRef prefix: $tp")
+          }
+
+          def prefixStr(tp: Type): Unit = homogenize(tp) match {
+            case NoPrefix                           => //
+            case _: SingletonType | _: TermParamRef => refStr(tp); sb.append(".")
+            case tp: TypeRef                        => prefixStr(tp.prefix); sb.append(tp.symbol.name); sb.append(".")
+            case _                                  => sb.append("{???}")  // FIXME?
+          }
+          refStr(refTp); sb.toString()
+        }
+
+        // TODO: We actually want the position of the term carrying the TermRef here, no?
+        register(refTp, qualVarName, refTp.widenTermRefExpr, sym.pos)
+
+      case refTp: TermParamRef =>
+        register(refTp, refTp.paramName.toString, refTp.underlying.widen)
+
     }
-    val subject = freshVar("C", stTp)
-    ConstantCExpr(subject, lit)
-  }
-
-
-  // Case for Idents referring to a term-level symbol in scope
-  def extractTermRefQualifier(termRef: TermRef): RefCExpr = {
-    // !!!
-    // FIXME: ONLY introduce the alias for things we can be sure are equivalent, e.g. in case of a
-    //  TermRef(NoPrefix, _) with a Symbol. Otherwise go via ... termRef.widen?
-    // !!!
-
-    val sym = termRef.symbol
-    assert(sym ne NoSymbol)
-
-    val qualVarName = {
-      val sb = StringBuilder.newBuilder
-
-      // TODO(gsps): Homogenize from PlainPrinter; factor out
-      def homogenize(tp: Type): Type = tp match {
-        case tp: ThisType if tp.cls.is(Package) && !tp.cls.isEffectiveRoot =>
-          ctx.requiredPackage(tp.cls.fullName).termRef
-        case tp: TypeVar if tp.isInstantiated =>
-          homogenize(tp.instanceOpt)
-        case AndType(tp1, tp2) =>
-          homogenize(tp1) & homogenize(tp2)
-        case OrType(tp1, tp2) =>
-          homogenize(tp1) | homogenize(tp2)
-        case tp: SkolemType =>
-          homogenize(tp.info)
-        case tp: LazyRef =>
-          homogenize(tp.ref)
-        case HKApply(tycon, args) =>
-          tycon.dealias.appliedTo(args)
-        case _ =>
-          tp
-      }
-
-      def refStr(tp: Type): Unit = homogenize(tp) match {
-        case tp: TermRef      =>
-          if (!ctx.settings.YtestPickler.value) prefixStr(tp.prefix)
-          sb.append(tp.name)
-        case tp: ThisType     => sb.append(tp.cls.name); sb.append(".this")
-        case tp: SuperType    => sb.append("Super(...)")  // FIXME?
-        case tp: TermParamRef => sb.append(tp.paramName)
-        case tp: SkolemType   => refStr(tp.underlying); sb.append("(?)")  // FIXME?
-        case tp: ConstantType => sb.append("cnst"); sb.append(tp.value.show)
-        case tp: RecThis      => sb.append("{...}.this")
-        case _ => throw new IllegalArgumentException(i"Unexpected type in TermRef prefix: $tp")
-      }
-
-      def prefixStr(tp: Type): Unit = homogenize(tp) match {
-        case NoPrefix                           => //
-        case _: SingletonType | _: TermParamRef => refStr(tp); sb.append(".")
-        case tp: TypeRef                        => prefixStr(tp.prefix); sb.append(tp.symbol.name); sb.append(".")
-        case _                                  => sb.append("{???}")  // FIXME?
-      }
-      refStr(termRef); sb.toString()
-    }
-
-    val subject = exState.getOrPutVar(termRef, () => {
-      // TODO: We actually want the position of the term carrying the TermRef here, no?
-      stSubject(qualVarName, termRef.widenTermRefExpr, sym.pos)
-    })
-    RefCExpr(subject)
-  }
-
-
-  def extractMethodParamQualifier(mp: TermParamRef): RefCExpr = {
-    val subject = exState.getOrPutVar(mp, () => {
-      stSubject(mp.paramName.toString, mp.underlying.widen)
-    })
-    RefCExpr(subject)
-  }
-
-  def extractQualifierSubjectQualifier(qs: QualifierSubject): RefCExpr = {
-    val subject = exState.getOrPutVar(qs, () => {
-      stSubject(qs.binder.subjectName.toString, qs.underlying.widen)
-    })
-    RefCExpr(subject)
   }
 
 
@@ -174,17 +144,15 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
     import ConstraintExpr.{Primitives => P}
 
     @inline def depParam(opTp: MethodType): TermParamRef = TermParamRef(opTp, 0)
-    /*@inline [Dotty hack]*/ def subject(opTp: MethodicType): st.Variable = stSubject("pv", opTp.resultType)
+    /*@inline [Dotty hack]*/ def subject(opTp: MethodicType): st.Variable = freshSubject("pv", opTp.resultType)
 
     def unaryPrim(opTp: ExprType, argTp1: Type, prim: ConstraintExpr.UnaryPrimitive): ExprType = {
-      val cExpr = UnaryPrimitiveCExpr(subject(opTp), argTp1, prim)
-      val qtp   = PrimitiveQType(opTp.resultType, cExpr)
+      val qtp = UnaryPrimitiveQType(opTp.resultType, prim, argTp1)
       opTp.derivedExprType(qtp)
     }
 
     def binaryPrim(opTp: MethodType, argTp1: Type, argTp2: Type, prim: ConstraintExpr.BinaryPrimitive): MethodType = {
-      val cExpr = BinaryPrimitiveCExpr(subject(opTp), argTp1, argTp2, prim)
-      val qtp   = PrimitiveQType(opTp.resultType, cExpr)
+      val qtp = BinaryPrimitiveQType(opTp.resultType, prim, argTp1, argTp2)
       opTp.derivedLambdaType(resType = qtp)
     }
 
@@ -245,23 +213,6 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
     tp1
   }
 
-
-  private def assertNoEscapingSubject(subjectSym: Symbol, qualTp: Type): Unit =
-    qualTp.foreachPart {
-      case tp: TermRef =>
-        assert(tp.symbol != subjectSym, i"Qualifier variable ${subjectSym.name} escapes from qualifier $qualTp")
-      case _ => //
-    }
-
-  def extractQualifier(qtp: ComplexQType, subjectVd: tpd.ValDef, qualifier: tpd.Tree): ComplexCExpr = {
-    val subjectSym = subjectVd.symbol
-    val subject    = stSubject(subjectVd.name.toString, subjectVd.tpt.tpe, qualifier.pos)
-    // TODO(gsps): Specialize subst for Type#subst(Symbol, Type)
-    val qualTp     = qualifier.tpe.subst(List(subjectSym), List(qtp.subject))
-    assertNoEscapingSubject(subjectSym, qualTp)
-    assert(qualTp.widenDealias == BooleanType, s"Expected Boolean qualifier, but found $qualTp")
-    ComplexCExpr(subject, qtp.subject, qualTp)
-  }
 
   /* To test:
 
@@ -338,10 +289,10 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 //      Set.empty
 //    ).setPos(pos)
 
-  final protected def freshVar(name: String, stainlessTp: st.Type, pos: Position): st.Variable =
+  final def freshVar(name: String, stainlessTp: st.Type, pos: Position): st.Variable =
     st.Variable(FreshIdentifier(name, alwaysShowUniqueID = false).setPos(pos), stainlessTp, Set.empty).setPos(pos)
 
-  final protected def freshVar(name: String, stainlessTp: st.Type): st.Variable =
+  final def freshVar(name: String, stainlessTp: st.Type): st.Variable =
     st.Variable.fresh(name, stainlessTp, alwaysShowUniqueID = false)
 
 

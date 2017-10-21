@@ -17,9 +17,7 @@ trait Substituters { this: Context =>
         if (tp.currentSymbol.isStatic) tp
         else tp.derivedSelect(subst(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val parent1 = subst(tp.parent, from, to, theMap)
-        val cExpr1 = tp.cExpr.subst(from, to)
-        (tp.derivedQualifiedType(parent1, cExpr1): Type)  // widening to avoid issue #2941
+        tp.map(subst(_, from, to, theMap))
       case _: ThisType | NoPrefix =>
         tp
       case _ =>
@@ -35,9 +33,7 @@ trait Substituters { this: Context =>
         if (sym.isStatic && !from.isStatic) tp
         else tp.derivedSelect(subst1(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val parent1 = subst1(tp.parent, from, to, theMap)
-        val cExpr1 = tp.cExpr.subst(List(from), List(to))
-        (tp.derivedQualifiedType(parent1, cExpr1): Type)  // widening to avoid issue #2941
+        tp.map(subst1(_, from, to, theMap))
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case tp: SkolemType if to.isInstanceOf[QualifierSubject] =>
@@ -58,9 +54,7 @@ trait Substituters { this: Context =>
         if (sym.isStatic && !from1.isStatic && !from2.isStatic) tp
         else tp.derivedSelect(subst2(tp.prefix, from1, to1, from2, to2, theMap))
       case tp: QualifiedType =>
-        val parent1 = subst2(tp.parent, from1, to1, from2, to2, theMap)
-        val cExpr1 = tp.cExpr.subst(List(from1, from2), List(to1, to2))
-        (tp.derivedQualifiedType(parent1, cExpr1): Type)  // widening to avoid issue #2941
+        tp.map(subst2(_, from1, to1, from2, to2, theMap))
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -83,9 +77,7 @@ trait Substituters { this: Context =>
         if (sym.isStatic && !existsStatic(from)) tp
         else tp.derivedSelect(subst(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val parent1 = subst(tp.parent, from, to, theMap)
-        val cExpr1 = tp.cExpr.subst(from, to)
-        (tp.derivedQualifiedType(parent1, cExpr1): Type)  // widening to avoid issue #2941
+        tp.map(subst(_, from, to, theMap))
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -116,9 +108,7 @@ trait Substituters { this: Context =>
           tp.derivedSelect(substDealias(tp.prefix, from, to, theMap))
         }
       case tp: QualifiedType =>
-        val parent1 = substDealias(tp.parent, from, to, theMap)
-        val cExpr1 = tp.cExpr.substDealias(from, to)
-        (tp.derivedQualifiedType(parent1, cExpr1): Type)  // widening to avoid issue #2941
+        tp.map(substDealias(_, from, to, theMap))
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -145,9 +135,7 @@ trait Substituters { this: Context =>
         if (sym.isStatic && !existsStatic(from)) tp
         else tp.derivedSelect(substSym(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val parent1 = substSym(tp.parent, from, to, theMap)
-        val cExpr1 = tp.cExpr.substSym(from, to)
-        (tp.derivedQualifiedType(parent1, cExpr1): Type)  // widening to avoid issue #2941
+        tp.map(substSym(_, from, to, theMap))
       case tp: ThisType =>
         val sym = tp.cls
         var fs = from
@@ -173,9 +161,7 @@ trait Substituters { this: Context =>
         if (tp.currentSymbol.isStaticOwner) tp
         else tp.derivedSelect(substThis(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val parent1 = substThis(tp.parent, from, to, theMap)
-        val cExpr1 = tp.cExpr.substThis(from, to)
-        (tp.derivedQualifiedType(parent1, cExpr1): Type)  // widening to avoid issue #2941
+        tp.map(substThis(_, from, to, theMap))
       case _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -191,9 +177,7 @@ trait Substituters { this: Context =>
         if (tp.currentSymbol.isStatic) tp
         else tp.derivedSelect(substRecThis(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val parent1 = substRecThis(tp.parent, from, to, theMap)
-        val cExpr1 = tp.cExpr.substRecThis(from, to)
-        (tp.derivedQualifiedType(parent1, cExpr1): Type)  // widening to avoid issue #2941
+        tp.map(substRecThis(_, from, to, theMap))
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -209,9 +193,7 @@ trait Substituters { this: Context =>
         if (tp.currentSymbol.isStatic) tp
         else tp.derivedSelect(substParam(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val parent1 = substParam(tp.parent, from, to, theMap)
-        val cExpr1 = tp.cExpr.substParam(from, to)
-        (tp.derivedQualifiedType(parent1, cExpr1): Type)  // widening to avoid issue #2941
+        tp.map(substParam(_, from, to, theMap))
       case _: ThisType | NoPrefix =>
         tp
       case _ =>
@@ -227,9 +209,7 @@ trait Substituters { this: Context =>
         if (tp.currentSymbol.isStatic) tp
         else tp.derivedSelect(substParams(tp.prefix, from, to, theMap))
       case tp: QualifiedType =>
-        val parent1 = substParams(tp.parent, from, to, theMap)
-        val cExpr1 = tp.cExpr.substParams(from, to)
-        (tp.derivedQualifiedType(parent1, cExpr1): Type)  // widening to avoid issue #2941
+        tp.map(substParams(_, from, to, theMap))
       case _: ThisType | NoPrefix =>
         tp
       case _ =>

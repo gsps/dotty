@@ -183,7 +183,12 @@ class PlainPrinter(_ctx: Context) extends Printer {
       case NoPrefix =>
         "<noprefix>"
       case tp: MethodType =>
-        def paramText(name: TermName, tp: Type) = toText(name) ~ ": " ~ toText(tp)
+        def paramText(name: TermName, tp: Type) =
+          toText(name) ~ ": " ~ (tp match {
+            case tp: ComplexQType =>
+              "{" ~ toText(tp.parent) ~ " ⇒ " ~ ConstraintExpr.prettyPrintExpr(tp, name.toString) ~ "}"
+            case _ => toText(tp)
+          })
         changePrec(GlobalPrec) {
           (if (tp.isImplicitMethod) "(implicit " else "(") ~
             Text((tp.paramNames, tp.paramInfos).zipped map paramText, ", ") ~
@@ -206,8 +211,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
       case tp: PrimitiveQType =>
         val exprText = ConstraintExpr.prettyPrintExpr(tp, useValExpr = true)
         "(" ~ exprText ~ ").type"
-      case tp @ ComplexQType(parent, subjectName) =>
-        val exprText = ConstraintExpr.prettyPrintExpr(tp)
+      case tp @ ComplexQType(subjectName, parent) =>
+        val exprText = ConstraintExpr.prettyPrintExpr(tp, subjectName.toString)
         "{" ~ toText(subjectName) ~ ": " ~ toText(parent) ~ " ⇒ " ~ exprText ~ "}"
       case AppliedType(tycon, args) =>
         toTextLocal(tycon) ~ "[" ~ Text(args.map(argText), ", ") ~ "]"

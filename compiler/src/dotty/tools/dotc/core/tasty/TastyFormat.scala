@@ -396,15 +396,11 @@ object TastyFormat {
   final val TYPEARGtype = 176
   final val TERMREFin = 177
   final val TYPEREFin = 178
-  final val PRIMITIVEQtype = 179
-  final val COMPLEXQtype = 180
-  final val COMPLEXQtpt = 181
-  final val COMPLEXQsubject = 182
-
-  /* Constraint expressions */
-  final val QTYPEcexpr = 1
-  final val UNARYPRIMcexpr = 2
-  final val BINARYPRIMcexpr = 3
+  final val UNARYPRIMITIVEQtype = 179
+  final val BINARYPRIMITIVEQtype = 180
+  final val COMPLEXQtype = 181
+  final val COMPLEXQtpt = 182
+  final val COMPLEXQsubject = 183
 
   /* Stainless types */
   final val UNTYPEDsttp = 1
@@ -618,7 +614,8 @@ object TastyFormat {
     case ANNOTATION => "ANNOTATION"
     case PRIVATEqualified => "PRIVATEqualified"
     case PROTECTEDqualified => "PROTECTEDqualified"
-    case PRIMITIVEQtype => "PRIMITIVEQtype"
+    case UNARYPRIMITIVEQtype => "UNARYPRIMITIVEQtype"
+    case BINARYPRIMITIVEQtype => "BINARYPRIMITIVEQtype"
     case COMPLEXQtype => "COMPLEXQtype"
     case COMPLEXQtpt => "COMPLEXQtpt"
     case COMPLEXQsubject => "COMPLEXQsubject"

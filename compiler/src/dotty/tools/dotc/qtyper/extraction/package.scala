@@ -8,8 +8,6 @@ import core.Symbols.Symbol
   * Created by gs on 20.03.17.
   */
 package object extraction {
-  class ExtractionException(msg: String) extends Exception(msg)
-
 
   def defaultInoxCtx = {
     val reporter = new inox.Reporter(Set.empty) { override def emit(msg: Message): Unit = {} }

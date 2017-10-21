@@ -38,7 +38,7 @@ import language.implicitConversions
 import scala.util.hashing.{ MurmurHash3 => hashing }
 import config.Printers.{core, typr, cyclicErrors}
 import java.lang.ref.WeakReference
-import qtyper.extraction.{ConstraintExpr, RefCExpr, ConstantCExpr, SkolemCExpr, PrimitiveCExpr, ComplexCExpr}
+import qtyper.extraction.ConstraintExpr
 
 object Types {
 
@@ -97,10 +97,6 @@ object Types {
 //        println("foo")
       nextId
     }
-
-    /** What is the extracted representation of this type? */
-    def cExpr(implicit ctx: Context): ConstraintExpr =
-      ctx.qualifierExtraction.extractTrivialQualifier(this)
 
     /** Is this type different from NoType? */
     def exists: Boolean = true
@@ -1479,6 +1475,9 @@ object Types {
     def isOverloaded(implicit ctx: Context) = false
   }
 
+  /** A marker trait for types that a references to some binding. */
+  trait RefType extends SingletonType
+
   /** A marker trait for types that bind other types that refer to them.
    *  Instances are: LambdaType, RecType.
    */
@@ -1961,7 +1960,7 @@ object Types {
     */
   }
 
-  abstract case class TermRef(override val prefix: Type, designator: TermDesignator) extends NamedType with SingletonType {
+  abstract case class TermRef(override val prefix: Type, designator: TermDesignator) extends NamedType with RefType {
 
     type ThisType = TermRef
     type ThisName = TermName
@@ -2137,8 +2136,6 @@ object Types {
       case that: ThisType => tref.eq(that.tref)
       case _ => false
     }
-
-    // TODO (gsps): Override cExpr
   }
 
   final class CachedThisType(tref: TypeRef) extends ThisType(tref)
@@ -2167,8 +2164,6 @@ object Types {
       case that: SuperType => thistpe.eq(that.thistpe) && supertpe.eq(that.supertpe)
       case _ => false
     }
-
-    // TODO (gsps): Override cExpr
   }
 
   final class CachedSuperType(thistpe: Type, supertpe: Type) extends SuperType(thistpe, supertpe)
@@ -2185,13 +2180,6 @@ object Types {
     override def underlying(implicit ctx: Context) = value.tpe
 
     override def computeHash = doHash(value)
-
-    private[this] var myCExpr: ConstraintExpr = _
-    override def cExpr(implicit ctx: Context): ConstraintExpr = {
-      if (myCExpr == null)
-        myCExpr = ctx.qualifierExtraction.extractConstantQualifier(this)
-      myCExpr
-    }
   }
 
   final class CachedConstantType(value: Constant) extends ConstantType(value)
@@ -2691,7 +2679,6 @@ object Types {
     private[this] var myParamDependencyStatus: DependencyStatus = Unknown
 
     private def depStatus(initial: DependencyStatus, tp: Type)(implicit ctx: Context): DependencyStatus = {
-      import qtyper.extraction.ExtDep
       def combine(x: DependencyStatus, y: DependencyStatus) = {
         val status = (x & StatusMask) max (y & StatusMask)
         val provisional = (x | y) & Provisional
@@ -3251,16 +3238,9 @@ object Types {
   /** Only created in `binder.paramRefs`. Use `binder.paramRefs(paramNum)` to
    *  refer to `TermParamRef(binder, paramNum)`.
    */
-  abstract case class TermParamRef(binder: TermLambda, paramNum: Int) extends ParamRef with SingletonType {
+  abstract case class TermParamRef(binder: TermLambda, paramNum: Int) extends ParamRef with RefType {
     type BT = TermLambda
     def copyBoundType(bt: BT) = bt.paramRefs(paramNum)
-
-    private[this] var myCExpr: RefCExpr = _
-    override def cExpr(implicit ctx: Context): RefCExpr = {
-      if (myCExpr == null)
-        myCExpr = ctx.qualifierExtraction.extractMethodParamQualifier(this)
-      myCExpr
-    }
   }
 
   /** Only created in `binder.paramRefs`. Use `binder.paramRefs(paramNum)` to
@@ -3306,8 +3286,6 @@ object Types {
       catch {
         case ex: NullPointerException => s"RecThis(<under construction>)"
       }
-
-    // TODO (gsps): Override cExpr
   }
 
   /** Represents the type of the subject variable in a ComplexQType's qualifier tree. */
@@ -3324,13 +3302,6 @@ object Types {
     override def equals(that: Any) = that match {
       case that: QualifierSubject => this.binder eq that.binder
       case _ => false
-    }
-
-    private[this] var myCExpr: RefCExpr = _
-    override def cExpr(implicit ctx: Context): RefCExpr = {
-      if (myCExpr == null)
-        myCExpr = ctx.qualifierExtraction.extractQualifierSubjectQualifier(this)
-      myCExpr
     }
   }
 
@@ -3353,8 +3324,6 @@ object Types {
     }
 
     override def toString = s"Skolem($hashCode)"
-
-    override def cExpr(implicit ctx: Context): ConstraintExpr = SkolemCExpr(info)
   }
 
   // ------------ Type variables ----------------------------------------
@@ -3560,8 +3529,6 @@ object Types {
           assert(denot.symbol.asClass == cls)
           cls.enter(precSym, decls)
         }
-        def enterSame(sym: Symbol): Unit =
-          enterPrecise(sym, sym.info)
 
         if (ctx.definitions.QTypePrimitiveClasses().contains(cls)) {
           for (primName <- nme.QTypePrimitiveOpNames)
@@ -3571,10 +3538,6 @@ object Types {
               enterPrecise(sym, augTp)
             }
 
-          // Also add not-actually-more-precise versions of Any.{==,!=,equals}(Any)
-          enterSame(defn.Any_==.symbol)
-          enterSame(defn.Any_!=.symbol)
-          enterSame(defn.Any_equals.symbol)
         }
       case _ => //
     }
@@ -3673,9 +3636,6 @@ object Types {
       case that: TypeAlias => alias.eq(that.alias)
       case _ => false
     }
-
-    // FIXME (gsps): Unsound in case variance != 0?
-    override def cExpr(implicit ctx: Context): ConstraintExpr = alias.cExpr
   }
 
   class CachedTypeAlias(alias: Type) extends TypeAlias(alias)
@@ -3718,80 +3678,95 @@ object Types {
   // ----- Qualified types ----------------------------------------------------------
 
   /** An qualified type tpe with expr */
-  abstract class QualifiedType(val parent: Type) extends UncachedProxyType with BindingType with ValueType
-  { self =>
-    /* [Dotty hack]
-    type CExpr >: Null <: ConstraintExpr { type ThisCExpr <: self.CExpr }
-    type This >: this.type <: QualifiedType { type CExpr <: self.CExpr }
-    */
-    type CExpr = ConstraintExpr
-    type This = QualifiedType
+  abstract class QualifiedType(val parent: Type) extends UncachedProxyType with ValueType {
+    type This <: QualifiedType
 
     override def underlying(implicit ctx: Context): Type = parent
 
-    override def cExpr(implicit ctx: Context): CExpr = ???
-
-    def newLikeThis(parent: Type, cExpr: CExpr)(implicit ctx: Context): This
-
-    def derivedQualifiedType(parent: Type, cExpr: CExpr)(implicit ctx: Context): This =
-      if ((parent eq this.parent) && (cExpr eq this.cExpr)) this
-      else newLikeThis(parent, cExpr)
-
-    override def toString = s"QualifiedType($parent, ...)"
+    final def map(f: Type => Type)(implicit ctx: Context): This = (this match {
+      case tp: ComplexQType         => tp.derivedQualifiedType(f(tp.subjectTp), f(tp.qualifierTp))
+      case tp: UnaryPrimitiveQType  => tp.derivedQualifiedType(f(tp.parent), f(tp.tp1))
+      case tp: BinaryPrimitiveQType => tp.derivedQualifiedType(f(tp.parent), f(tp.tp1), f(tp.tp2))
+    }).asInstanceOf[This]
   }
 
-  case class ComplexQType(override val parent: Type, subjectName: TermName)(
-    cExprBuilder: ComplexQType => ComplexCExpr)
-    extends QualifiedType(parent)
+  case class ComplexQType(subjectName: TermName, subjectTp: Type)(qualifierTpBuilder: ComplexQType => Type)
+    extends QualifiedType(subjectTp) with BindingType
   {
-    /* [Dotty hack]
-    type CExpr = ComplexCExpr
     type This = ComplexQType
-    */
-
-    private var myCExpr: CExpr = _
-    override def cExpr(implicit ctx: Context): CExpr = {
-      if (myCExpr == null)
-        myCExpr = cExprBuilder(this)
-      myCExpr
-    }
-
-    def newLikeThis(parent: Type, cExpr: CExpr)(implicit ctx: Context): This =  // [Dotty hack]
-      ComplexQType(parent, this.subjectName){ newQtp => cExpr.subst(this, newQtp).asInstanceOf[ComplexCExpr] }
 
     val subject: QualifierSubject = QualifierSubject(this)
+    val qualifierTp: Type = qualifierTpBuilder(this)
+
+    def derivedQualifiedType(subjectTp: Type, qualifierTp: Type)(implicit ctx: Context): This =
+      if ((subjectTp eq this.subjectTp) && (qualifierTp eq this.qualifierTp)) this
+      else ComplexQType(this.subjectName, subjectTp)(newQtp => qualifierTp.subst(this, newQtp))
 
     override def equals(that: Any): Boolean = that match {
-      case that: ComplexQType if this.myCExpr != null && that.myCExpr != null =>
-        (this.parent == that.parent) && (this.myCExpr == that.myCExpr)
-      case _ =>
-        false
+      case that: ComplexQType => (this.subjectTp == that.subjectTp) && (this.qualifierTp == that.qualifierTp)
+      case _                  => false
     }
 
-    override def toString = s"ComplexQType($parent, $subjectName, $myCExpr)"
+    override def toString = s"ComplexQType($subjectName, $subjectTp, $qualifierTp)"
   }
 
   object ComplexQType {
     // TODO: Caching for ComplexQTypes?
 
-    def apply(subject: ValDef, qualifier: Tree)(implicit ctx: Context) =
-      new ComplexQType(subject.tpt.tpe, subject.name)(ctx.qualifierExtraction.extractQualifier(_, subject, qualifier))
+    private def assertNoEscapingSubject(subjectSym: Symbol, qualTp: Type)(implicit ctx: Context): Unit =
+      qualTp.foreachPart {
+        case tp: TermRef =>
+          assert(tp.symbol != subjectSym, i"Qualifier variable ${subjectSym.name} escapes from qualifier $qualTp")
+        case _ => //
+      }
+
+    def apply(subjectVd: ValDef, qualifier: Tree)(implicit ctx: Context): ComplexQType = {
+      ComplexQType(subjectVd.name, subjectVd.tpt.tpe)({ qtp =>
+        val subjectSym  = subjectVd.symbol
+        val qualifierTp = qualifier.tpe.subst(List(subjectSym), List(qtp.subject))
+        assertNoEscapingSubject(subjectSym, qualifierTp)
+        assert(qualifierTp.widenDealias == defn.BooleanType, s"Expected Boolean qualifier, but found $qualifierTp")
+        qualifierTp
+      })
+    }
   }
 
-  case class PrimitiveQType(override val parent: Type, primCExpr: PrimitiveCExpr)
-    extends QualifiedType(parent)
+  abstract class PrimitiveQType(parent: Type) extends QualifiedType(parent)
+
+  case class UnaryPrimitiveQType(override val parent: Type, prim: ConstraintExpr.UnaryPrimitive, tp1: Type)
+    extends PrimitiveQType(parent)
   {
-    /* [Dotty hack]
-    type CExpr = PrimitiveCExpr
-    type This = PrimitiveQType
-    */
+    type This = UnaryPrimitiveQType
 
-    override def cExpr(implicit ctx: Context): CExpr = primCExpr
+    def derivedQualifiedType(parent: Type, tp1: Type)(implicit ctx: Context): This =
+      if ((parent eq this.parent) && (tp1 eq this.tp1)) this
+      else UnaryPrimitiveQType(parent, this.prim, tp1)
 
-    def newLikeThis(parent: Type, primCExpr: CExpr)(implicit ctx: Context): This =  // [Dotty hack]
-      PrimitiveQType(parent, primCExpr.asInstanceOf[PrimitiveCExpr])
+    override def equals(that: Any): Boolean = that match {
+      case that: UnaryPrimitiveQType =>
+        (this.parent == that.parent) && (this.prim == that.prim) && (this.tp1 == that.tp1)
+      case _ => false
+    }
 
-    override def toString = s"PrimitiveQType($parent, $primCExpr)"
+    override def toString = s"UnaryPrimitiveQType($parent, $prim, $tp1)"
+  }
+
+  case class BinaryPrimitiveQType(override val parent: Type, prim: ConstraintExpr.BinaryPrimitive, tp1: Type, tp2: Type)
+    extends PrimitiveQType(parent)
+  {
+    type This = BinaryPrimitiveQType
+
+    def derivedQualifiedType(parent: Type, tp1: Type, tp2: Type)(implicit ctx: Context): This =
+      if ((parent eq this.parent) && (tp1 eq this.tp1) && (tp2 eq this.tp2)) this
+      else BinaryPrimitiveQType(parent, this.prim, tp1, tp2)
+
+    override def equals(that: Any): Boolean = that match {
+      case that: BinaryPrimitiveQType =>
+        (this.parent == that.parent) && (this.prim == that.prim) && (this.tp1 == that.tp1) && (this.tp2 == that.tp2)
+      case _ => false
+    }
+
+    override def toString = s"BinaryPrimitiveQType($parent, $prim, $tp1, $tp2)"
   }
 
   // Special type objects and classes -----------------------------------------------------
@@ -3986,8 +3961,12 @@ object Types {
       tp.derivedAndOrType(tp1, tp2)
     protected def derivedAnnotatedType(tp: AnnotatedType, underlying: Type, annot: Annotation): Type =
       tp.derivedAnnotatedType(underlying, annot)
-    protected def derivedQualifiedType(tp: QualifiedType, parent: Type)(cExpr: tp.CExpr): Type =
-      tp.derivedQualifiedType(parent, cExpr)
+    protected def derivedComplexQType(tp: ComplexQType, subjectTp: Type, qualifierTp: Type): Type =
+      tp.derivedQualifiedType(subjectTp, qualifierTp)
+    protected def derivedUnaryPrimitiveQType(tp: UnaryPrimitiveQType, parent: Type, tp1: Type): Type =
+      tp.derivedQualifiedType(parent, tp1)
+    protected def derivedBinaryPrimitiveQType(tp: BinaryPrimitiveQType, parent: Type, tp1: Type, tp2: Type): Type =
+      tp.derivedQualifiedType(parent, tp1, tp2)
     protected def derivedWildcardType(tp: WildcardType, bounds: Type): Type =
       tp.derivedWildcardType(bounds)
     protected def derivedClassInfo(tp: ClassInfo, pre: Type): Type =
@@ -4091,10 +4070,14 @@ object Types {
           if (underlying1 eq underlying) tp
           else derivedAnnotatedType(tp, underlying1, mapOver(annot))
 
-        case tp: QualifiedType =>
-          // TODO(gsps): Evaluate the performance impact of mapping over the cExpr's dependencies here.
-          val cExpr1: tp.CExpr = tp.cExpr.mapScope(this)
-          derivedQualifiedType(tp, this(tp.parent))(cExpr1)
+        case tp: ComplexQType =>
+          derivedComplexQType(tp, this(tp.subjectTp), this(tp.qualifierTp))
+
+        case tp: UnaryPrimitiveQType =>
+          derivedUnaryPrimitiveQType(tp, this(tp.parent), this(tp.tp1))
+
+        case tp: BinaryPrimitiveQType =>
+          derivedBinaryPrimitiveQType(tp, this(tp.parent), this(tp.tp1), this(tp.tp2))
 
         case tp: WildcardType =>
           derivedWildcardType(tp, mapOver(tp.optBounds))
@@ -4457,10 +4440,14 @@ object Types {
       case AnnotatedType(underlying, annot) =>
         this(applyToAnnot(x, annot), underlying)
 
-      case tp: QualifiedType =>
-        // TODO(gsps): Evaluate the performance impact of folding over the qualifier trees here.
-        val x1 = this(x, tp.parent)
-        tp.cExpr.scope.foldLeft(x1) { (x, dep) => this(x, dep.tp) }
+      case tp: ComplexQType =>
+        this(this(x, tp.subjectTp), tp.qualifierTp)
+
+      case tp: UnaryPrimitiveQType =>
+        this(this(x, tp.parent), tp.tp1)
+
+      case tp: BinaryPrimitiveQType =>
+        this(this(this(x, tp.parent), tp.tp1), tp.tp2)
 
       case tp: ProtoType =>
         tp.fold(x, this)
