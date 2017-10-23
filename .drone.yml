@@ -24,12 +24,12 @@ pipeline:
 #      - ./project/scripts/sbt dotty-bootstrapped/testAll
 #      - ./project/scripts/sbt ";dotty-bench-bootstrapped/jmh:run 1 1 tests/run/arrays.scala"
 
-  test_optimised:
-    group: test
-    image: gsps/dotty:2017-09-08
-    commands:
-      - cp -R . /tmp/3/ && cd /tmp/3/
-      - ./project/scripts/sbt dotty-optimised/testAll
+#  test_optimised:
+#    group: test
+#    image: gsps/dotty:2017-09-08
+#    commands:
+#      - cp -R . /tmp/3/ && cd /tmp/3/
+#      - ./project/scripts/sbt dotty-optimised/testAll
 
   test_sbt:
     group: test
@@ -38,8 +38,8 @@ pipeline:
       - cp -R . /tmp/4/ && cd /tmp/4/
       - ./project/scripts/sbt sbt-dotty/scripted
     when:
-      # sbt scripted tests are slow and don't run on PRs
-      event: [ push, tag, deployment ]
+      # sbt scripted tests are slow and don't run on PRs or pushes
+      event: [ tag, deployment ]
 
   # DOCUMENTATION:
   documentation:
