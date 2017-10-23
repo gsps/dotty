@@ -1110,14 +1110,14 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
   }
 
   protected def extractType(tpt: Type)(implicit dctx: DefContext, pos: Position): trees.Type = tpt match {
-    case tpe if tpe.typeSymbol == defn.CharClass    => trees.CharType
-    case tpe if tpe.typeSymbol == defn.IntClass     => trees.Int32Type
-    case tpe if tpe.typeSymbol == defn.BooleanClass => trees.BooleanType
-    case tpe if tpe.typeSymbol == defn.UnitClass    => trees.UnitType
+    case tpe if tpe.typeSymbol == defn.CharClass    => trees.CharType()
+    case tpe if tpe.typeSymbol == defn.IntClass     => trees.Int32Type()
+    case tpe if tpe.typeSymbol == defn.BooleanClass => trees.BooleanType()
+    case tpe if tpe.typeSymbol == defn.UnitClass    => trees.UnitType()
 
-    case tpe if isBigIntSym(tpe.typeSymbol) => trees.IntegerType
-    case tpe if isRealSym(tpe.typeSymbol)   => trees.RealType
-    case tpe if isStringSym(tpe.typeSymbol) => trees.StringType
+    case tpe if isBigIntSym(tpe.typeSymbol) => trees.IntegerType()
+    case tpe if isRealSym(tpe.typeSymbol)   => trees.RealType()
+    case tpe if isStringSym(tpe.typeSymbol) => trees.StringType()
 
     case ct: ConstantType => extractType(ct.value.tpe)
 

@@ -88,11 +88,12 @@ trait TypeAssigner {
   def avoid(tp: Type, symsToAvoid: => List[Symbol])(implicit ctx: Context): Type = {
     val widenMap = new ApproximatingTypeMap {
       lazy val forbidden = symsToAvoid.toSet
-      def toAvoid(sym: Symbol) = !sym.isStatic && forbidden.contains(sym)
+      def toAvoid(sym: Symbol): Boolean = !sym.isStatic && forbidden.contains(sym)
       def partsToAvoid = new NamedPartsAccumulator(tp => toAvoid(tp.symbol))
+      def toAvoid(tp: Type): Boolean = partsToAvoid(mutable.Set.empty, tp).nonEmpty
       def apply(tp: Type): Type = tp match {
         case tp: TermRef
-        if toAvoid(tp.symbol) || partsToAvoid(mutable.Set.empty, tp.info).nonEmpty =>
+        if toAvoid(tp.symbol) || toAvoid(tp.info) =>
           tp.info.widenExpr match {
             case info: SingletonType => apply(info)
             case info => range(tp.info.bottomType, apply(info))
@@ -115,10 +116,10 @@ trait TypeAssigner {
           else
             tp
         case tp: UnaryPrimitiveQType =>
-          assert(!toAvoid(tp.parent))  // Only primitive classes occur as parents
+          assert(!toAvoid(tp.parent.classSymbol))  // Only primitive classes occur as parents
           if (toAvoid(tp.tp1)) tp.parent else tp
         case tp: BinaryPrimitiveQType =>
-          assert(!toAvoid(tp.parent))  // Only primitive classes occur as parents
+          assert(!toAvoid(tp.parent.classSymbol))  // Only primitive classes occur as parents
           if (toAvoid(tp.tp1) || toAvoid(tp.tp2)) tp.parent else tp
 
         case tp: ThisType if toAvoid(tp.cls) =>

@@ -55,10 +55,10 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   // TODO(gsps): Convert DottyExtraction to support st. directly (instead of stainless.extraction.oo.trees.)
   def stType(tp: Type, pos: Position = NoPosition): st.Type = {
     stainlessType(tp)(emptyDefContext, pos) match {
-      case trees.Untyped      => st.Untyped
-      case trees.BooleanType  => st.BooleanType
-      case trees.UnitType     => st.UnitType
-      case trees.Int32Type    => st.Int32Type
+      case trees.Untyped        => st.Untyped
+      case trees.BooleanType()  => st.BooleanType()
+      case trees.UnitType()     => st.UnitType()
+      case trees.Int32Type()    => st.Int32Type()
 //      case stTp => throw new NotImplementedError(s"Cannot extract stainless type of $tp @ $stTp")
       case _ => st.Untyped
     }
@@ -67,7 +67,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   def stLiteral(ctp: ConstantType): st.Literal[_] = ctp.value.value match {
     case _: Unit    => st.UnitLiteral()
     case x: Boolean => st.BooleanLiteral(x)
-    case x: Int     => st.IntLiteral(x)
+    case x: Int     => st.Int32Literal(x)
     case _ => throw new NotImplementedError(i"Missing constant qualifier extraction for type $ctp")
   }
 
@@ -102,7 +102,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
               homogenize(tp.info)
             case tp: LazyRef =>
               homogenize(tp.ref)
-            case HKApply(tycon, args) =>
+            case AppliedType(tycon, args) =>
               tycon.dealias.appliedTo(args)
             case _ =>
               tp
@@ -143,7 +143,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   def refinePrimitive(clazz: ClassSymbol, opName: Name, opTp: Type): Type = {
     import ConstraintExpr.{Primitives => P}
 
-    @inline def depParam(opTp: MethodType): TermParamRef = TermParamRef(opTp, 0)
+    @inline def depParam(opTp: MethodType): TermParamRef = opTp.newParamRef(0)
     /*@inline [Dotty hack]*/ def subject(opTp: MethodicType): st.Variable = freshSubject("pv", opTp.resultType)
 
     def unaryPrim(opTp: ExprType, argTp1: Type, prim: ConstraintExpr.UnaryPrimitive): ExprType = {
@@ -290,7 +290,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 //    ).setPos(pos)
 
   final def freshVar(name: String, stainlessTp: st.Type, pos: Position): st.Variable =
-    st.Variable(FreshIdentifier(name, alwaysShowUniqueID = false).setPos(pos), stainlessTp, Set.empty).setPos(pos)
+    st.Variable(FreshIdentifier(name, alwaysShowUniqueID = false), stainlessTp, Set.empty).setPos(pos)
 
   final def freshVar(name: String, stainlessTp: st.Type): st.Variable =
     st.Variable.fresh(name, stainlessTp, alwaysShowUniqueID = false)

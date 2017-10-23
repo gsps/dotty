@@ -43,7 +43,6 @@ object ConstraintChecker {
 
   private def getProgram(fds: Seq[trees.FunDef]): StainlessProgram = {
     new inox.Program {
-      val ctx = defaultInoxCtx
       val trees: stainless.trees.type = stainless.trees
       val symbols = trees.NoSymbols.withFunctions(fds)
     }
@@ -96,9 +95,11 @@ object ConstraintChecker {
 
 
   private def checkVC(program: StainlessProgram)(vc: program.trees.Expr): CStatus[program.Model] = { // ~40ms
+    val ctx = defaultInoxCtx
+
     import inox.solvers.SolverResponses._
     val s = timeMe("sf & sf.getNewSolver") { // ~5ms
-      val sf = solvers.SolverFactory.default(program)
+      val sf = solvers.SolverFactory(program, ctx)
       sf.getNewSolver
     }
 
@@ -118,7 +119,7 @@ object ConstraintChecker {
 
       val timer = ctx.timers.verification.start()
 
-      val cstatus = { //try {
+      val cstatus = try {
         timeMe("s.assertCnstr") { s.assertCnstr(Not(cond)) } // ~15ms
 
         val res = timeMe("s.check(Model)") { s.check(Model) } // ~15ms
@@ -150,9 +151,9 @@ object ConstraintChecker {
 //          val time = if (t.isRunning) t.stop else t.runs.last
 //          ctx.reporter.warning(u.getMessage)
 //          VCResult(VCStatus.Unsupported, Some(s), Some(time))
+      } finally {
+        if (timer.isRunning) timer.stop()
       }
-
-      val time = timer.stop()
 
       ctx.reporter.synchronized { // ~1ms
         cstatus match {
