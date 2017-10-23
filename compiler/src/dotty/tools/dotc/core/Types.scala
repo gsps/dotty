@@ -2010,13 +2010,6 @@ object Types {
           else designator
         fixDenot(TermRef(prefix, designator1), prefix)
     }
-
-    private[this] var myCExpr: RefCExpr = _
-    override def cExpr(implicit ctx: Context): RefCExpr = {
-      if (myCExpr == null)
-        myCExpr = ctx.qualifierExtraction.extractTermRefQualifier(this)
-      myCExpr
-    }
   }
 
   abstract case class TypeRef(override val prefix: Type, designator: TypeDesignator) extends NamedType {
@@ -2028,8 +2021,6 @@ object Types {
 
     def withPrefix(prefix: Type)(implicit ctx: Context): NamedType =
       TypeRef(prefix, designator)
-
-    override def cExpr(implicit ctx: Context): ConstraintExpr = info.cExpr
   }
 
   final class CachedTermRef(prefix: Type, designator: TermDesignator, hc: Int) extends TermRef(prefix, designator) {
@@ -3226,13 +3217,6 @@ object Types {
       catch {
         case ex: IndexOutOfBoundsException => s"ParamRef(<bad index: $paramNum>)"
       }
-
-    private[this] var myCExpr: TermRefCExpr = _
-    override def cExpr(implicit ctx: Context): TermRefCExpr = {
-      if (myCExpr == null)
-        myCExpr = ctx.qualifierExtraction.extractMethodParam(this)
-      myCExpr
-    }
   }
 
   /** Only created in `binder.paramRefs`. Use `binder.paramRefs(paramNum)` to

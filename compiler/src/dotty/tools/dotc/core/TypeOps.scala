@@ -60,7 +60,7 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
             if (sym.isStatic) tp
             else derivedSelect(tp, atVariance(variance max 0)(this(tp.prefix)))
           case tp: QualifiedType =>
-            tp.map(asSeenFrom(_, pre, cls, theMap))
+            tp.map(apply)
           case tp: ThisType =>
             toPrefix(pre, cls, tp.cls)
           case _: BoundType | NoPrefix =>
