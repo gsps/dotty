@@ -59,8 +59,10 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
       case trees.BooleanType()  => st.BooleanType()
       case trees.UnitType()     => st.UnitType()
       case trees.Int32Type()    => st.Int32Type()
-//      case stTp => throw new NotImplementedError(s"Cannot extract stainless type of $tp @ $stTp")
-      case _ => st.Untyped
+      case stTp =>
+//        throw new DottyExtraction.ImpureCodeEncounteredException(pos,
+//          s"Cannot extract stainless type of $tp @ $stTp", None)
+        st.Untyped
     }
   }
 
@@ -171,7 +173,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
           case nme.UNARY_! => P.Not
           case _ => ???
         }
-        unaryPrim(opTp, BooleanClass.thisType, prim)
+        unaryPrim(opTp, clazz.thisType, prim)
 
       case (BooleanClass, _, opTp @ MethodTpe(_, List(_), resTp)) =>
         val prim = opName match {

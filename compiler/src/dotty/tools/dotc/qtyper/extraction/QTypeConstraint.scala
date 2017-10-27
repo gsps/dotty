@@ -4,7 +4,7 @@ package qtyper.extraction
 import core.Contexts._
 import core.Decorators._
 import core.Types._
-import config.Printers.qtypes
+import config.Printers.{noPrinter, qtypes}
 
 import stainless.{trees => st}
 
@@ -55,7 +55,7 @@ object QTypeConstraint {
 
     def printExprs(intTypes: Map[st.Variable, Type],
                    subject: st.Variable, vc: st.Expr) = {
-      val scopeStr = intTypes.map { case (v, tp) => i"$v:  $tp" }.mkString("\n\t\t")
+      val scopeStr = intTypes.map { case (v, tp) => i"$v [${v.getType(st.NoSymbols)}]:  $tp" }.mkString("\n\t\t")
       qtypes.println(
         i"""
            |Qualified Type subtyping check:
@@ -88,10 +88,14 @@ object QTypeConstraint {
       extExtractions <- buildAllExt(pcExts union exts1 union exts2)
 
     } yield {
-      val anteExprs =
-        ((pcExtractions ++ extExtractions).flatMap(_.intCnstrs) ++ intCnstrs1 ++ (intCnstrs2 - subject)).toMap
+      val pcSubjectExpr = st.andJoin(pcExtractions.map(_.intCnstrs(pcSubject)))
+      val anteExprs = {
+        (pcExtractions ++ extExtractions).flatMap(_.intCnstrs) ++
+          intCnstrs1 ++
+          (intCnstrs2 - subject)
+      }.toMap + (pcSubject -> pcSubjectExpr)
       val vc = st.Implies(st.and(pcSubject, st.andJoin(anteExprs.values.toSeq)), intCnstrs2(subject))
-      if (ctx.settings.XlogQtypes.value) {
+      if (qtypes ne noPrinter) {
         val intTypes = ((pcExtractions ++ extExtractions).flatMap(_.intTypes) ++ intTypes1 ++ intTypes2).toMap
         printExprs(intTypes, subject, vc)
       }
@@ -142,10 +146,15 @@ object ExprBuilder {
         case tp: QualifierSubject =>
           Left(subject)
 
-        case tp: RefType =>
+        case tp: RefType if tp.isStable =>
           val subject = qex.refSubject(tp)
           exts += tp
           Right(subject)  // treat this subject as un-renamable
+
+        case tp: RefType =>
+          val tpNoTermRef = tp.widenTermRefExpr
+          assert(tp ne tpNoTermRef, i"Needed $tp to be widened, but didnt change")
+          buildExpr(tpNoTermRef, subjectOpt)
 
         case ctp: ConstantType =>
           val lit = qex.stLiteral(ctp)
