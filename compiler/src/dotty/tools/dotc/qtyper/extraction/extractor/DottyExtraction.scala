@@ -55,10 +55,6 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
 */
 
 
-  /** An exception thrown when non-stainless compatible code is encountered. */
-  sealed class ImpureCodeEncounteredException(val pos: Position, msg: String, val ot: Option[tpd.Tree])
-    extends Exception(msg)
-
   def outOfSubsetError(pos: Position, msg: String) = {
     throw new ImpureCodeEncounteredException(pos, msg, None)
   }
@@ -1208,6 +1204,8 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
 
     case QualifierSubject(qtp) => extractType(qtp.subjectTp)
 
+    case qtp: QualifiedType => extractType(qtp.parent)
+
     /** ==> Dotty types that we may or may not wanna handle in special ways, but will just widen for now: */
 
     case tp: SkolemType => extractType(tp.underlying)
@@ -1237,6 +1235,10 @@ abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(
 }
 
 object DottyExtraction {
+  /** An exception thrown when non-stainless compatible code is encountered. */
+  sealed class ImpureCodeEncounteredException(val pos: Position, msg: String, val ot: Option[tpd.Tree])
+    extends Exception(msg)
+
   implicit def dottyPosToInoxPos(p: Position)(implicit ctx: Context): inox.utils.Position = {
     if (!p.exists) {
       inox.utils.NoPosition

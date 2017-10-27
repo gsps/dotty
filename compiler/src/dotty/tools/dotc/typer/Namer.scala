@@ -6,7 +6,7 @@ import core._
 import ast._
 import Trees._, Constants._, StdNames._, Scopes._, Denotations._, Comments._
 import Contexts._, Symbols._, Types._, SymDenotations._, Names._, NameOps._, Flags._, Decorators._
-import NameKinds.DefaultGetterName
+import NameKinds.{DefaultGetterName, EvidenceParamName}
 import ast.desugar, ast.desugar._
 import ProtoTypes._
 import util.Positions._
@@ -395,6 +395,23 @@ class Namer { typer: Typer =>
     }
     localCtx
   }
+
+  /** A new context for a DefDef that activates precise typing if needed and adapts the path condition. */
+  def adaptMethodContextPrecision(tree: Tree, paramss: List[List[Symbol]])(implicit ctx: Context): Context =
+    tree match {
+      case tree: DefDef if ctx.settings.Xqtypes.value =>
+        // TODO(gsps): Enable only in particular user-annotated methods
+        val preciseCtx: FreshContext = ctx.fresh.addMode(Mode.PreciseTyping)
+        for { params <- paramss; sym <- params }
+          (sym.name, sym.info) match {
+            case (EvidenceParamName(_, _), qtp: ComplexQType) =>
+              preciseCtx.addPathCondition(qtp.qualifierTp, negated = false)
+            case _ =>
+          }
+        preciseCtx
+      case _ =>
+        ctx
+    }
 
   /** For all class definitions `stat` in `xstats`: If the companion class if
     * not also defined in `xstats`, invalidate it by setting its info to
@@ -1058,7 +1075,7 @@ class Namer { typer: Typer =>
       def dealiasIfUnit(tp: Type) = if (tp.isRef(defn.UnitClass)) defn.UnitType else tp
 
       lazy val lhsType = {
-        val rhsCtx = ctx.addMode(Mode.InferringReturnType)
+        var rhsCtx = adaptMethodContextPrecision(mdef, paramss)(ctx.addMode(Mode.InferringReturnType))
         def rhsType = typedAheadExpr(mdef.rhs, inherited orElse rhsProto)(rhsCtx).tpe
 
         // Approximate a type `tp` with a type that does not contain skolem types.

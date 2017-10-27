@@ -255,6 +255,8 @@ class TreeUnpickler(reader: TastyReader, nameAtRef: NameRef => TermName, posUnpi
               BinaryPrimitiveQType(readType(), prim, readType(), readType())
             case COMPLEXQtype =>
               ComplexQType(readName(), readType())(qtp => registeringType(qtp, readType()))
+            case ITEQtype =>
+              IteQType(readType(), readType(), readType())
             case ANDtype =>
               AndType(readType(), readType())
             case ORtype =>
@@ -633,9 +635,10 @@ class TreeUnpickler(reader: TastyReader, nameAtRef: NameRef => TermName, posUnpi
         }
       }
 
+      // TODO(gsps): Investigate whether ctx being unused here is intended
       def readRhs(implicit ctx: Context) =
         if (noRhs(end)) EmptyTree
-        else readLater(end, rdr => ctx => rdr.readTerm()(ctx))
+        else readLater(end, rdr => ctx => rdr.readTerm()(ctx.withPreciseTyping()))
 
       def localCtx = localContext(sym)
 

@@ -42,6 +42,17 @@ object QTypeConstraint {
       Success(exs)
     }
 
+    def buildPcs(pcs: Iterable[Either[Type, Type]], pcSubject: st.Variable): Try[Seq[ExtractionResult]] =
+      Success(pcs.foldLeft(List.empty[ExtractionResult]) {
+        case (exs, tpE) =>
+          val tp = tpE.merge
+          val tp1 = if (tpE.isLeft) PrimitiveQType.negated(tp) else tp
+          ExprBuilder(tp1, pcSubject) match {
+            case Success(ex) => ex :: exs
+            case f: Failure[ExtractionResult] => return Failure(f.exception)
+          }
+      } .reverse)
+
     def printExprs(intTypes: Map[st.Variable, Type],
                    subject: st.Variable, vc: st.Expr) = {
       val scopeStr = intTypes.map { case (v, tp) => i"$v:  $tp" }.mkString("\n\t\t")
@@ -65,22 +76,34 @@ object QTypeConstraint {
       stTp1
     }
     val subject = qex.freshVar("V", subjectTp)
+    val pcSubject = qex.freshVar("pcHolds", st.BooleanType())
 
-    val trial = for {
+    (for {
+      pcExtractions <- buildPcs(ctx.pathConditions, pcSubject)
+      pcExts = pcExtractions.foldLeft(Set.empty[RefType])(_ union _.exts)
+
       ExtractionResult(exts1, intTypes1, intCnstrs1, `subject`) <- ExprBuilder(tp1, subject)
       ExtractionResult(exts2, intTypes2, intCnstrs2, `subject`) <- ExprBuilder(tp2, subject)
-      extExtractions <- buildAllExt(exts1 union exts2)
-    } yield {
-      val anteExprs = (extExtractions.flatMap(_.intCnstrs) ++ intCnstrs1 ++ (intCnstrs2 - subject)).toMap
-      val vc = st.Implies(st.andJoin(anteExprs.values.toSeq), intCnstrs2(subject))
-      if (ctx.settings.XlogQtypes.value)
-        printExprs((extExtractions.flatMap(_.intTypes) ++ intTypes1 ++ intTypes2).toMap, subject, vc)
-      Some(vc)
-    }
 
-    trial.recover {
-      case ExtractionException(msg) =>
-        println(i"Failed to extract QType constraint:  $tp1 <: $tp2\n\tError: $msg")
+      extExtractions <- buildAllExt(pcExts union exts1 union exts2)
+
+    } yield {
+      val anteExprs =
+        ((pcExtractions ++ extExtractions).flatMap(_.intCnstrs) ++ intCnstrs1 ++ (intCnstrs2 - subject)).toMap
+      val vc = st.Implies(st.and(pcSubject, st.andJoin(anteExprs.values.toSeq)), intCnstrs2(subject))
+      if (ctx.settings.XlogQtypes.value) {
+        val intTypes = ((pcExtractions ++ extExtractions).flatMap(_.intTypes) ++ intTypes1 ++ intTypes2).toMap
+        printExprs(intTypes, subject, vc)
+      }
+
+      Some(vc)
+
+    }).recover {
+      case _: ExtractionException.ErrorTypeFound =>
+        // TODO(gsps): Add shortcut to avoid actual interaction with the solver
+        Some(st.BooleanLiteral(true))
+      case ex =>
+        println(i"Failed to extract QType constraint:  $tp1 <: $tp2\n\tError: ${ex.getMessage}")
         None
     }.get
   }
@@ -92,13 +115,17 @@ final case class ExtractionResult(exts: Set[RefType],
                                   intCnstrs: Map[st.Variable, st.Expr],
                                   subject: st.Variable)
 
-private[qtyper] sealed case class ExtractionException(msg: String) extends Exception(msg)
+private[qtyper] sealed abstract class ExtractionException(msg: String) extends Exception(msg)
+private[qtyper] object ExtractionException {
+  final case class ErrorTypeFound() extends ExtractionException("Encountered an ErrorType during extraction")
+//  final case class Other(msg: String) extends ExtractionException(msg)
+}
 
 object ExprBuilder {
   def apply(tp: Type, subject: st.Variable)(implicit ctx: Context): Try[ExtractionResult] = {
     val qex = ctx.qualifierExtraction
-    var exts = Set[RefType]() // existing bindings we refer to
-    var intTypes  = Map[st.Variable, Type]()    // types of fresh bindings
+    var exts = Set[RefType]() // existing bindings we refer to ("external")
+    var intTypes  = Map[st.Variable, Type]()    // types of fresh bindings ("internal")
     var intCnstrs = Map[st.Variable, st.Expr]() // constraints on fresh bindings
 
     def updateInt(subject: st.Variable, tp: Type, cnstr: st.Expr): Unit = {
@@ -110,7 +137,7 @@ object ExprBuilder {
     def buildExpr(tp: Type, subjectOpt: Option[st.Variable] = None): Either[st.Variable, st.Expr] = {
       tp.widenSkolem.dealias match {
         case tp: ErrorType =>
-          throw ExtractionException("Encountered ErrorType during extraction")
+          throw ExtractionException.ErrorTypeFound()
 
         case tp: QualifierSubject =>
           Left(subject)
@@ -144,6 +171,23 @@ object ExprBuilder {
           }
           updateInt(subject, tp, cnstrExpr)
           Left(subject)
+
+        case tp: IteQType =>
+          val subjectStTp = qex.stType(tp.parent)
+          val subject     = subjectOpt getOrElse qex.freshVar("v", subjectStTp)
+          val condExpr = buildExpr(tp.condTp, Some(qex.freshSubject("c", tp.condTp))).merge
+          val thenExprE = buildExpr(tp.tp1, Some(qex.freshVar("v_t", subjectStTp)))
+          val elseExprE = buildExpr(tp.tp2, Some(qex.freshVar("v_e", subjectStTp)))
+          (thenExprE, elseExprE) match {
+            case (Right(thenValExpr), Right(elseValExpr)) =>
+              Right(st.IfExpr(condExpr, thenValExpr, elseValExpr))
+            case _ =>
+              val cnstrExpr = st.IfExpr(condExpr,
+                st.Equals(subject, thenExprE.merge),
+                st.Equals(subject, elseExprE.merge))
+              updateInt(subject, tp, cnstrExpr)
+              Left(subject)
+          }
 
         case _ =>
           val subject = subjectOpt getOrElse qex.freshSubject("u", tp)

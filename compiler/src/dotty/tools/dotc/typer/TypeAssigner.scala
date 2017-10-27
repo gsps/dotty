@@ -121,6 +121,11 @@ trait TypeAssigner {
         case tp: BinaryPrimitiveQType =>
           assert(!toAvoid(tp.parent.classSymbol))  // Only primitive classes occur as parents
           if (toAvoid(tp.tp1) || toAvoid(tp.tp2)) tp.parent else tp
+        case tp: IteQType =>
+          if (toAvoid(tp.condTp) || toAvoid(tp.tp1) || toAvoid(tp.tp2))
+            mapOver(tp.parent)
+          else
+            tp
 
         case tp: ThisType if toAvoid(tp.cls) =>
           range(tp.bottomType, apply(classBound(tp.cls.classInfo)))
@@ -455,8 +460,13 @@ trait TypeAssigner {
   def assignType(tree: untpd.Inlined, bindings: List[Tree], expansion: Tree)(implicit ctx: Context) =
     tree.withType(avoidingType(expansion, bindings))
 
-  def assignType(tree: untpd.If, thenp: Tree, elsep: Tree)(implicit ctx: Context) =
-    tree.withType(lubInSameUniverse(thenp :: elsep :: Nil, "branches of an if/else"))
+  def assignType(tree: untpd.If, cond: Tree, thenp: Tree, elsep: Tree)(implicit ctx: Context) = {
+    val relationship = "branches of an if/else"
+    val tp =
+      if (ctx.mode.is(Mode.PreciseTyping)) preciseLubInSameUniverse(thenp, elsep, cond.tpe, relationship)
+      else                                 lubInSameUniverse(thenp :: elsep :: Nil, relationship)
+    tree.withType(tp)
+  }
 
   def assignType(tree: untpd.Closure, meth: Tree, target: Tree)(implicit ctx: Context) =
     tree.withType(
@@ -603,6 +613,9 @@ trait TypeAssigner {
       case first :: rest => (first.tpe /: rest)(inSameUniverse(_ | _, _, _, relationship))
       case Nil => defn.NothingType
     }
+
+  private def preciseLubInSameUniverse(tree1: Tree, tree2: Tree, condTp: Type, relationship: => String)(implicit ctx: Context): Type =
+    inSameUniverse(IteQType(condTp, _, _), tree1.tpe, tree2, relationship)
 }
 
 object TypeAssigner extends TypeAssigner

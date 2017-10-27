@@ -78,7 +78,7 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
     }
 
   def If(cond: Tree, thenp: Tree, elsep: Tree)(implicit ctx: Context): If =
-    ta.assignType(untpd.If(cond, thenp, elsep), thenp, elsep)
+    ta.assignType(untpd.If(cond, thenp, elsep), cond, thenp, elsep)
 
   def Closure(env: List[Tree], meth: Tree, tpt: Tree)(implicit ctx: Context): Closure =
     ta.assignType(untpd.Closure(env, meth, tpt), meth, tpt)
@@ -523,7 +523,7 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
       val tree1 = untpd.cpy.If(tree)(cond, thenp, elsep)
       tree match {
         case tree: If if (thenp.tpe eq tree.thenp.tpe) && (elsep.tpe eq tree.elsep.tpe) => tree1.withTypeUnchecked(tree.tpe)
-        case _ => ta.assignType(tree1, thenp, elsep)
+        case _ => ta.assignType(tree1, cond, thenp, elsep)
       }
     }
 

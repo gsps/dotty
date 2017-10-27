@@ -142,6 +142,11 @@ object Contexts {
     protected def scope_=(scope: Scope) = _scope = scope
     def scope: Scope = _scope
 
+    /** The current path conditions */
+    private[this] var _pathConditions: List[Either[Type, Type]] = _  // \forall t \in PC. t <: Boolean
+    protected def pathConditions_=(pathConditions: List[Either[Type, Type]]) = _pathConditions = pathConditions
+    def pathConditions: List[Either[Type, Type]] = _pathConditions
+
     /** The current type assigner or typer */
     private[this] var _typeAssigner: TypeAssigner = _
     protected def typeAssigner_=(typeAssigner: TypeAssigner) = _typeAssigner = typeAssigner
@@ -478,6 +483,7 @@ object Contexts {
     def setTree(tree: Tree[_ >: Untyped]): this.type = { this.tree = tree; this }
     def setScope(scope: Scope): this.type = { this.scope = scope; this }
     def setNewScope: this.type = { this.scope = newScope; this }
+    def setPathConditions(pathConditions: List[Either[Type, Type]]): this.type = { this.pathConditions = pathConditions; this }
     def setTypeAssigner(typeAssigner: TypeAssigner): this.type = { this.typeAssigner = typeAssigner; this }
     def setTyper(typer: Typer): this.type = { this.scope = typer.scope; setTypeAssigner(typer) }
     def setImportInfo(importInfo: ImportInfo): this.type = { this.importInfo = importInfo; this }
@@ -514,12 +520,23 @@ object Contexts {
     final def addMode(mode: Mode): Context = withModeBits(c.mode | mode)
     final def maskMode(mode: Mode): Context = withModeBits(c.mode & mode)
     final def retractMode(mode: Mode): Context = withModeBits(c.mode &~ mode)
+
+    final def withPreciseTyping(): Context =
+      if (c.settings.Xqtypes.value(c)) addMode(Mode.PreciseTyping) else c
   }
 
   implicit class FreshModeChanges(val c: FreshContext) extends AnyVal {
     final def addMode(mode: Mode): c.type = c.setMode(c.mode | mode)
     final def maskMode(mode: Mode): c.type = c.setMode(c.mode & mode)
     final def retractMode(mode: Mode): c.type = c.setMode(c.mode &~ mode)
+  }
+
+  implicit class FreshPathConditionChanges(val c: FreshContext) extends AnyVal {
+    final def addPathCondition(tp: Type, negated: Boolean): c.type = {
+      assert(tp.isBool(c), s"Expected added path condition to be Boolean, got: ${tp.show(c)} / $tp")
+      val wrappedTp = if (negated) Left(tp) else Right(tp)
+      c.setPathConditions(wrappedTp :: c.pathConditions)
+    }
   }
 
   /** A class defining the initial context with given context base
@@ -535,6 +552,7 @@ object Contexts {
     owner = NoSymbol
     sstate = settings.defaultState
     tree = untpd.EmptyTree
+    pathConditions = List.empty
     typeAssigner = TypeAssigner
     runInfo = new RunInfo(this)
     diagnostics = None

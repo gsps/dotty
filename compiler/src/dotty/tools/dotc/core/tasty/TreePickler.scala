@@ -236,6 +236,9 @@ class TreePickler(pickler: TastyPickler) {
       writeByte(COMPLEXQtype)
       withLength { pickleType(tpe.parent, richTypes); pickleName(tpe.subjectName)
         pickleType(tpe.subjectTp, richTypes); pickleType(tpe.qualifierTp, richTypes) }
+    case tpe: IteQType =>
+      writeByte(ITEQtype)
+      withLength { pickleType(tpe.condTp, richTypes); pickleType(tpe.tp1, richTypes); pickleType(tpe.tp2, richTypes) }
     case tpe: AndOrType =>
       writeByte(if (tpe.isAnd) ANDtype else ORtype)
       withLength { pickleType(tpe.tp1, richTypes); pickleType(tpe.tp2, richTypes) }

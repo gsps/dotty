@@ -678,12 +678,24 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
 
   def typedIf(tree: untpd.If, pt: Type)(implicit ctx: Context): Tree = track("typedIf") {
     val cond1 = typed(tree.cond, defn.BooleanType)
+
+    var ctxThen = ctx
+    var ctxElse = ctx
+    if (ctx.settings.Xqtypes.value) {
+      val condTp = cond1.tpe
+      val condTp1 = condTp.dealias
+      if (condTp1.isQTypeRelevant && condTp1.isBool) {
+        ctxThen = ctx.fresh.addPathCondition(condTp, negated = false)
+        ctxElse = ctx.fresh.addPathCondition(condTp, negated = true)
+      }
+    }
+
     val thenp2 :: elsep2 :: Nil = harmonic(harmonize) {
-      val thenp1 = typed(tree.thenp, pt.notApplied)
-      val elsep1 = typed(tree.elsep orElse (untpd.unitLiteral withPos tree.pos), pt.notApplied)
+      val thenp1 = typed(tree.thenp, pt.notApplied)(ctxThen)
+      val elsep1 = typed(tree.elsep orElse (untpd.unitLiteral withPos tree.pos), pt.notApplied)(ctxElse)
       thenp1 :: elsep1 :: Nil
     }
-    assignType(cpy.If(tree)(cond1, thenp2, elsep2), thenp2, elsep2)
+    assignType(cpy.If(tree)(cond1, thenp2, elsep2), cond1, thenp2, elsep2)
   }
 
   private def decomposeProtoFunction(pt: Type, defaultArity: Int)(implicit ctx: Context): (List[Type], Type) = pt match {
@@ -1316,10 +1328,8 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     // TODO: Re-add this check once we have an implementation for CExprs!
 //    checkNoSymbolDependenciesInQualifiers(sym.info.widenSingleton.asInstanceOf[MethodType])
 
-    var rhsCtx = ctx
-//    if (???) // TODO(gsps): Enable only in particular user-annotated methods
-    if (ctx.settings.Xqtypes.value)
-      rhsCtx = rhsCtx.addMode(Mode.PreciseTyping)
+    var rhsCtx = adaptMethodContextPrecision(ddef, vparamss1.map(_.map(_.symbol)))(ctx)
+
     if (sym.isConstructor && !sym.isPrimaryConstructor && tparams1.nonEmpty) {
       // for secondary constructors we need a context that "knows"
       // that their type parameters are aliases of the class type parameters.

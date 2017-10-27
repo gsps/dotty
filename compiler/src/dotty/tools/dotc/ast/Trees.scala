@@ -1205,8 +1205,10 @@ object Trees {
             val rhs1 = transform(tree.rhs)
             cpy.ValDef(tree)(name, tpt1, rhs1)
           case tree @ DefDef(name, tparams, vparamss, tpt, _) =>
-            implicit val ctx = localCtx
-            cpy.DefDef(tree)(name, transformSub(tparams), vparamss mapConserve (transformSub(_)), transform(tpt), transform(tree.rhs))
+            def transformWithContext(implicit ctx: Context) =
+              cpy.DefDef(tree)(name, transformSub(tparams),
+                vparamss mapConserve (transformSub(_)), transform(tpt), transform(tree.rhs))
+            transformWithContext(localCtx.withPreciseTyping())
           case tree @ TypeDef(name, rhs) =>
             implicit val ctx = localCtx
             cpy.TypeDef(tree)(name, transform(rhs))

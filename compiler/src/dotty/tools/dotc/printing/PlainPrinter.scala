@@ -214,6 +214,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
       case tp @ ComplexQType(subjectName, parent) =>
         val exprText = ConstraintExpr.prettyPrintExpr(tp, subjectName.toString)
         "{" ~ toText(subjectName) ~ ": " ~ toText(parent) ~ " ⇒ " ~ exprText ~ "}"
+      case tp: IteQType =>
+        "<" ~ toText(tp.condTp) ~ " ? " ~ toText(tp.tp1) ~ " : " ~ toText(tp.tp2) ~ "  / " ~ toText(tp.parent) ~ ">"
       case AppliedType(tycon, args) =>
         toTextLocal(tycon) ~ "[" ~ Text(args.map(argText), ", ") ~ "]"
       case tp: TypeVar =>

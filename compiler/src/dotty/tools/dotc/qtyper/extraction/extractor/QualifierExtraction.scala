@@ -54,7 +54,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
   // TODO(gsps): Convert DottyExtraction to support st. directly (instead of stainless.extraction.oo.trees.)
   def stType(tp: Type, pos: Position = NoPosition): st.Type = {
-    stainlessType(tp)(emptyDefContext, pos) match {
+    extractType(tp)(emptyDefContext, pos) match {
       case trees.Untyped        => st.Untyped
       case trees.BooleanType()  => st.BooleanType()
       case trees.UnitType()     => st.UnitType()

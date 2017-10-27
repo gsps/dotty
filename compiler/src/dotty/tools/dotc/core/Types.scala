@@ -296,6 +296,13 @@ object Types {
     /** Is this a MethodType which has implicit parameters */
     def isImplicitMethod: Boolean = false
 
+    /** Is this type derived from Boolean */
+    def isBool(implicit ctx: Context): Boolean = derivesFrom(defn.BooleanClass)
+
+    /** Will this type potentially yield a meaningful top-level qualifier? */
+    def isQTypeRelevant(implicit ctx: Context): Boolean =
+      (isInstanceOf[RefType] && isStable) || isInstanceOf[ConstantType] || isInstanceOf[QualifiedType]
+
 // ----- Higher-order combinators -----------------------------------
 
     /** Returns true if there is a part of this type that satisfies predicate `p`.
@@ -3667,11 +3674,12 @@ object Types {
 
     override def underlying(implicit ctx: Context): Type = parent
 
-    final def map(f: Type => Type)(implicit ctx: Context): This = (this match {
+    final def map(f: Type => Type)(implicit ctx: Context): Type = this match {
       case tp: ComplexQType         => tp.derivedQualifiedType(f(tp.subjectTp), f(tp.qualifierTp))
       case tp: UnaryPrimitiveQType  => tp.derivedQualifiedType(f(tp.parent), f(tp.tp1))
       case tp: BinaryPrimitiveQType => tp.derivedQualifiedType(f(tp.parent), f(tp.tp1), f(tp.tp2))
-    }).asInstanceOf[This]
+      case tp: IteQType             => tp.derivedQualifiedType(f(tp.condTp), f(tp.tp1), f(tp.tp2))
+    }
   }
 
   case class ComplexQType(subjectName: TermName, subjectTp: Type)(qualifierTpBuilder: ComplexQType => Type)
@@ -3709,13 +3717,20 @@ object Types {
         val subjectSym  = subjectVd.symbol
         val qualifierTp = qualifier.tpe.subst(List(subjectSym), List(qtp.subject))
         assertNoEscapingSubject(subjectSym, qualifierTp)
-        assert(qualifierTp.widenDealias == defn.BooleanType, s"Expected Boolean qualifier, but found $qualifierTp")
+        assert(qualifierTp.isBool, s"Expected Boolean qualifier, but found $qualifierTp")
         qualifierTp
       })
     }
   }
 
   abstract class PrimitiveQType(parent: Type) extends QualifiedType(parent)
+
+  object PrimitiveQType {
+    def negated(tp: Type)(implicit ctx: Context): UnaryPrimitiveQType = {
+      assert(tp.isBool, s"Expected Boolean condition, but found $tp")
+      UnaryPrimitiveQType(defn.BooleanType, ConstraintExpr.Primitives.Not, tp)
+    }
+  }
 
   case class UnaryPrimitiveQType(override val parent: Type, prim: ConstraintExpr.UnaryPrimitive, tp1: Type)
     extends PrimitiveQType(parent)
@@ -3751,6 +3766,56 @@ object Types {
     }
 
     override def toString = s"BinaryPrimitiveQType($parent, $prim, $tp1, $tp2)"
+  }
+
+  class IteQType(override val parent: Type, val condTp: Type, val tp1: Type, val tp2: Type)
+    extends QualifiedType(parent)
+  {
+    type This = IteQType
+
+    def derivedQualifiedType(condTp: Type, tp1: Type, tp2: Type)(implicit ctx: Context): Type =
+      if (tp1 =:= tp2) tp1
+      else if ((condTp eq this.condTp) && (tp1 eq this.tp1) && (tp2 eq this.tp2)) this
+      else new IteQType(IteQType.computeParent(tp1, tp2), condTp, tp1, tp2)
+
+    override def equals(that: Any): Boolean = that match {
+      case that: IteQType => (this.condTp == that.condTp) && (this.tp1 == that.tp1) && (this.tp2 == that.tp2)
+      case _ => false
+    }
+
+    override def toString = s"IteQType($condTp, $tp1, $tp2)"
+  }
+
+  object IteQType {
+    private[core] def computeParent(tp1: Type, tp2: Type)(implicit ctx: Context): Type =
+      (tp1 | tp2).widenUnion
+
+    def apply(condTp: Type, tp1: Type, tp2: Type)(implicit ctx: Context): Type = {
+      // TODO(gsps): Get rid of this restriction once we support Any in stainless
+      def cannotHandleBranchTypes: Boolean = {
+        val qex = ctx.qualifierExtraction
+        import qtyper.extraction.extractor.DottyExtraction.ImpureCodeEncounteredException
+        import stainless.{trees => st}
+        try { val stTp1 = qex.stType(tp1); stTp1 == st.Untyped || stTp1 != qex.stType(tp2) }
+        catch { case _: ImpureCodeEncounteredException => true }
+      }
+
+      val condTp1 = condTp.dealias
+      if (tp1 =:= tp2)
+        tp1
+      else if (!condTp1.isQTypeRelevant || cannotHandleBranchTypes)
+        tp1 | tp2
+      else if (condTp1 == ConstantType(Constant(true)))
+        tp1
+      else if (condTp1 == ConstantType(Constant(false)))
+        tp2
+      else if (ctx.erasedTypes)
+        computeParent(tp1, tp2)  // NOTE: Replicating behavior of TypeComparer#lub wrt. `ctx.erasedTypes`
+      else {
+        assert(condTp.isBool, s"Expected Boolean condition, but found $condTp")
+        new IteQType(computeParent(tp1, tp2), condTp, tp1, tp2)
+      }
+    }
   }
 
   // Special type objects and classes -----------------------------------------------------
@@ -3951,6 +4016,8 @@ object Types {
       tp.derivedQualifiedType(parent, tp1)
     protected def derivedBinaryPrimitiveQType(tp: BinaryPrimitiveQType, parent: Type, tp1: Type, tp2: Type): Type =
       tp.derivedQualifiedType(parent, tp1, tp2)
+    protected def derivedIteQType(tp: IteQType, condTp: Type, tp1: Type, tp2: Type): Type =
+      tp.derivedQualifiedType(condTp, tp1, tp2)
     protected def derivedWildcardType(tp: WildcardType, bounds: Type): Type =
       tp.derivedWildcardType(bounds)
     protected def derivedClassInfo(tp: ClassInfo, pre: Type): Type =
@@ -4062,6 +4129,9 @@ object Types {
 
         case tp: BinaryPrimitiveQType =>
           derivedBinaryPrimitiveQType(tp, this(tp.parent), this(tp.tp1), this(tp.tp2))
+
+        case tp: IteQType =>
+          derivedIteQType(tp, this(tp.condTp), this(tp.tp1), this(tp.tp2))
 
         case tp: WildcardType =>
           derivedWildcardType(tp, mapOver(tp.optBounds))
@@ -4432,6 +4502,9 @@ object Types {
 
       case tp: BinaryPrimitiveQType =>
         this(this(this(x, tp.parent), tp.tp1), tp.tp2)
+
+      case tp: IteQType =>
+        this(this(this(x, tp.condTp), tp.tp1), tp.tp2)
 
       case tp: ProtoType =>
         tp.fold(x, this)

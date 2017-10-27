@@ -401,6 +401,7 @@ object TastyFormat {
   final val COMPLEXQtype = 181
   final val COMPLEXQtpt = 182
   final val COMPLEXQsubject = 183
+  final val ITEQtype = 184
 
   /* Stainless types */
   final val UNTYPEDsttp = 1
