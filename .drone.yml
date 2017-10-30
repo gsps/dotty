@@ -3,14 +3,14 @@ pipeline:
   # We run tests in parallel. Tests run in a copy of the working directory to avoid conflict
   test_legacy:
     group: test
-    image: gsps/dotty:2017-09-08
+    image: gsps/dotty:2017-10-30
     commands:
       - cp -R . /tmp/0/ && cd /tmp/0/
       - ./project/scripts/sbt legacyTests
 
   test:
     group: test
-    image: gsps/dotty:2017-09-08
+    image: gsps/dotty:2017-10-30
     commands:
       - cp -R . /tmp/1/ && cd /tmp/1/
       - ./project/scripts/sbt testAll
@@ -18,14 +18,14 @@ pipeline:
 
   test_qtypesEverywhere:
     group: test
-    image: gsps/dotty:2017-09-08
+    image: gsps/dotty:2017-10-30
     commands:
       - cp -R . /tmp/1qtypesEverywhere/ && cd /tmp/1qtypesEverywhere/
       - QTYPES_ALL_METHODS=true ./project/scripts/sbt testAll
 
 #  test_bootstrapped:
 #    group: test
-#    image: gsps/dotty:2017-09-08
+#    image: gsps/dotty:2017-10-30
 #    commands:
 #      - cp -R . /tmp/2/ && cd /tmp/2/
 #      - ./project/scripts/sbt dotty-bootstrapped/testAll
@@ -33,14 +33,14 @@ pipeline:
 
 #  test_optimised:
 #    group: test
-#    image: gsps/dotty:2017-09-08
+#    image: gsps/dotty:2017-10-30
 #    commands:
 #      - cp -R . /tmp/3/ && cd /tmp/3/
 #      - ./project/scripts/sbt dotty-optimised/testAll
 
   test_sbt:
     group: test
-    image: gsps/dotty:2017-09-08
+    image: gsps/dotty:2017-10-30
     commands:
       - cp -R . /tmp/4/ && cd /tmp/4/
       - ./project/scripts/sbt sbt-dotty/scripted
@@ -50,7 +50,7 @@ pipeline:
 
   # DOCUMENTATION:
   documentation:
-    image: gsps/dotty:2017-09-08
+    image: gsps/dotty:2017-10-30
     commands:
       - ./project/scripts/genDocs
     secrets: [ bot_pass ]
@@ -62,7 +62,7 @@ pipeline:
   # PUBLISHING:
   # Publishing expect NIGHTLYBUILD or RELEASEBUILD to be set. See dottyVersion in Build.scala
   publish_nightly:
-    image: gsps/dotty:2017-09-08
+    image: gsps/dotty:2017-10-30
     environment:
       - NIGHTLYBUILD=yes
     commands:
@@ -75,7 +75,7 @@ pipeline:
       environment: nightly
 
   publish_release:
-    image: gsps/dotty:2017-09-08
+    image: gsps/dotty:2017-10-30
     environment:
       - RELEASEBUILD=yes
     commands:
@@ -101,7 +101,7 @@ pipeline:
       event: tag
 
   publish_sbt_release:
-    image: gsps/dotty:2017-09-08
+    image: gsps/dotty:2017-10-30
     environment:
       - RELEASEBUILD=yes
     commands:
