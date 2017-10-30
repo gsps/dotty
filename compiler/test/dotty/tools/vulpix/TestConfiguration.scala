@@ -42,9 +42,11 @@ object TestConfiguration {
     } mkString(":")
   }
 
+  val qtypeOptions = sys.env.get("QTYPES_ALL_METHODS").map(_ => "-Xqtypes-all-methods").toArray
+
   val yCheckOptions = Array("-Ycheck:tailrec,resolveSuper,erasure,mixin,getClass,restoreScopes,labelDef")
 
-  val basicDefaultOptions = checkOptions ++ noCheckOptions ++ yCheckOptions
+  val basicDefaultOptions = checkOptions ++ noCheckOptions ++ yCheckOptions ++ qtypeOptions
   val defaultUnoptimised = TestFlags(classPath, basicDefaultOptions)
   val defaultOptimised = defaultUnoptimised and "-optimise"
   val defaultOptions = defaultUnoptimised

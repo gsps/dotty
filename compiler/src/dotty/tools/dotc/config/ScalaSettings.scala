@@ -63,6 +63,7 @@ class ScalaSettings extends Settings.SettingGroup {
   val XfatalWarnings = BooleanSetting("-Xfatal-warnings", "Fail the compilation if there are any warnings.")
   val Xqtypes = BooleanSetting("-Xqtypes", "Check and propagate predicate-qualified types.", initialValue = true)
   val XlogQtypes = BooleanSetting("-Xlog-qtypes", "Log subtyping checks among qualified types.")
+  val XqtypesAllMethods = BooleanSetting("-Xqtypes-all-methods", "Activate qualified types in all methods regardless of user-annotations.")
 
   /** -Y "Private" settings */
   val overrideVars = BooleanSetting("-Yoverride-vars", "Allow vars to be overridden.")

@@ -16,6 +16,13 @@ pipeline:
       - ./project/scripts/sbt testAll
       - ./project/scripts/sbt ";dotty-bench/jmh:run 1 1 tests/run/arrays.scala"
 
+  test_qtypesEverywhere:
+    group: test
+    image: gsps/dotty:2017-09-08
+    commands:
+      - cp -R . /tmp/1qtypesEverywhere/ && cd /tmp/1qtypesEverywhere/
+      - QTYPES_ALL_METHODS=true ./project/scripts/sbt testAll
+
 #  test_bootstrapped:
 #    group: test
 #    image: gsps/dotty:2017-09-08
