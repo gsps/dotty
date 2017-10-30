@@ -399,9 +399,8 @@ class Namer { typer: Typer =>
   /** A new context for a DefDef that activates precise typing if needed and adapts the path condition. */
   def adaptMethodContextPrecision(tree: Tree, paramss: List[List[Symbol]])(implicit ctx: Context): Context =
     tree match {
-      case tree: DefDef if ctx.settings.Xqtypes.value =>
-        // TODO(gsps): Enable only in particular user-annotated methods
-        val preciseCtx: FreshContext = ctx.fresh.addMode(Mode.PreciseTyping)
+      case tree: DefDef if ctx.preciseTyping =>
+        val preciseCtx: FreshContext = ctx.fresh
         for { params <- paramss; sym <- params }
           (sym.name, sym.info) match {
             case (EvidenceParamName(_, _), qtp: ComplexQType) =>

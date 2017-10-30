@@ -638,7 +638,7 @@ class TreeUnpickler(reader: TastyReader, nameAtRef: NameRef => TermName, posUnpi
       // TODO(gsps): Investigate whether ctx being unused here is intended
       def readRhs(implicit ctx: Context) =
         if (noRhs(end)) EmptyTree
-        else readLater(end, rdr => ctx => rdr.readTerm()(ctx.withPreciseTyping()))
+        else readLater(end, rdr => ctx => rdr.readTerm()(ctx))
 
       def localCtx = localContext(sym)
 

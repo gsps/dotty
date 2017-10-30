@@ -204,6 +204,30 @@ object Contexts {
       _qualifierExtraction
     }
 
+    /** Should typing be done precisely in this context? */
+    private[this] var _preciseTypingInit: Boolean = true // NOTE: This initial value only applies to InitialContext
+    private[this] var _preciseTyping: Boolean = false
+    def preciseTyping: Boolean = {
+      /** NOTE: The initialization of _preciseTyping is rather tricky: We cannot compute it for the first few contexts
+        *       since PreciseAnnot's denotation has not been loaded at that time. We do need to make sure that any
+        *       enclosing context's preciseTyping has been computed, since the property is inherited. In case the
+        *       outer's preciseTyping has been accessed before, we inherit the value by way of clone() in fresh(),
+        *       (and as a result _preciseTypingInit will be true as well).
+        *       Otherwise we force the enclosing context's preciseTyping here, and, if the outer turns out not to be
+        *       precisely typed, we finally also compute preciseTyping based on this context.
+        */
+      if (!_preciseTypingInit) {
+        val S = this.base.settings
+        _preciseTyping = if (owner eq NoSymbol) false else
+          outer.preciseTyping ||
+          S.XqtypesAllMethods.value && this.owner.flagsUNSAFE.is(Flags.Method) ||
+          S.Xqtypes.value && this.owner.unforcedAnnotation(defn.PreciseAnnot).nonEmpty ||
+          this.mode.is(Mode.InQTypeQualifier)
+        _preciseTypingInit = true
+      }
+      _preciseTyping
+    }
+
     /** Number of findMember calls on stack */
     private[core] var findMemberCount: Int = 0
 
@@ -433,6 +457,9 @@ object Contexts {
       this.phasedCtxs = null
       // See comment related to `creationTrace` in this file
       // setCreationTrace()
+      // The _preciseTyping property was cloned, but is monotonic anyways; only recompute in case it's unset
+      if (!this._preciseTyping)
+        this._preciseTypingInit = false
       this
     }
 
@@ -520,9 +547,6 @@ object Contexts {
     final def addMode(mode: Mode): Context = withModeBits(c.mode | mode)
     final def maskMode(mode: Mode): Context = withModeBits(c.mode & mode)
     final def retractMode(mode: Mode): Context = withModeBits(c.mode &~ mode)
-
-    final def withPreciseTyping(): Context =
-      if (c.settings.Xqtypes.value(c)) addMode(Mode.PreciseTyping) else c
   }
 
   implicit class FreshModeChanges(val c: FreshContext) extends AnyVal {

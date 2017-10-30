@@ -98,5 +98,5 @@ object Mode {
   val Interactive = newMode(20, "Interactive")
 
   /** Retain and infer precise types */
-  val PreciseTyping = newMode(21, "PreciseTyping")
+  val InQTypeQualifier = newMode(21, "InQTypeQualifier")
 }

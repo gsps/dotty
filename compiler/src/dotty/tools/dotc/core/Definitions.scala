@@ -629,6 +629,8 @@ class Definitions {
   def MigrationAnnot(implicit ctx: Context) = MigrationAnnotType.symbol.asClass
   lazy val NativeAnnotType                   = ctx.requiredClassRef("scala.native")
   def NativeAnnot(implicit ctx: Context) = NativeAnnotType.symbol.asClass
+  lazy val PreciseAnnotType = ctx.requiredClassRef("scala.annotation.precise")
+  def PreciseAnnot(implicit ctx: Context) = PreciseAnnotType.symbol.asClass
   lazy val RemoteAnnotType                   = ctx.requiredClassRef("scala.remote")
   def RemoteAnnot(implicit ctx: Context) = RemoteAnnotType.symbol.asClass
   lazy val RepeatedAnnotType = ctx.requiredClassRef("scala.annotation.internal.Repeated")

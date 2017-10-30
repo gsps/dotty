@@ -1,3 +1,4 @@
+@scala.annotation.precise
 object QTypesSyntax {
   def f1(x: {v: Int => v > 0}) = x
   def f2(x: {Int => x > 0}) = x

@@ -1,3 +1,4 @@
+@scala.annotation.precise
 object Prims {
   type Int10 = {v: Int => v > 0 && v < 10}
   type Gt2 = {v: Int => v > 2}

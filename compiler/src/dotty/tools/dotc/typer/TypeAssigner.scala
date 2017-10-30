@@ -189,7 +189,7 @@ trait TypeAssigner {
 
   /** Replace name by a precise version if we're in PreciseTyping mode and a primitive is being referenced. */
   def injectPrecisePrimitive(site: Type, name: Name)(implicit ctx: Context): Name =
-    if (ctx.mode.is(Mode.PreciseTyping))
+    if (ctx.preciseTyping)
       site.widenSingleton.classSymbol match {
         case owner: ClassSymbol if ctx.definitions.maybeQTypePrimitive(owner, name) =>
           NameKinds.PrecisePrimName(name.asTermName)
@@ -463,8 +463,8 @@ trait TypeAssigner {
   def assignType(tree: untpd.If, cond: Tree, thenp: Tree, elsep: Tree)(implicit ctx: Context) = {
     val relationship = "branches of an if/else"
     val tp =
-      if (ctx.mode.is(Mode.PreciseTyping)) preciseLubInSameUniverse(thenp, elsep, cond.tpe, relationship)
-      else                                 lubInSameUniverse(thenp :: elsep :: Nil, relationship)
+      if (ctx.preciseTyping) preciseLubInSameUniverse(thenp, elsep, cond.tpe, relationship)
+      else                   lubInSameUniverse(thenp :: elsep :: Nil, relationship)
     tree.withType(tp)
   }
 

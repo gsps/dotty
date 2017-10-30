@@ -1261,7 +1261,7 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     track("typedQualifiedTypeTree")
   {
     if (ctx.settings.Xqtypes.value) {
-      val exprCtx = index(tree.subject).retractMode(Mode.ImplicitsEnabled).addMode(Mode.PreciseTyping)
+      val exprCtx = index(tree.subject).retractMode(Mode.ImplicitsEnabled).addMode(Mode.InQTypeQualifier)
       val subject1 = typed(tree.subject).asInstanceOf[ValDef]
       val expr1 = typedExpr(tree.expr, defn.BooleanType)(exprCtx)
       assignType(cpy.QualifiedTypeTree(tree)(subject1, expr1), subject1, expr1)
