@@ -207,7 +207,7 @@ object Contexts {
     /** Should typing be done precisely in this context? */
     private[this] var _preciseTypingInit: Boolean = true // NOTE: This initial value only applies to InitialContext
     private[this] var _preciseTyping: Boolean = false
-    def preciseTyping: Boolean = {
+    final def preciseTyping: Boolean = {
       /** NOTE: The initialization of _preciseTyping is rather tricky: We cannot compute it for the first few contexts
         *       since PreciseAnnot's denotation has not been loaded at that time. We do need to make sure that any
         *       enclosing context's preciseTyping has been computed, since the property is inherited. In case the
@@ -457,9 +457,9 @@ object Contexts {
       this.phasedCtxs = null
       // See comment related to `creationTrace` in this file
       // setCreationTrace()
-      // The _preciseTyping property was cloned, but is monotonic anyways; only recompute in case it's unset
-      if (!this._preciseTyping)
-        this._preciseTypingInit = false
+      // The _preciseTyping property was cloned, but is monotonic anyways; we *could* only recompute in case it's unset
+      // but it turns out branching in here is very costly.
+      this._preciseTypingInit = false
       this
     }
 
