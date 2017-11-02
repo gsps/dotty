@@ -31,10 +31,10 @@ object QTypeConstraint {
       while (newTps.nonEmpty) {
         val tp = newTps.pop()
         seen += tp
-        ExprBuilder(tp.underlying, qex.refSubject(tp)) match {
+        ExprBuilder(qex.refUnderlying(tp), qex.refSubject(tp, asExternal = true)) match {
           case Success(ex) =>
             exs = ex :: exs
-            newTps foreach { tp => if (!seen(tp)) newTps.push(tp) }
+            ex.exts foreach { tp => if (!seen(tp)) newTps.push(tp) }
           case f: Failure[ExtractionResult] => return Failure(f.exception)
         }
       }
@@ -107,7 +107,8 @@ object QTypeConstraint {
         // TODO(gsps): Add shortcut to avoid actual interaction with the solver
         Some(st.BooleanLiteral(true))
       case ex =>
-        println(i"Failed to extract QType constraint:  $tp1 <: $tp2\n\tError: ${ex.getMessage}")
+        println(i"Failed to extract QType constraint:  $tp1 <: $tp2\n\tError:")
+        ex.printStackTrace()
         None
     }.get
   }
@@ -131,30 +132,31 @@ object ExprBuilder {
     var exts = Set[RefType]() // existing bindings we refer to ("external")
     var intTypes  = Map[st.Variable, Type]()    // types of fresh bindings ("internal")
     var intCnstrs = Map[st.Variable, st.Expr]() // constraints on fresh bindings
+    var intBindings = Map[Type, st.Variable]() // ties types to subjects of certain internal bindings
 
     def updateInt(subject: st.Variable, tp: Type, cnstr: st.Expr): Unit = {
       intTypes += subject -> tp
       intCnstrs += subject -> cnstr
     }
 
-    // FIXME: Handle SkolemTypes explicitly and introduce an explicit binding
+    def freshSubjectForComplex(tp: ComplexQType): st.Variable =
+      qex.freshSubject(tp.subjectName.toString, tp.subjectTp)
+
     def buildExpr(tp: Type, subjectOpt: Option[st.Variable] = None): Either[st.Variable, st.Expr] = {
-      tp.widenSkolem.dealias match {
-        case tp: ErrorType =>
-          throw ExtractionException.ErrorTypeFound()
+      tp.dealias match {
+        case tp: QualifierSubject if intBindings.contains(tp) =>
+          Left(intBindings(tp))
 
-        case tp: QualifierSubject =>
-          Left(subject)
-
-        case tp: RefType if tp.isStable =>
-          val subject = qex.refSubject(tp)
+        case tp: RefType if tp.isStable && !tp.underlying.existsPart(intBindings.contains) =>
+          // TODO: Speed-up occurrence check by caching set of RefTypes in `tp.underlying`
+          val subject = qex.refSubject(tp, asExternal = true)
           exts += tp
           Right(subject)  // treat this subject as un-renamable
 
         case tp: RefType =>
-          val tpNoTermRef = tp.widenTermRefExpr
-          assert(tp ne tpNoTermRef, i"Needed $tp to be widened, but didnt change")
-          buildExpr(tpNoTermRef, subjectOpt)
+          val underlyingTp = qex.refUnderlying(tp)
+          assert(tp ne underlyingTp, i"Needed $tp to be widened, but didnt change")
+          buildExpr(underlyingTp, subjectOpt)
 
         case ctp: ConstantType =>
           val lit = qex.stLiteral(ctp)
@@ -173,6 +175,7 @@ object ExprBuilder {
 
         case tp: ComplexQType =>
           val subject   = subjectOpt getOrElse qex.freshSubject(tp.subjectName.toString, tp.subjectTp)
+          intBindings += tp.subject -> subject
           val qualExpr  = buildExpr(tp.qualifierTp, Some(qex.freshSubject("q", tp.qualifierTp))).merge
           val cnstrExpr = buildExpr(tp.subjectTp, Some(subject)) match {
             case Left(`subject`) => st.and(intCnstrs.getOrElse(subject, st.BooleanLiteral(true)), qualExpr)
@@ -197,6 +200,9 @@ object ExprBuilder {
               updateInt(subject, tp, cnstrExpr)
               Left(subject)
           }
+
+        case tp: ErrorType =>
+          throw ExtractionException.ErrorTypeFound()
 
         case _ =>
           val subject = subjectOpt getOrElse qex.freshSubject("u", tp)

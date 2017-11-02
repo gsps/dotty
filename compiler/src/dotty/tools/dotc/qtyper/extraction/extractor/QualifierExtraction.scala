@@ -53,7 +53,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
 
   // TODO(gsps): Convert DottyExtraction to support st. directly (instead of stainless.extraction.oo.trees.)
-  def stType(tp: Type, pos: Position = NoPosition): st.Type = {
+  final def stType(tp: Type, pos: Position = NoPosition): st.Type = {
     extractType(tp)(emptyDefContext, pos) match {
       case trees.Untyped        => st.Untyped
       case trees.BooleanType()  => st.BooleanType()
@@ -66,7 +66,7 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
     }
   }
 
-  def stLiteral(ctp: ConstantType): st.Literal[_] = ctp.value.value match {
+  final def stLiteral(ctp: ConstantType): st.Literal[_] = ctp.value.value match {
     case _: Unit    => st.UnitLiteral()
     case x: Boolean => st.BooleanLiteral(x)
     case x: Int     => st.Int32Literal(x)
@@ -74,13 +74,23 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   }
 
 
-  def freshSubject(name: String, tp: Type, pos: Position = NoPosition): st.Variable =
+  final def freshSubject(name: String, tp: Type, pos: Position = NoPosition): st.Variable =
     freshVar(name, stType(tp, pos), pos)
 
 
-  def refSubject(refTp: RefType): st.Variable = {
-    def register(refTp: RefType, name: => String, underlyingTp: Type, pos: Position = NoPosition): st.Variable =
-      exState.getOrPutVar(refTp, () => freshSubject(name, underlyingTp, pos))
+  @inline final def refUnderlying(refTp: RefType): Type = refTp match {
+    case tp: TermRef          => tp.widenTermRefExpr
+    case tp: TermParamRef     => tp.underlying.widen
+    case tp: QualifierSubject => tp.binder.subjectTp
+    case tp: SkolemType       => tp.underlying
+  }
+
+  def refSubject(refTp: RefType, asExternal: Boolean): st.Variable = {
+    def register(refTp: RefType, name: => String, pos: Position = NoPosition): st.Variable = {
+      val underlyingTp = refUnderlying(refTp)
+      if (asExternal) exState.getOrPutVar(refTp, () => freshSubject(name, underlyingTp, pos))
+      else            freshSubject(name, underlyingTp, pos)
+    }
 
     refTp match {
       case refTp: TermRef =>
@@ -133,11 +143,17 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
         }
 
         // TODO: We actually want the position of the term carrying the TermRef here, no?
-        register(refTp, qualVarName, refTp.widenTermRefExpr, sym.pos)
+        register(refTp, qualVarName, sym.pos)
 
       case refTp: TermParamRef =>
-        register(refTp, refTp.paramName.toString, refTp.underlying.widen)
+        register(refTp, refTp.paramName.toString)
 
+      case refTp: QualifierSubject =>
+        register(refTp, refTp.binder.subjectName.toString)
+
+      case refTp: SkolemType =>
+        val name = if (ctx.settings.YtestPickler.value) "sk" else s"sk${refTp.uniqId}"
+        register(refTp, name)
     }
   }
 

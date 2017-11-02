@@ -3280,7 +3280,7 @@ object Types {
   }
 
   /** Represents the type of the subject variable in a ComplexQType's qualifier tree. */
-  case class QualifierSubject(binder: ComplexQType) extends BoundType {
+  case class QualifierSubject(binder: ComplexQType) extends BoundType with RefType {
     type BT = ComplexQType
     def copyBoundType(bt: BT) = QualifierSubject(bt)
 
@@ -3299,7 +3299,7 @@ object Types {
   // ----- Skolem types -----------------------------------------------
 
   /** A skolem type reference with underlying type `binder`. */
-  case class SkolemType(info: Type) extends UncachedProxyType with ValueType with SingletonType {
+  case class SkolemType(info: Type) extends UncachedProxyType with ValueType with RefType {
     override def underlying(implicit ctx: Context) = info
     def derivedSkolemType(info: Type)(implicit ctx: Context) =
       if (info eq this.info) this else SkolemType(info)
