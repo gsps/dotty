@@ -35,7 +35,7 @@ import scala.collection.mutable.{Map => MutableMap}
   *     Not really -> We'll have to lift them to explicit FunDef params
   */
 class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(override implicit val ctx: Context)
-  extends DottyExtraction(inoxCtx, exState)(ctx) {
+  extends DottyExtraction(inoxCtx, exState)(ctx) with RefExtraction {
 
 //  val trees: qtyper.extraction.ast.trees.type = qtyper.extraction.ast.trees
 //  val trees: st.type = st
@@ -76,86 +76,6 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
 
   final def freshSubject(name: String, tp: Type, pos: Position = NoPosition): st.Variable =
     freshVar(name, stType(tp, pos), pos)
-
-
-  @inline final def refUnderlying(refTp: RefType): Type = refTp match {
-    case tp: TermRef          => tp.widenTermRefExpr
-    case tp: TermParamRef     => tp.underlying.widen
-    case tp: QualifierSubject => tp.binder.subjectTp
-    case tp: SkolemType       => tp.underlying
-  }
-
-  def refSubject(refTp: RefType, asExternal: Boolean): st.Variable = {
-    def register(refTp: RefType, name: => String, pos: Position = NoPosition): st.Variable = {
-      val underlyingTp = refUnderlying(refTp)
-      if (asExternal) exState.getOrPutVar(refTp, () => freshSubject(name, underlyingTp, pos))
-      else            freshSubject(name, underlyingTp, pos)
-    }
-
-    refTp match {
-      case refTp: TermRef =>
-        val sym = refTp.symbol
-        assert(sym ne NoSymbol)
-
-        def qualVarName = {
-          val sb = StringBuilder.newBuilder
-
-          // TODO(gsps): Homogenize from PlainPrinter; factor out
-          def homogenize(tp: Type): Type = tp match {
-            case tp: ThisType if tp.cls.is(Package) && !tp.cls.isEffectiveRoot =>
-              ctx.requiredPackage(tp.cls.fullName).termRef
-            case tp: TypeVar if tp.isInstantiated =>
-              homogenize(tp.instanceOpt)
-            case AndType(tp1, tp2) =>
-              homogenize(tp1) & homogenize(tp2)
-            case OrType(tp1, tp2) =>
-              homogenize(tp1) | homogenize(tp2)
-            case tp: SkolemType =>
-              homogenize(tp.info)
-            case tp: LazyRef =>
-              homogenize(tp.ref)
-            case AppliedType(tycon, args) =>
-              tycon.dealias.appliedTo(args)
-            case _ =>
-              tp
-          }
-
-          def refStr(tp: Type): Unit = homogenize(tp) match {
-            case tp: TermRef      =>
-              if (!ctx.settings.YtestPickler.value) prefixStr(tp.prefix)
-              sb.append(tp.name)
-            case tp: ThisType     => sb.append(tp.cls.name); sb.append(".this")
-            case tp: SuperType    => sb.append("Super(...)")  // FIXME?
-            case tp: TermParamRef => sb.append(tp.paramName)
-            case tp: SkolemType   => refStr(tp.underlying); sb.append("(?)")  // FIXME?
-            case tp: ConstantType => sb.append("cnst"); sb.append(tp.value.show)
-            case tp: RecThis      => sb.append("{...}.this")
-            case _ => throw new IllegalArgumentException(i"Unexpected type in TermRef prefix: $tp")
-          }
-
-          def prefixStr(tp: Type): Unit = homogenize(tp) match {
-            case NoPrefix                           => //
-            case _: SingletonType | _: TermParamRef => refStr(tp); sb.append(".")
-            case tp: TypeRef                        => prefixStr(tp.prefix); sb.append(tp.symbol.name); sb.append(".")
-            case _                                  => sb.append("{???}")  // FIXME?
-          }
-          refStr(refTp); sb.toString()
-        }
-
-        // TODO: We actually want the position of the term carrying the TermRef here, no?
-        register(refTp, qualVarName, sym.pos)
-
-      case refTp: TermParamRef =>
-        register(refTp, refTp.paramName.toString)
-
-      case refTp: QualifierSubject =>
-        register(refTp, refTp.binder.subjectName.toString)
-
-      case refTp: SkolemType =>
-        val name = if (ctx.settings.YtestPickler.value) "sk" else s"sk${refTp.uniqId}"
-        register(refTp, name)
-    }
-  }
 
 
   def refinePrimitive(clazz: ClassSymbol, opName: Name, opTp: Type): Type = {
@@ -313,43 +233,110 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
   final def freshVar(name: String, stainlessTp: st.Type): st.Variable =
     st.Variable.fresh(name, stainlessTp, alwaysShowUniqueID = false)
 
+}
 
-  /*
-  protected object usedBindingsInTree extends tpd.TreeAccumulator[Set[Symbol]] {
-    def apply(syms: Set[Symbol], tree: tpd.Tree)(implicit ctx: Context): Set[Symbol] = tree match {
-      case tree: tpd.Select =>
-        foldOver(syms, tree)
-      case tree: tpd.Ident =>
-        foldOver(usedBindingsInType(syms, tree.tpe), tree)
-      case tree: tpd.DenotingTree =>
-        ctx.error(s"Qualifiers may only contain denoting trees that are either idents or selects: $tree", tree.pos)
-        syms
-      case tree =>
-        foldOver(syms, tree)
+
+trait RefExtraction { this: QualifierExtraction =>
+  import scala.util.{Try, Success, Failure}
+
+  @inline final def refUnderlying(refTp: RefType): Type = refTp match {
+    case tp: TermRef          => tp.widenTermRefExpr
+    case tp: TermParamRef     => tp.underlying.widen
+    case tp: QualifierSubject => tp.binder.subjectTp
+    case tp: SkolemType       => tp.underlying
+  }
+
+  def refSubject(refTp: RefType): st.Variable = {
+    def register(refTp: RefType, name: => String, pos: Position = NoPosition): st.Variable = {
+      val underlyingTp = refUnderlying(refTp)
+      exState.getOrPutRefVar(refTp, () => freshSubject(name, underlyingTp, pos))
+    }
+
+    refTp match {
+      case refTp: TermRef =>
+        val sym = refTp.symbol
+        assert(sym ne NoSymbol)
+
+        def qualVarName = {
+          val sb = StringBuilder.newBuilder
+
+          // TODO(gsps): Homogenize from PlainPrinter; factor out
+          def homogenize(tp: Type): Type = tp match {
+            case tp: ThisType if tp.cls.is(Package) && !tp.cls.isEffectiveRoot =>
+              ctx.requiredPackage(tp.cls.fullName).termRef
+            case tp: TypeVar if tp.isInstantiated =>
+              homogenize(tp.instanceOpt)
+            case AndType(tp1, tp2) =>
+              homogenize(tp1) & homogenize(tp2)
+            case OrType(tp1, tp2) =>
+              homogenize(tp1) | homogenize(tp2)
+            case tp: SkolemType =>
+              homogenize(tp.info)
+            case tp: LazyRef =>
+              homogenize(tp.ref)
+            case AppliedType(tycon, args) =>
+              tycon.dealias.appliedTo(args)
+            case _ =>
+              tp
+          }
+
+          def refStr(tp: Type): Unit = homogenize(tp) match {
+            case tp: TermRef      =>
+              if (!ctx.settings.YtestPickler.value) prefixStr(tp.prefix)
+              sb.append(tp.name)
+            case tp: ThisType     => sb.append(tp.cls.name); sb.append(".this")
+            case tp: SuperType    => sb.append("Super(...)")  // FIXME?
+            case tp: TermParamRef => sb.append(tp.paramName)
+            case tp: SkolemType   => refStr(tp.underlying); sb.append("(?)")  // FIXME?
+            case tp: ConstantType => sb.append("cnst"); sb.append(tp.value.show)
+            case tp: RecThis      => sb.append("{...}.this")
+            case _ => throw new IllegalArgumentException(i"Unexpected type in TermRef prefix: $tp")
+          }
+
+          def prefixStr(tp: Type): Unit = homogenize(tp) match {
+            case NoPrefix                           => //
+            case _: SingletonType | _: TermParamRef => refStr(tp); sb.append(".")
+            case tp: TypeRef                        => prefixStr(tp.prefix); sb.append(tp.symbol.name); sb.append(".")
+            case _                                  => sb.append("{???}")  // FIXME?
+          }
+          refStr(refTp); sb.toString()
+        }
+
+        // TODO: We actually want the position of the term carrying the TermRef here, no?
+        register(refTp, qualVarName, sym.pos)
+
+      case refTp: TermParamRef =>
+        register(refTp, refTp.paramName.toString)
+
+      case refTp: QualifierSubject =>
+        register(refTp, refTp.binder.subjectName.toString)
+
+      case refTp: SkolemType =>
+        val name = if (ctx.settings.YtestPickler.value) "sk" else s"sk${refTp.uniqId}"
+        register(refTp, name)
     }
   }
 
-  object usedBindingsInType extends TypeAccumulator[Set[Symbol]] {
-    def apply(syms: Set[Symbol], tp: Type): Set[Symbol] = {
-      tp match {
-        case tp: NamedType =>
-          /** Suspected invariant: (tp: NamedType).prefix == NoPrefix => tp.symbol != NoSymbol **/
-          if (tp.prefix ne NoPrefix) {
-            val sym = tp.symbol
-            assert(sym ne NoSymbol)
-            syms + sym
-          } else {
-            ctx.error(s"Qualifiers may only refer to terms and types in local scope: $tp"); syms
-          }
-        case qtp: QualifiedType =>
-          apply(syms, qtp.parent) union qtp.cExpr.symScope.keySet
-        case btpe: BoundType =>
-          ctx.error(s"Unexpected BoundType: $btpe"); syms
-        case tp =>
-          ctx.error(s"Unexpected type $tp in qualifier"); syms
+  def refExtraction(refTp: RefType): Try[ExtractionResult] =
+    exState.getRefExtraction(refTp, () => ExprBuilder(refUnderlying(refTp), refSubject(refTp)))
+
+  def refExtractionsClosure(tps: Iterable[RefType]): Try[Seq[ExtractionResult]] = {
+    val newTps = scala.collection.mutable.Stack[RefType]()
+    var seen: Set[RefType] = Set.empty[RefType]
+    var exs = List.empty[ExtractionResult]
+
+    newTps.pushAll(tps)
+    while (newTps.nonEmpty) {
+      val tp = newTps.pop()
+      seen += tp
+      refExtraction(tp) match {
+        case Success(ex) =>
+          exs = ex :: exs
+          ex.exts foreach { tp => if (!seen(tp)) newTps.push(tp) }
+        case f: Failure[ExtractionResult] => return Failure(f.exception)
       }
     }
-  }
-  */
 
+    Success(exs)
+  }
 }

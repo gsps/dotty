@@ -11,6 +11,7 @@ import stainless.{trees => st}
 import st.{Expr, Variable}
 
 import ConstraintExpr.{UnaryPrimitive, BinaryPrimitive}
+import extractor.{ExprBuilder, ExtractionResult}
 
 import scala.util.{Success, Failure}
 

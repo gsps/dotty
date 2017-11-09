@@ -6,11 +6,15 @@ import core.Names._
 import core.Symbols._
 import core.Types.{Type, RefType, TermRef, TermParamRef, ComplexQType}
 
+import extractor.ExtractionResult
+
 import stainless.ast.SymbolIdentifier
 import stainless.{FreshIdentifier, Identifier}
 
 import inox.utils.Bijection
+
 import scala.collection.mutable.{Map => MutableMap}
+import scala.util.Try
 
 /**
  * Created by gs on 27.03.17.
@@ -19,11 +23,10 @@ class ExtractionState {
   final lazy val trees: stainless.trees.type = stainless.trees
 //  val trees: qtyper.extraction.ast.trees.type = qtyper.extraction.ast.trees
 
-  // TODO: Introduce RefType as a marker trait in Dotty type representation with member "prettySubjectVarName: String"
-
   protected val symbolsCache: MutableMap[Symbol, SymbolIdentifier] = MutableMap.empty
   protected val namesCache: MutableMap[Name, Identifier] = MutableMap.empty
   protected val refVars: Bijection[RefType, trees.Variable] = Bijection()
+  protected val refExtractions: MutableMap[RefType, Try[ExtractionResult]] = MutableMap.empty
 
 
   def getIdentifier(sym: Symbol)(implicit ctx: Context): SymbolIdentifier = symbolsCache.get(sym) match {
@@ -44,15 +47,15 @@ class ExtractionState {
   }
 
 
-  def getOrPutVar(ref: RefType, builder: () => trees.Variable): trees.Variable =
-    refVars.getB(ref) match {
+  def getOrPutRefVar(refTp: RefType, builder: () => trees.Variable): trees.Variable =
+    refVars.getB(refTp) match {
       case Some(v) => v
       case None =>
         val v = builder()
-        refVars += ref -> v
+        refVars += refTp -> v
         v
     }
 
-  def getRefVar(variable: trees.Variable): RefType =
-    refVars.toA(variable)
+  def getRefExtraction(refTp: RefType, builder: () => Try[ExtractionResult]): Try[ExtractionResult] =
+    refExtractions.getOrElseUpdate(refTp, builder())
 }

@@ -1,6 +1,7 @@
 /* Copyright 2009-2016 EPFL, Lausanne */
 
-package dotty.tools.dotc.qtyper.extraction.extractor
+package dotty.tools.dotc.qtyper.extraction
+package extractor
 
 import dotty.tools.dotc._
 import ast.tpd
@@ -11,21 +12,18 @@ import core.StdNames._
 import core.Symbols._
 import core.Types._
 import core.Flags._
-import dotty.tools.dotc.qtyper.extraction.ExtractionState
 import util.Positions._
-import stainless.ast.SymbolIdentifier
-//import stainless.extraction.xlang.{trees => xt}
 
-//import qtyper.extraction.ast.{ASTExtractors, Identifier, FreshIdentifier}
 import qtyper.extraction.ast.ASTExtractors
 import stainless.{Identifier, FreshIdentifier}
 
 import scala.language.implicitConversions
+import scala.util.{Try, Success, Failure}
 
 
 /** NOTE: Required several modifications from stainless-dotty-frontend.
   *       Keeping separate version for the moment. */
-abstract class DottyExtraction(inoxCtx: inox.Context, exState: ExtractionState)(implicit val ctx: Context)
+abstract class DottyExtraction(inoxCtx: inox.Context, val exState: ExtractionState)(implicit val ctx: Context)
   extends ASTExtractors {
 
   val trees: stainless.extraction.oo.Trees
