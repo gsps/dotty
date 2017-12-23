@@ -4,6 +4,7 @@ package qtyper.extraction
 import dotty.tools.sharable
 import core.Contexts._
 import core.Decorators._
+import core.Names.TermName
 import core.Types._
 import core.Symbols.{ClassSymbol, Symbol}
 
@@ -11,7 +12,7 @@ import stainless.{trees => st}
 import st.{Expr, Variable}
 
 import ConstraintExpr.{UnaryPrimitive, BinaryPrimitive}
-import extractor.{ExprBuilder, ExtractionResult}
+import extractor.{ExprBuilder, ExtractionResult, Inhabitant}
 
 import scala.util.{Success, Failure}
 
@@ -411,12 +412,11 @@ object ConstraintExpr {
 
 
 
-  def prettyPrintExpr(tp: QualifiedType, subjectName: String = "V", useValExpr: Boolean = false)(
+  def prettyPrintExpr(tp: QualifiedType, subjectName: TermName, useValExpr: Boolean = false)(
     implicit ctx: Context): String =
   {
-    val subject = ctx.qualifierExtraction.freshSubject(subjectName, tp)
-    ExprBuilder(tp, subject) match {
-      case Success(ExtractionResult(exts, intTypes, intCnstrs, `subject`)) =>
+    ExprBuilder(tp, Inhabitant.NameHint(subjectName)) match {
+      case Success(ExtractionResult(exts, intTypes, intCnstrs, subject)) =>
 
         object printer extends stainless.ast.Printer {
           val trees: st.type = st
@@ -430,11 +430,14 @@ object ConstraintExpr {
           }
         }
 
-        var expr = intCnstrs(subject)
-        if (useValExpr) {
-          val st.Equals(`subject`, valExpr) = intCnstrs(subject)
-          expr = valExpr
-        }
+        val expr =
+          if (useValExpr) {
+            val st.Equals(`subject`, valExpr) = intCnstrs(subject)
+            valExpr
+          } else {
+            intCnstrs(subject)
+          }
+
         val opts = st.PrinterOptions()
         val pctx = st.PrinterContext(expr, Nil, opts.baseIndent, opts)
         printer.pp(expr)(pctx)

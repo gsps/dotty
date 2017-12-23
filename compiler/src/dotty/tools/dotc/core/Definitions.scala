@@ -1114,4 +1114,16 @@ class Definitions {
     }
   }
 
+  /** We reuse a number of RefTypes during the translation of QType subtyping checks. */
+
+  private val QTypeExtMainRefs = new PerRun[mutable.Map[Type, RefType]](implicit ctx => mutable.Map[Type, RefType]())
+
+  def getQTypeExtMainRef(tp: Type)(implicit ctx: Context): RefType = {
+    val tp1 = tp.widenDealias
+    QTypeExtMainRefs().getOrElseUpdate(tp1, ctx.qualifierExtraction.freshRef(tp1, "V".toTermName))
+  }
+
+  val QTypeExtPcRef = new PerRun[RefType](implicit ctx =>
+    ctx.qualifierExtraction.freshRef(defn.BooleanType, "pcHolds".toTermName))
+
 }

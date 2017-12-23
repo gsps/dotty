@@ -66,6 +66,16 @@ class QualifierExtraction(inoxCtx: inox.Context, exState: ExtractionState)(overr
     }
   }
 
+  final def assertComparableTypes(tp1: Type, tp2: Type): Unit = {
+    val stTp1 = stType(tp1)
+    val stTp2 = stType(tp2)
+    assert(stTp1 == stTp2,
+      i"Types $tp1 and $tp2 cannot be extracted and compared since they are of different underlying types:" +
+        s"\n\ttp1: $tp1\n\ttp2: $tp2")
+    assert(stTp1 != st.Untyped,
+      s"Types $tp1 $tp2 cannot be extracted and compared since their underlying type is unsupported!")
+  }
+
   final def stLiteral(ctp: ConstantType): st.Literal[_] = ctp.value.value match {
     case _: Unit    => st.UnitLiteral()
     case x: Boolean => st.BooleanLiteral(x)
@@ -246,7 +256,7 @@ trait RefExtraction { this: QualifierExtraction =>
     case tp: SkolemType       => tp.underlying
   }
 
-  def refSubject(refTp: RefType): st.Variable = {
+  final def refSubject(refTp: RefType): st.Variable = {
     def register(refTp: RefType, name: => String, pos: Position = NoPosition): st.Variable = {
       val underlyingTp = refUnderlying(refTp)
       exState.getOrPutRefVar(refTp, () => freshSubject(name, underlyingTp, pos))
@@ -309,18 +319,30 @@ trait RefExtraction { this: QualifierExtraction =>
         register(refTp, refTp.paramName.toString)
 
       case refTp: QualifierSubject =>
-        register(refTp, refTp.binder.subjectName.toString)
+        throw new AssertionError("Should be unreachable now")
 
       case refTp: SkolemType =>
-        val name = if (ctx.settings.YtestPickler.value) "sk" else s"sk${refTp.uniqId}"
+        val name = if (ctx.settings.YtestPickler.value) "<sk ...>" else refTp.repr.toString
         register(refTp, name)
     }
   }
 
-  def refExtraction(refTp: RefType): Try[ExtractionResult] =
-    exState.getRefExtraction(refTp, () => ExprBuilder(refUnderlying(refTp), refSubject(refTp)))
+  // Create a fresh stable singleton (i.e. SkolemType) of the given type and register a corresponding refSubject
+  final def freshRef(tp: Type, name: TermName): RefType = {
+    val refTp = SkolemType(tp).withName(name)
+    exState.getOrPutRefVar(refTp, () => freshSubject(name.toString, tp))
+    refTp
+  }
 
-  def refExtractionsClosure(tps: Iterable[RefType]): Try[Seq[ExtractionResult]] = {
+  final def copyRef(from: RefType, to: RefType): Unit = {
+    exState.copyRefVar(from, to)
+  }
+
+  final def refExtraction(refTp: RefType): Try[ExtractionResult] =
+    exState.getRefExtraction(refTp,
+      () => ExprBuilder(refUnderlying(refTp), Inhabitant.Instance.fromStableRef(refTp)))
+
+  final def refExtractionsClosure(tps: Iterable[RefType]): Try[Seq[ExtractionResult]] = {
     val newTps = scala.collection.mutable.Stack[RefType]()
     var seen: Set[RefType] = Set.empty[RefType]
     var exs = List.empty[ExtractionResult]

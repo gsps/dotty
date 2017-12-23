@@ -149,6 +149,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
         "<overloaded " ~ toTextRef(tp) ~ ">"
       case tp: TermParamRef =>
         ParamRefNameString(tp) ~ ".type"
+      case tp: QualifierSubject =>
+        toTextRef(tp)
       case tp: SingletonType =>
         toTextLocal(tp.underlying) ~ "(" ~ toTextRef(tp) ~ ")"
       case tp: TypeRef =>
@@ -186,7 +188,7 @@ class PlainPrinter(_ctx: Context) extends Printer {
         def paramText(name: TermName, tp: Type) =
           toText(name) ~ ": " ~ (tp match {
             case tp: ComplexQType =>
-              "{" ~ toText(tp.parent) ~ " ⇒ " ~ ConstraintExpr.prettyPrintExpr(tp, name.toString) ~ "}"
+              "{" ~ toText(tp.parent) ~ " ⇒ " ~ ConstraintExpr.prettyPrintExpr(tp, name) ~ "}"
             case _ => toText(tp)
           })
         changePrec(GlobalPrec) {
@@ -209,10 +211,10 @@ class PlainPrinter(_ctx: Context) extends Printer {
       case AnnotatedType(tpe, annot) =>
         toTextLocal(tpe) ~ " " ~ toText(annot)
       case tp: PrimitiveQType =>
-        val exprText = ConstraintExpr.prettyPrintExpr(tp, useValExpr = true)
+        val exprText = ConstraintExpr.prettyPrintExpr(tp, nme.SUBJECT_PARAM_PREFIX, useValExpr = true)
         "(" ~ exprText ~ ").type"
       case tp @ ComplexQType(subjectName, parent) =>
-        val exprText = ConstraintExpr.prettyPrintExpr(tp, subjectName.toString)
+        val exprText = ConstraintExpr.prettyPrintExpr(tp, subjectName)
         "{" ~ toText(subjectName) ~ ": " ~ toText(parent) ~ " ⇒ " ~ exprText ~ "}"
       case tp: IteQType =>
         "<" ~ toText(tp.condTp) ~ " ? " ~ toText(tp.tp1) ~ " : " ~ toText(tp.tp2) ~ ">"
@@ -294,6 +296,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
         val idx = openRecs.reverse.indexOf(tp.binder)
         if (idx >= 0) selfRecName(idx + 1)
         else "{...}.this" // TODO move underlying type to an addendum, e.g. ... z3 ... where z3: ...
+      case tp: QualifierSubject =>
+        nameString(tp.binder.subjectName)
       case tp: SkolemType =>
         if (homogenizedView) toText(tp.info) else toText(tp.repr)
     }

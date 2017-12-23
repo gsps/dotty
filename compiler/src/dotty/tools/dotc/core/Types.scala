@@ -1317,14 +1317,16 @@ object Types {
     final def substParams(from: BindingType, to: List[Type])(implicit ctx: Context): Type =
       ctx.substParams(this, from, to, null)
 
-//    /** Substitute bound parameters by some symbols */
-//    final def substParamsWithSymbols(from: BindingType, to: List[Symbol])(implicit ctx: Context): Type =
-//      ctx.substParamsWithSymbols(this, from, to, null)
-
     /** Substitute all occurrences of symbols in `from` by references to corresponding symbols in `to`
      */
     final def substSym(from: List[Symbol], to: List[Symbol])(implicit ctx: Context): Type =
       ctx.substSym(this, from, to, null)
+
+    /** Substitute all occurrences of types that refer in their symbol to `sym` and replace them by type `tp`.
+     *  Also dives into skolem types.
+     */
+    final def subst1skolemDeep(sym: Symbol, to: Type)(implicit ctx: Context): Type =
+      ctx.subst1skolemDeep(this, sym, to, null)
 
 // ----- misc -----------------------------------------------------------
 
@@ -3280,7 +3282,7 @@ object Types {
   }
 
   /** Represents the type of the subject variable in a ComplexQType's qualifier tree. */
-  case class QualifierSubject(binder: ComplexQType) extends BoundType with RefType {
+  case class QualifierSubject(binder: ComplexQType) extends BoundType with SingletonType {
     type BT = ComplexQType
     def copyBoundType(bt: BT) = QualifierSubject(bt)
 
@@ -3301,14 +3303,23 @@ object Types {
   /** A skolem type reference with underlying type `binder`. */
   case class SkolemType(info: Type) extends UncachedProxyType with ValueType with RefType {
     override def underlying(implicit ctx: Context) = info
+
     def derivedSkolemType(info: Type)(implicit ctx: Context) =
-      if (info eq this.info) this else SkolemType(info)
+      if (info eq this.info) this
+      else if (myReprCustomized) SkolemType(info).withName(myRepr)
+      else SkolemType(info)
+
     override def hashCode: Int = identityHash
     override def equals(that: Any) = this.eq(that.asInstanceOf[AnyRef])
 
-    def withName(name: Name): this.type = { myRepr = name; this }
+    def withName(name: Name): this.type = {
+      myRepr = name
+      myReprCustomized = true
+      this
+    }
 
     private[this] var myRepr: Name = null
+    private[this] var myReprCustomized: Boolean = false
     def repr(implicit ctx: Context): Name = {
       if (myRepr == null) myRepr = SkolemName.fresh()
       myRepr
@@ -3715,7 +3726,7 @@ object Types {
     def apply(subjectVd: ValDef, qualifier: Tree)(implicit ctx: Context): ComplexQType = {
       ComplexQType(subjectVd.name, subjectVd.tpt.tpe)({ qtp =>
         val subjectSym  = subjectVd.symbol
-        val qualifierTp = qualifier.tpe.subst(List(subjectSym), List(qtp.subject))
+        val qualifierTp = qualifier.tpe.subst1skolemDeep(subjectSym, qtp.subject)
         assertNoEscapingSubject(subjectSym, qualifierTp)
         assert(qualifierTp.isBool, s"Expected Boolean qualifier, but found $qualifierTp")
         qualifierTp
@@ -4416,6 +4427,30 @@ object Types {
 
     override def toText(printer: Printer): Text =
       lo.toText(printer) ~ ".." ~ hi.toText(printer)
+  }
+
+  /** A type map that also dives into SkolemTypes and replacing equivalent SkolemTypes equivalently. **/
+  abstract class SkolemDeepTypeMap(implicit ctx: Context) extends DeepTypeMap()(ctx) {
+    protected val skolemMap: mutable.Map[SkolemType, Type] = mutable.Map()
+
+    protected def derivedSkolemType(tp: SkolemType, info: Type) =
+      tp.derivedSkolemType(info)
+
+    override def mapOver(tp: Type): Type = {
+      tp match {
+        case tp: SkolemType =>
+          skolemMap.get(tp) match {
+            case Some(tp1) => tp1
+            case None =>
+              val tp1 = derivedSkolemType(tp, this(tp.info))
+              skolemMap.put(tp, tp1)
+              tp1
+          }
+
+        case _ =>
+          super.mapOver(tp)
+      }
+    }
   }
 
   // ----- TypeAccumulators ----------------------------------------------------

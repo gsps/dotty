@@ -25,7 +25,7 @@ class ExtractionState {
 
   protected val symbolsCache: MutableMap[Symbol, SymbolIdentifier] = MutableMap.empty
   protected val namesCache: MutableMap[Name, Identifier] = MutableMap.empty
-  protected val refVars: Bijection[RefType, trees.Variable] = Bijection()
+  protected val refVars: MutableMap[RefType, trees.Variable] = MutableMap.empty
   protected val refExtractions: MutableMap[RefType, Try[ExtractionResult]] = MutableMap.empty
 
 
@@ -48,13 +48,12 @@ class ExtractionState {
 
 
   def getOrPutRefVar(refTp: RefType, builder: () => trees.Variable): trees.Variable =
-    refVars.getB(refTp) match {
-      case Some(v) => v
-      case None =>
-        val v = builder()
-        refVars += refTp -> v
-        v
-    }
+    refVars.getOrElseUpdate(refTp, builder())
+
+  def copyRefVar(from: RefType, to: RefType): Unit = {
+    if (refVars contains from)
+      refVars.put(to, refVars(from))
+  }
 
   def getRefExtraction(refTp: RefType, builder: () => Try[ExtractionResult]): Try[ExtractionResult] =
     refExtractions.getOrElseUpdate(refTp, builder())

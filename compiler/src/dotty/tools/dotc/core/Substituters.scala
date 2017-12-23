@@ -16,8 +16,6 @@ trait Substituters { this: Context =>
       case tp: NamedType =>
         if (tp.currentSymbol.isStatic) tp
         else tp.derivedSelect(subst(tp.prefix, from, to, theMap))
-      case tp: QualifiedType =>
-        tp.map(subst(_, from, to, theMap))
       case _: ThisType | NoPrefix =>
         tp
       case _ =>
@@ -32,15 +30,25 @@ trait Substituters { this: Context =>
         if (sym eq from) return to
         if (sym.isStatic && !from.isStatic) tp
         else tp.derivedSelect(subst1(tp.prefix, from, to, theMap))
-      case tp: QualifiedType =>
-        tp.map(subst1(_, from, to, theMap))
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
-      case tp: SkolemType if to.isInstanceOf[QualifierSubject] =>
-        // Special case for introducing QualifierSubjects even in skolemized types
-        tp.derivedSkolemType(subst1(tp.info, from, to, theMap))
       case _ =>
         (if (theMap != null) theMap else new Subst1Map(from, to))
+          .mapOver(tp)
+    }
+  }
+
+  final def subst1skolemDeep(tp: Type, from: Symbol, to: Type, theMap: Subst1SkolemDeepMap): Type = {
+    tp match {
+      case tp: NamedType =>
+        val sym = tp.symbol
+        if (sym eq from) return to
+        if (sym.isStatic && !from.isStatic) tp
+        else tp.derivedSelect(subst1skolemDeep(tp.prefix, from, to, theMap))
+      case _: ThisType | _: BoundType | NoPrefix =>
+        tp
+      case _ =>
+        (if (theMap != null) theMap else new Subst1SkolemDeepMap(from, to))
           .mapOver(tp)
     }
   }
@@ -53,8 +61,6 @@ trait Substituters { this: Context =>
         if (sym eq from2) return to2
         if (sym.isStatic && !from1.isStatic && !from2.isStatic) tp
         else tp.derivedSelect(subst2(tp.prefix, from1, to1, from2, to2, theMap))
-      case tp: QualifiedType =>
-        tp.map(subst2(_, from1, to1, from2, to2, theMap))
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -76,8 +82,6 @@ trait Substituters { this: Context =>
         }
         if (sym.isStatic && !existsStatic(from)) tp
         else tp.derivedSelect(subst(tp.prefix, from, to, theMap))
-      case tp: QualifiedType =>
-        tp.map(subst(_, from, to, theMap))
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -107,8 +111,6 @@ trait Substituters { this: Context =>
           }
           tp.derivedSelect(substDealias(tp.prefix, from, to, theMap))
         }
-      case tp: QualifiedType =>
-        tp.map(substDealias(_, from, to, theMap))
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -134,8 +136,6 @@ trait Substituters { this: Context =>
         }
         if (sym.isStatic && !existsStatic(from)) tp
         else tp.derivedSelect(substSym(tp.prefix, from, to, theMap))
-      case tp: QualifiedType =>
-        tp.map(substSym(_, from, to, theMap))
       case tp: ThisType =>
         val sym = tp.cls
         var fs = from
@@ -160,8 +160,6 @@ trait Substituters { this: Context =>
       case tp: NamedType =>
         if (tp.currentSymbol.isStaticOwner) tp
         else tp.derivedSelect(substThis(tp.prefix, from, to, theMap))
-      case tp: QualifiedType =>
-        tp.map(substThis(_, from, to, theMap))
       case _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -176,8 +174,6 @@ trait Substituters { this: Context =>
       case tp: NamedType =>
         if (tp.currentSymbol.isStatic) tp
         else tp.derivedSelect(substRecThis(tp.prefix, from, to, theMap))
-      case tp: QualifiedType =>
-        tp.map(substRecThis(_, from, to, theMap))
       case _: ThisType | _: BoundType | NoPrefix =>
         tp
       case _ =>
@@ -192,8 +188,6 @@ trait Substituters { this: Context =>
       case tp: NamedType =>
         if (tp.currentSymbol.isStatic) tp
         else tp.derivedSelect(substParam(tp.prefix, from, to, theMap))
-      case tp: QualifiedType =>
-        tp.map(substParam(_, from, to, theMap))
       case _: ThisType | NoPrefix =>
         tp
       case _ =>
@@ -208,8 +202,6 @@ trait Substituters { this: Context =>
       case tp: NamedType =>
         if (tp.currentSymbol.isStatic) tp
         else tp.derivedSelect(substParams(tp.prefix, from, to, theMap))
-      case tp: QualifiedType =>
-        tp.map(substParams(_, from, to, theMap))
       case _: ThisType | NoPrefix =>
         tp
       case _ =>
@@ -228,6 +220,10 @@ trait Substituters { this: Context =>
 
   final class Subst1Map(from: Symbol, to: Type) extends DeepTypeMap {
     def apply(tp: Type) = subst1(tp, from, to, this)
+  }
+
+  final class Subst1SkolemDeepMap(from: Symbol, to: Type) extends SkolemDeepTypeMap {
+    def apply(tp: Type) = subst1skolemDeep(tp, from, to, this)
   }
 
   final class Subst2Map(from1: Symbol, to1: Type, from2: Symbol, to2: Type) extends DeepTypeMap {
