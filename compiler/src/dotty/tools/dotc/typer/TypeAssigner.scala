@@ -123,7 +123,7 @@ trait TypeAssigner {
           if (toAvoid(tp.tp1) || toAvoid(tp.tp2)) tp.parent else tp
         case tp: IteQType =>
           if (toAvoid(tp.condTp) || toAvoid(tp.tp1) || toAvoid(tp.tp2))
-            mapOver(tp.parent)
+            apply(tp.parent)
           else
             tp
 
@@ -187,15 +187,6 @@ trait TypeAssigner {
     case ex: StaleSymbol => false
   }
 
-  /** Replace name by a precise version if we're in PreciseTyping mode and a primitive is being referenced. */
-  def injectPrecisePrimitive(site: Type, name: Name)(implicit ctx: Context): Name =
-    if (ctx.preciseTyping)
-      site.widenSingleton.classSymbol match {
-        case owner: ClassSymbol if ctx.definitions.maybeQTypePrimitive(owner, name) =>
-          NameKinds.PrecisePrimName(name.asTermName)
-        case _ => name
-      }
-    else name
 
   /** If `tpe` is a named type, check that its denotation is accessible in the
    *  current context. Return the type with those alternatives as denotations
@@ -365,21 +356,36 @@ trait TypeAssigner {
       tp.substParam(pref, SkolemType(argType.widenTermRefExpr))
   }
 
+  def applicationResultType(methTp: MethodType, args: List[Type])(implicit ctx: Context): Type = {
+    def safeSubstParams(tp: Type, params: List[ParamRef], args: List[Type]): Type = params match {
+      case param :: params1 =>
+        val tp1 = safeSubstParam(tp, param, args.head)
+        safeSubstParams(tp1, params1, args.tail)
+      case Nil =>
+        tp
+    }
+    if (methTp.isDependent) safeSubstParams(methTp.resultType, methTp.paramRefs, args)
+    else methTp.resultType
+  }
+
   def assignType(tree: untpd.Apply, fn: Tree, args: List[Tree])(implicit ctx: Context) = {
-    val ownType = fn.tpe.widen match {
-      case fntpe: MethodType =>
-        def safeSubstParams(tp: Type, params: List[ParamRef], args: List[Tree]): Type = params match {
-          case param :: params1 =>
-            val tp1 = safeSubstParam(tp, param, args.head.tpe)
-            safeSubstParams(tp1, params1, args.tail)
-          case Nil =>
-            tp
+    val fnTpe = fn.tpe
+    val ownType = fnTpe.widen match {
+      case methTpe: MethodType =>
+        val argTpes = args.tpes  // FIXME(georg): Performance regression (previously there were no intermediate argTpes)
+        val resTpe =
+          if (sameLength(methTpe.paramInfos, args) || ctx.phase.prev.relaxedTyping)
+            applicationResultType(methTpe, argTpes)
+          else
+            errorType(i"wrong number of arguments for $methTpe: $fnTpe, expected: ${methTpe.paramInfos.length}, found: ${args.length}", tree.pos)
+        if (!ctx.erasedTypes && ctx.preciseTyping)
+          fnTpe match {
+            case fnTpe: TermRef if fnTpe.prefix.isStable && fn.symbol.owner.isPrimitiveValueClass =>
+              // TODO(georg): Also handle case `fn.symbol.isEffectivelyFinal && fn.symbol.isPure`
+              new AppliedTerm(fnTpe, argTpes, resTpe)
+            case _ => resTpe
           }
-        if (sameLength(fntpe.paramInfos, args) || ctx.phase.prev.relaxedTyping)
-          if (fntpe.isDependent) safeSubstParams(fntpe.resultType, fntpe.paramRefs, args)
-          else fntpe.resultType
-        else
-          errorType(i"wrong number of arguments for $fntpe: ${fn.tpe}, expected: ${fntpe.paramInfos.length}, found: ${args.length}", tree.pos)
+        else resTpe
       case t =>
         errorType(err.takesNoParamsStr(fn, ""), tree.pos)
     }

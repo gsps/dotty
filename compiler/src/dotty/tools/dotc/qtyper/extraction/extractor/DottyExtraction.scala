@@ -1115,6 +1115,8 @@ abstract class DottyExtraction(inoxCtx: inox.Context, val exState: ExtractionSta
 
     case ct: ConstantType => extractType(ct.value.tpe)
 
+    case tp: AppliedTerm => extractType(tp.underlying)
+
     case tt @ TypeRef(_, _) if dctx.tparams.isDefinedAt(tt.symbol) =>
       dctx.tparams(tt.symbol)
 

@@ -5,6 +5,8 @@ import core.Contexts._
 import core.Decorators._
 import core.Flags._
 import core.Names.TermName
+import core.StdNames.nme
+import core.Symbols.Symbol
 import core.Types._
 import util.Positions._
 
@@ -133,6 +135,63 @@ object ExprBuilder {
     }
 
 
+    def handleNullaryApp(fnSym: Symbol, recv: st.Expr): Option[st.Expr] = {
+      if (fnSym.owner.isPrimitiveValueClass) {
+        assert(fnSym.info.isInstanceOf[ExprType])
+        fnSym.name match {
+          case nme.UNARY_~ => Some(st.BVNot(recv))
+          case nme.UNARY_+ => ???
+          case nme.UNARY_- => Some(st.UMinus(recv))
+          case nme.UNARY_! => Some(st.Not(recv))
+          case _ => None
+        }
+      } else {
+        None
+      }
+    }
+
+    def handleNonnullaryApp(fnSym: Symbol, recv: st.Expr, args: List[st.Expr]): st.Expr = {
+      if (fnSym.owner.isPrimitiveValueClass)
+        (fnSym.owner, fnSym.name, fnSym.info) match {
+          case (_, nme.EQ, MethodTpe(_, List(_), qex.BooleanType)) => st.Equals(recv, args.head)
+          case (_, nme.NE, MethodTpe(_, List(_), qex.BooleanType)) => st.Not(st.Equals(recv, args.head))
+
+          case (qex.BooleanClass, opName, MethodTpe(_, List(_), qex.BooleanType)) =>
+            opName match {
+              case nme.AND | nme.ZAND => st.And(recv, args.head)
+              case nme.OR | nme.ZOR => st.Or(recv, args.head)
+              case nme.XOR => st.Not(st.Equals(recv, args.head))
+              case _ => ???
+            }
+
+          case (clazz, opName, MethodTpe(_, List(argTp), _)) if clazz == argTp.widen.classSymbol =>
+            opName match {
+              case nme.AND => st.BVAnd(recv, args.head)
+              case nme.OR => st.BVOr(recv, args.head)
+              case nme.XOR => st.BVXor(recv, args.head)
+              case nme.ADD => st.Plus(recv, args.head)
+              case nme.SUB => st.Minus(recv, args.head)
+              case nme.MUL => st.Times(recv, args.head)
+              case nme.DIV => st.Division(recv, args.head)
+              case nme.MOD => st.Remainder(recv, args.head)
+              case nme.LSL => st.BVShiftLeft(recv, args.head)
+              case nme.ASR => st.BVAShiftRight(recv, args.head)
+              case nme.LSR => st.BVLShiftRight(recv, args.head)
+              case nme.LT => st.LessThan(recv, args.head)
+              case nme.GT => st.GreaterThan(recv, args.head)
+              case nme.LE => st.LessEquals(recv, args.head)
+              case nme.GE => st.GreaterEquals(recv, args.head)
+              case _ => ???
+            }
+
+          case (clazz, opName, opTp) =>
+            throw new NotImplementedError(s"Missing extraction for primitive $clazz.$opName @ $opTp")
+        }
+      else
+        throw new NotImplementedError("Missing implementation for generic function calls")
+    }
+
+
     def buildExpr(tp: Type, inh: Inhabitant = Inhabitant.Empty): Either[st.Variable, st.Expr] =
     {
       tp.dealias match {
@@ -145,9 +204,21 @@ object ExprBuilder {
           handleRef(tpFixed)
 
         case tp: RefType =>
-          val underlyingTp = qex.refUnderlying(tp)
-          assert(tp ne underlyingTp, s"Needed $tp to be widened, but didnt change")
-          buildExpr(underlyingTp, inh)
+          def fallback = {
+            val underlyingTp = qex.refUnderlying(tp)
+            assert(tp ne underlyingTp, s"Needed $tp to be widened, but didnt change")
+            buildExpr(underlyingTp, inh)
+          }
+
+          tp match {
+            case tp: TermRef =>
+              val recvTpExpr = buildExpr(tp.prefix).merge
+              handleNullaryApp(tp.symbol, recvTpExpr) match {
+                case Some(valExpr) => Right(valExpr)
+                case None          => fallback
+              }
+            case _ => fallback
+          }
 
         case ctp: ConstantType =>
           val lit = qex.stLiteral(ctp)
@@ -162,6 +233,12 @@ object ExprBuilder {
           val tp1Expr = buildExpr(tp1).merge
           val tp2Expr = buildExpr(tp2).merge
           val valExpr = prim.builder(tp1Expr, tp2Expr)
+          Right(valExpr)
+
+        case tp: AppliedTerm =>
+          val recvTpExpr = buildExpr(tp.fn.prefix).merge
+          val argTpExprs = tp.args.map(buildExpr(_).merge)
+          val valExpr = handleNonnullaryApp(tp.fn.symbol, recvTpExpr, argTpExprs)
           Right(valExpr)
 
         case tp: ComplexQType =>

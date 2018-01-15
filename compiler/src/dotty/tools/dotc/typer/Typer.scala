@@ -177,11 +177,10 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
           NoType
         else {
           val pre = imp.site
-          val name1 = injectPrecisePrimitive(pre, name)
-          val denot = pre.member(name1).accessibleFrom(pre)(refctx)
+          val denot = pre.member(name).accessibleFrom(pre)(refctx)
             // Pass refctx so that any errors are reported in the context of the
             // reference instead of the
-          if (reallyExists(denot)) pre.select(name1, denot) else NoType
+          if (reallyExists(denot)) pre.select(name, denot) else NoType
         }
 
       /** The type representing a named import with enclosing name when imported
@@ -390,10 +389,8 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
     checkValue(tree1, pt)
   }
 
-  private def typedSelect(tree: untpd.Select, pt: Type, qual: Tree)(implicit ctx: Context): Select = {
-    val name = injectPrecisePrimitive(qual.tpe, tree.name)
-    checkValue(assignType(cpy.Select(tree)(qual, name), qual), pt)
-  }
+  private def typedSelect(tree: untpd.Select, pt: Type, qual: Tree)(implicit ctx: Context): Select =
+    checkValue(assignType(cpy.Select(tree)(qual, tree.name), qual), pt)
 
   def typedSelect(tree: untpd.Select, pt: Type)(implicit ctx: Context): Tree = track("typedSelect") {
     def typeSelectOnTerm(implicit ctx: Context): Tree = {
@@ -1876,14 +1873,11 @@ class Typer extends Namer with TypeAssigner with Applications with Implicits wit
   def tryInsertImplicitOnQualifier(tree: Tree, pt: Type)(implicit ctx: Context): Option[Tree] = trace(i"try insert impl on qualifier $tree $pt") {
     tree match {
       case Select(qual, name) =>
-        // Fall back to imprecise primitives on the implicitly converted qualifier
-        // TODO(gsps): Should not strip precise prim if we implicitly convert to another primitive class
-        val name1 = name.stripPrecise
-        val qualProto = SelectionProto(name1, pt, NoViewsAllowed, privateOK = false)
+        val qualProto = SelectionProto(name, pt, NoViewsAllowed, privateOK = false)
         tryEither { implicit ctx =>
           val qual1 = adaptInterpolated(qual, qualProto)
           if ((qual eq qual1) || ctx.reporter.hasErrors) None
-          else Some(typed(cpy.Select(tree)(untpd.TypedSplice(qual1), name1), pt))
+          else Some(typed(cpy.Select(tree)(untpd.TypedSplice(qual1), name), pt))
         } { (_, _) => None
         }
       case _ => None

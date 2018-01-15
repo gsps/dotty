@@ -9,7 +9,6 @@ import core._
 import Types._
 import Constants._
 import Names._
-import NameOps._
 import StdNames._
 import Contexts._
 
@@ -24,14 +23,14 @@ object ConstFold {
         xt.tpe.widenTermRefExpr match {
           case ConstantType(x) =>
             yt.tpe.widenTermRefExpr match {
-              case ConstantType(y) => foldBinop(op.stripPrecise, x, y)
+              case ConstantType(y) => foldBinop(op, x, y)
               case _ => null
             }
           case _ => null
         }
       case Select(xt, op) =>
         xt.tpe.widenTermRefExpr match {
-          case ConstantType(x) => foldUnop(op.stripPrecise, x)
+          case ConstantType(x) => foldUnop(op, x)
           case _ => null
         }
       case _ => null

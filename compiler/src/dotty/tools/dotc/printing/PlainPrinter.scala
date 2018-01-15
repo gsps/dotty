@@ -284,6 +284,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
         toTextPrefix(tp.prefix) ~ selectionString(tp)
       case tp: ThisType =>
         nameString(tp.cls) + ".this"
+      case tp: AppliedTerm =>
+        toTextRef(tp.fn) ~ "(" ~ toTextGlobal(tp.args, ", ") ~ ")"
       case SuperType(thistpe: SingletonType, _) =>
         toTextRef(thistpe).map(_.replaceAll("""\bthis$""", "super"))
       case SuperType(thistpe, _) =>

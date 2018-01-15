@@ -137,13 +137,11 @@ class SuperAccessors(thisTransformer: DenotTransformer) {
     /** Disallow some super.XX calls targeting Any methods which would
      *  otherwise lead to either a compiler crash or runtime failure.
      */
-    private def isDisallowed(sym: Symbol)(implicit ctx: Context) = {
-      val sym1 = defn.impreciseAnyEqSymbol(sym)
-      sym1.isTypeTestOrCast ||
-        (sym1 eq defn.Any_==) ||
-        (sym1 eq defn.Any_!=) ||
-        (sym1 eq defn.Any_##)
-    }
+    private def isDisallowed(sym: Symbol)(implicit ctx: Context) =
+      sym.isTypeTestOrCast ||
+        (sym eq defn.Any_==) ||
+        (sym eq defn.Any_!=) ||
+        (sym eq defn.Any_##)
 
     /** Replace `sel` (or `sel[targs]` if `targs` is nonempty) with a protected accessor
      *  call, if necessary.

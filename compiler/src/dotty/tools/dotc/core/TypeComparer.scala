@@ -293,6 +293,8 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
           case None         => ???
         }
       })
+    case tp2: AppliedTerm =>
+      isSubType(tp1, tp2.resultType)
     case ConstantType(v2) =>
       tp1 match {
         case ConstantType(v1) => v1.value == v2.value
@@ -378,6 +380,8 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       // TODO: Rather than only delegating to isSubtype(parent, tp2), try to check precisely
       //  whether tp1 (with its qualifier) is a subtype of tp2 (which may, e.g., be a SingletonType).
       isSubType(tp1.parent, tp2)
+    case tp1: AppliedTerm =>
+      isSubType(tp1.underlying, tp2)
     case _: FlexType =>
       true
     case _ =>

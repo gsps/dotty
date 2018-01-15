@@ -766,7 +766,7 @@ trait Applications extends Compatibility { self: Typer with Dynamic =>
       val app = realApply
       app match {
         case Apply(fn @ Select(left, _), right :: Nil) if fn.hasType =>
-          val op = defn.impreciseAnyEqSymbol(fn.symbol)
+          val op = fn.symbol
           if (op == defn.Any_== || op == defn.Any_!=)
             checkCanEqual(left.tpe.widen, right.tpe.widen, app.pos)
         case _ =>

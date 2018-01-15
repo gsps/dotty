@@ -278,11 +278,6 @@ object NameOps {
       val unmangled = (name /: kinds)(_.unmangle(_))
       if (unmangled eq name) name else unmangled.unmangle(kinds)
     }
-
-    def stripPrecise: N = name match {
-      case PrecisePrimName(primName) => primName.asInstanceOf[N]
-      case _ => name
-    }
   }
 
   implicit class TermNameDecorator(val name: TermName) extends AnyVal {

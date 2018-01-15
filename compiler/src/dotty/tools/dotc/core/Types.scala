@@ -301,7 +301,8 @@ object Types {
 
     /** Will this type potentially yield a meaningful top-level qualifier? */
     def isQTypeRelevant(implicit ctx: Context): Boolean =
-      (isInstanceOf[RefType] && isStable) || isInstanceOf[ConstantType] || isInstanceOf[QualifiedType]
+      (isInstanceOf[RefType] && isStable) || isInstanceOf[ConstantType] ||
+        isInstanceOf[QualifiedType] || isInstanceOf[AppliedTerm]
 
 // ----- Higher-order combinators -----------------------------------
 
@@ -907,6 +908,7 @@ object Types {
      */
     final def widen(implicit ctx: Context): Type = widenSingleton match {
       case tp: ExprType => tp.resultType.widen
+//      case tp: AppliedTerm => tp.resultType.widen
       case tp: QualifiedType => tp.parent.widen
       case tp => tp
     }
@@ -984,6 +986,8 @@ object Types {
           case TypeAlias(tp) => tp.dealias(keepAnnots): @tailrec
           case _ => tp
         }
+//      case tp: AppliedTerm =>
+//        tp.resultType.dealias(keepAnnots): @tailrec
       case app @ AppliedType(tycon, args) =>
         val tycon1 = tycon.dealias(keepAnnots)
         if (tycon1 ne tycon) app.superType.dealias(keepAnnots): @tailrec
@@ -3298,6 +3302,25 @@ object Types {
     }
   }
 
+  /** An opaque representation of a term-level application. **/
+  class AppliedTerm(val fn: TermRef, val args: List[Type], val resultType: Type)
+    extends UncachedProxyType with SingletonType
+  {
+    def underlying(implicit ctx: Context): Type = resultType
+
+    def derivedAppliedTerm(fn: TermRef, args: List[Type])(implicit ctx: Context): AppliedTerm =
+      if ((this.fn eq fn) && (this.args eq args)) this
+      else fn.widen match {
+        case methTp: MethodType => new AppliedTerm(fn, args, ctx.typer.applicationResultType(methTp, args))
+      }
+
+    override def hashCode: Int = doHash(fn, args)
+    override def equals(that: Any) = that match {
+      case that: AppliedTerm => this.fn == that.fn && this.args == that.args
+      case _ => false
+    }
+  }
+
   // ----- Skolem types -----------------------------------------------
 
   /** A skolem type reference with underlying type `binder`. */
@@ -3518,35 +3541,8 @@ object Types {
   /** A class for temporary class infos where `parents` are not yet known */
   final class TempClassInfo(prefix: Type, cls: ClassSymbol, decls: Scope, selfInfo: TypeOrSymbol)
   extends CachedClassInfo(prefix, cls, Nil, decls, selfInfo) {
-
-    // Synthesize precise primitive methods
-    private def addPrecisePrimitives(denot: SymDenotation)(implicit ctx: Context): Unit = denot match {
-      case denot: ClassDenotation =>
-        val cls = denot.classSymbol
-
-        def enterPrecise(sym: Symbol, augTp: Type): Unit = {
-          val augName = NameKinds.PrecisePrimName(sym.name.asTermName)
-          val precSym = ctx.newSymbol(cls, augName, sym.flags, augTp,
-            coord = sym.coord, privateWithin = sym.privateWithin)
-          assert(denot.symbol.asClass == cls)
-          cls.enter(precSym, decls)
-        }
-
-        if (ctx.definitions.QTypePrimitiveClasses().contains(cls)) {
-          for (primName <- nme.QTypePrimitiveOpNames)
-            for (sym <- decls.lookupAll(primName)) {
-              val augTp = defn.augmentScalaLibDenotWithQTypes(sym.denot, sym.info)
-//              if (sym.info ne augTp)
-              enterPrecise(sym, augTp)
-            }
-
-        }
-      case _ => //
-    }
-
     /** Install classinfo with known parents in `denot` s */
     def finalize(denot: SymDenotation, parents: List[Type])(implicit ctx: Context) = {
-      addPrecisePrimitives(denot)
       denot.info = ClassInfo(prefix, cls, parents, decls, selfInfo)
     }
 
@@ -4013,6 +4009,8 @@ object Types {
       tp.derivedTypeBounds(lo, hi)
     protected def derivedSuperType(tp: SuperType, thistp: Type, supertp: Type): Type =
       tp.derivedSuperType(thistp, supertp)
+    protected def derivedAppliedTerm(tp: AppliedTerm, fn: TermRef, args: List[Type]): Type =
+      tp.derivedAppliedTerm(fn, args)
     protected def derivedAppliedType(tp: AppliedType, tycon: Type, args: List[Type]): Type =
       tp.derivedAppliedType(tycon, args)
     protected def derivedTypeArgRef(tp: TypeArgRef, prefix: Type): Type =
@@ -4062,6 +4060,12 @@ object Types {
         case _: ThisType
           | _: BoundType
           | NoPrefix => tp
+
+        case tp: AppliedTerm =>
+          this(tp.fn) match {
+            case fnTpe1: TermRef => derivedAppliedTerm(tp, fnTpe1, tp.args map this)
+            case _ => this(tp.resultType)
+          }
 
         case tp: AppliedType =>
           def mapArgs(args: List[Type], tparams: List[ParamInfo]): List[Type] = args match {
@@ -4374,6 +4378,11 @@ object Types {
           else tp.derivedAppliedType(tycon, args)
       }
 
+    override protected def derivedAppliedTerm(tp: AppliedTerm, fn: TermRef, args: List[Type]): Type = {
+      if (!args.exists(isRange)) tp.derivedAppliedTerm(fn, args)
+      else throw new NotImplementedError("Cannot handle ranges in approximating type map over AppliedType yet.")
+    }
+
     override protected def derivedAndOrType(tp: AndOrType, tp1: Type, tp2: Type) =
       if (isRange(tp1) || isRange(tp2))
         if (tp.isAnd) range(lower(tp1) & lower(tp2), upper(tp1) & upper(tp2))
@@ -4429,7 +4438,7 @@ object Types {
       lo.toText(printer) ~ ".." ~ hi.toText(printer)
   }
 
-  /** A type map that also dives into SkolemTypes and replacing equivalent SkolemTypes equivalently. **/
+  /** A type map that also dives into SkolemTypes and replaces equivalent SkolemTypes equivalently. **/
   abstract class SkolemDeepTypeMap(implicit ctx: Context) extends DeepTypeMap()(ctx) {
     protected val skolemMap: mutable.Map[SkolemType, Type] = mutable.Map()
 
@@ -4477,6 +4486,9 @@ object Types {
           val tp1 = tp.prefix.lookupRefined(tp.name)
           if (tp1.exists) this(x, tp1) else applyToPrefix(x, tp)
         }
+
+      case tp: AppliedTerm =>
+        tp.args.foldLeft(this(x, tp.fn))(this)
 
       case tp @ AppliedType(tycon, args) =>
         @tailrec def foldArgs(x: T, tparams: List[ParamInfo], args: List[Type]): T =

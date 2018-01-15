@@ -37,7 +37,7 @@ object QTypeConstraint {
       Success(pcs.foldLeft(List.empty[ExtractionResult]) {
         case (exs, tpE) =>
           val tp = tpE.merge
-          val tp1 = if (tpE.isLeft) PrimitiveQType.negated(tp) else tp
+          val tp1 = if (tpE.isLeft) tp.select(defn.Boolean_!) else tp
           ExprBuilder(tp1, pcInh) match {
             case Success(ex) => ex :: exs
             case f: Failure[ExtractionResult] => return Failure(f.exception)
@@ -79,7 +79,7 @@ object QTypeConstraint {
       extExtractions <- qex.refExtractionsClosure(pcExts union exts1 union exts2)
 
     } yield {
-      val pcSubjectExpr = st.andJoin(pcExtractions.map(_.intCnstrs(pcSubject)))
+      val pcSubjectExpr = st.andJoin(pcExtractions.map(_.intCnstrs.getOrElse(pcSubject, st.BooleanLiteral(true))))
       val anteExprs = {
         // TODO: Refactor this to use some more descriptive "merge constraints" subroutine
         val anteExprsWithoutLhs = {
