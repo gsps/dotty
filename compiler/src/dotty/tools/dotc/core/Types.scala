@@ -148,6 +148,7 @@ object Types {
     /** Does this type denote a stable reference (i.e. singleton type)? */
     final def isStable(implicit ctx: Context): Boolean = stripTypeVar match {
       case tp: TermRef => tp.termSymbol.isStable && tp.prefix.isStable || tp.info.isStable
+      case tp: AppliedTermRef => tp.fn.isStable && tp.args.forall(_.isStable)
       case _: SingletonType | NoPrefix => true
       case tp: RefinedOrRecType => tp.parent.isStable
       case tp: ExprType => tp.resultType.isStable
@@ -279,14 +280,14 @@ object Types {
     /** Is this the type of a method that has a repeated parameter type as
      *  last parameter type?
      */
-    def isVarArgsMethod(implicit ctx: Context): Boolean = stripPoly match {
+    def isVarArgsMethod(implicit ctx: Context): Boolean = stripMethodPrefix match {
       case mt: MethodType => mt.paramInfos.nonEmpty && mt.paramInfos.last.isRepeatedParam
       case _ => false
     }
 
     /** Is this the type of a method with a leading empty parameter list?
      */
-    def isNullaryMethod(implicit ctx: Context): Boolean = stripPoly match {
+    def isNullaryMethod(implicit ctx: Context): Boolean = stripMethodPrefix match {
       case MethodType(Nil) => true
       case _ => false
     }
@@ -903,9 +904,10 @@ object Types {
       */
     def stripAnnots(implicit ctx: Context): Type = this
 
-    /** Strip PolyType prefix */
-    def stripPoly(implicit ctx: Context): Type = this match {
-      case tp: PolyType => tp.resType.stripPoly
+    /** Strip PolyType and AppliedTermRef prefix */
+    def stripMethodPrefix(implicit ctx: Context): Type = this match {
+      case tp: PolyType => tp.resType.stripMethodPrefix
+      case tp: AppliedTermRef => tp.resType.stripMethodPrefix
       case _ => this
     }
 
@@ -1216,26 +1218,26 @@ object Types {
     }
 
     /** The parameter types of a PolyType or MethodType, Empty list for others */
-    final def paramInfoss(implicit ctx: Context): List[List[Type]] = stripPoly match {
+    final def paramInfoss(implicit ctx: Context): List[List[Type]] = stripMethodPrefix match {
       case mt: MethodType => mt.paramInfos :: mt.resultType.paramInfoss
       case _ => Nil
     }
 
     /** The parameter names of a PolyType or MethodType, Empty list for others */
-    final def paramNamess(implicit ctx: Context): List[List[TermName]] = stripPoly match {
+    final def paramNamess(implicit ctx: Context): List[List[TermName]] = stripMethodPrefix match {
       case mt: MethodType => mt.paramNames :: mt.resultType.paramNamess
       case _ => Nil
     }
 
 
     /** The parameter types in the first parameter section of a generic type or MethodType, Empty list for others */
-    final def firstParamTypes(implicit ctx: Context): List[Type] = stripPoly match {
+    final def firstParamTypes(implicit ctx: Context): List[Type] = stripMethodPrefix match {
       case mt: MethodType => mt.paramInfos
       case _ => Nil
     }
 
     /** Is this either not a method at all, or a parameterless method? */
-    final def isParameterless(implicit ctx: Context): Boolean = stripPoly match {
+    final def isParameterless(implicit ctx: Context): Boolean = stripMethodPrefix match {
       case mt: MethodType => false
       case _ => true
     }
@@ -1246,7 +1248,7 @@ object Types {
     /** The final result type of a PolyType, MethodType, or ExprType, after skipping
      *  all parameter sections, the type itself for all others.
      */
-    def finalResultType(implicit ctx: Context): Type = resultType.stripPoly match {
+    def finalResultType(implicit ctx: Context): Type = resultType.stripMethodPrefix match {
       case mt: MethodType => mt.resultType.finalResultType
       case _ => resultType
     }
@@ -2167,6 +2169,53 @@ object Types {
      */
     def apply(prefix: Type, name: TypeName, denot: Denotation)(implicit ctx: Context): TypeRef =
       apply(prefix, if (denot.symbol.exists) denot.symbol.asType else name).withDenot(denot)
+  }
+
+  // --- AppliedTermRef ---------------------------------------------------------------------
+
+  /** A precise representation of a term-level application `fn(... args)`. **/
+  abstract case class AppliedTermRef(fn: /*TermRef | AppliedTermRef*/ SingletonType, args: List[Type])
+    extends CachedProxyType with SingletonType
+  {
+    protected[this] var myResType: Type = _
+    def resType(implicit ctx: Context): Type = {
+      if (myResType == null)
+        fn.widen match {
+          case methTpe: MethodType => myResType = ctx.typer.applicationResultType(methTpe, args)
+        }
+      myResType
+    }
+
+    def underlying(implicit ctx: Context): Type = resType
+
+    def derivedAppliedTerm(fn: Type, args: List[Type])(implicit ctx: Context): Type =
+      if ((this.fn eq fn) && (this.args eq args)) this
+      else AppliedTermRef(fn, args)
+
+    override def computeHash(bs: Binders) = doHash(bs, fn, args)
+
+    override def eql(that: Type) = that match {
+      case that: AppliedTermRef => (this.fn eq that.fn) && this.args.eqElements(that.args)
+      case _ => false
+    }
+  }
+
+  final class CachedAppliedTermRef(fn: SingletonType, args: List[Type]) extends AppliedTermRef(fn, args)
+
+  object AppliedTermRef {
+    def apply(fn: Type, args: List[Type])(implicit ctx: Context): Type = {
+      assertUnerased()
+      fn.dealias match {
+        case fn: TermRef => unique(new CachedAppliedTermRef(fn, args))
+        case fn: AppliedTermRef => unique(new CachedAppliedTermRef(fn, args))
+        case _ =>
+          fn.widenDealias match {
+            case methTpe: MethodType => ctx.typer.applicationResultType(methTpe, args)
+            case _: WildcardType => WildcardType
+            case tp => throw new AssertionError(i"Don't know how to apply $tp.")
+          }
+      }
+    }
   }
 
   // --- Other SingletonTypes: ThisType/SuperType/ConstantType ---------------------------
@@ -3791,7 +3840,7 @@ object Types {
   object SAMType {
     def zeroParamClass(tp: Type)(implicit ctx: Context): Type = tp match {
       case tp: ClassInfo =>
-        def zeroParams(tp: Type): Boolean = tp.stripPoly match {
+        def zeroParams(tp: Type): Boolean = tp.stripMethodPrefix match {
           case mt: MethodType => mt.paramInfos.isEmpty && !mt.resultType.isInstanceOf[MethodType]
           case et: ExprType => true
           case _ => false
@@ -3912,6 +3961,8 @@ object Types {
       tp.derivedSuperType(thistp, supertp)
     protected def derivedAppliedType(tp: AppliedType, tycon: Type, args: List[Type]): Type =
       tp.derivedAppliedType(tycon, args)
+    protected def derivedAppliedTerm(tp: AppliedTermRef, fn: Type, args: List[Type]): Type =
+      tp.derivedAppliedTerm(fn, args)
     protected def derivedAndType(tp: AndType, tp1: Type, tp2: Type): Type =
       tp.derivedAndType(tp1, tp2)
     protected def derivedOrType(tp: OrType, tp1: Type, tp2: Type): Type =
@@ -3966,6 +4017,9 @@ object Types {
               nil
           }
           derivedAppliedType(tp, this(tp.tycon), mapArgs(tp.args, tp.typeParams))
+
+        case tp: AppliedTermRef =>
+          derivedAppliedTerm(tp, this(tp.fn), tp.args.mapConserve(this))
 
         case tp: RefinedType =>
           derivedRefinedType(tp, this(tp.parent), this(tp.refinedInfo))
@@ -4263,6 +4317,25 @@ object Types {
           else tp.derivedAppliedType(tycon, args)
       }
 
+    override protected def derivedAppliedTerm(tp: AppliedTermRef, fn: Type, args: List[Type]): Type =
+      fn match {
+        case Range(fnLo, fnHi) =>
+          range(derivedAppliedTerm(tp, fnLo, args), derivedAppliedTerm(tp, fnHi, args))
+        case _ =>
+          if (fn.isBottomType) {
+            fn
+          } else if (args.exists(isRange)) {
+            val loBuf, hiBuf = new mutable.ListBuffer[Type]
+            args foreach {
+              case Range(lo, hi) => loBuf += lo; hiBuf += hi
+              case arg => loBuf += arg; hiBuf += arg
+            }
+            range(tp.derivedAppliedTerm(fn, loBuf.toList), tp.derivedAppliedTerm(fn, hiBuf.toList))
+          } else {
+            tp.derivedAppliedTerm(fn, args)
+          }
+      }
+
     override protected def derivedAndType(tp: AndType, tp1: Type, tp2: Type) =
       if (isRange(tp1) || isRange(tp2)) range(lower(tp1) & lower(tp2), upper(tp1) & upper(tp2))
       else tp.derivedAndType(tp1, tp2)
@@ -4352,6 +4425,9 @@ object Types {
             foldArgs(acc, tparams.tail, args.tail)
           }
         foldArgs(this(x, tycon), tp.typeParams, args)
+
+      case tp: AppliedTermRef =>
+        foldOver(this(x, tp.fn), tp.args)
 
       case _: BoundType | _: ThisType => x
 

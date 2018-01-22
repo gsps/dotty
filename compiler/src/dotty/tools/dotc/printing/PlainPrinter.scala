@@ -60,6 +60,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
           homogenize(tp.ref)
         case AppliedType(tycon, args) =>
           tycon.dealias.appliedTo(args)
+        case tp: AppliedTermRef =>
+          homogenize(tp.underlying)
         case _ =>
           tp
       }
@@ -141,6 +143,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
         ParamRefNameString(tp) ~ ".type"
       case tp: TypeParamRef =>
         ParamRefNameString(tp) ~ lambdaHash(tp.binder)
+      case tp: AppliedTermRef =>
+        toTextRef(tp) ~ ".type"
       case tp: SingletonType =>
         toTextLocal(tp.underlying) ~ "(" ~ toTextRef(tp) ~ ")"
       case AppliedType(tycon, args) =>
@@ -260,6 +264,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
         toTextPrefix(tp.prefix) ~ selectionString(tp)
       case tp: ThisType =>
         nameString(tp.cls) + ".this"
+      case AppliedTermRef(fn, args) =>
+        (toTextRef(fn) ~ "(" ~ Text(args map argText, ", ") ~ ")").close
       case SuperType(thistpe: SingletonType, _) =>
         toTextRef(thistpe).map(_.replaceAll("""\bthis$""", "super"))
       case SuperType(thistpe, _) =>

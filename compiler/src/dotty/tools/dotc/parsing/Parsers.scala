@@ -863,7 +863,7 @@ object Parsers {
           makeTupleOrParens(inParens(argTypes(namedOK = false, wildOK = true)))
         }
       else if (in.token == LBRACE)
-        atPos(in.offset) { RefinedTypeTree(EmptyTree, refinement()) }
+        atPos(in.offset) { inBraces(emptyRefinementOrSingletonExpr()) }
       else if (isSimpleLiteral) { SingletonTypeTree(literal()) }
       else if (in.token == USCORE) {
         val start = in.skipToken()
@@ -875,6 +875,11 @@ object Parsers {
         case r @ SingletonTypeTree(_) => r
         case r => convertToTypeId(r)
       }
+    }
+
+    def emptyRefinementOrSingletonExpr(): Tree = {
+      if (!isStatSeqEnd && !isDclIntro) SingletonTypeTree(postfixExpr())
+      else RefinedTypeTree(EmptyTree, refineStatSeq())
     }
 
     val handleSingletonType: Tree => Tree = t =>

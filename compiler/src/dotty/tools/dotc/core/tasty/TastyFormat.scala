@@ -416,6 +416,7 @@ object TastyFormat {
     METHODtype + implicitOffset + erasedOffset
   }
 
+  final val APPLIEDTERMREF = 180
   final val HOLE = 255
 
   final val firstNatTreeTag = SHAREDterm

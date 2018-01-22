@@ -1345,7 +1345,7 @@ trait Applications extends Compatibility { self: Typer with Dynamic =>
           case x => x
         }
 
-        def sizeFits(alt: TermRef, tp: Type): Boolean = tp.stripPoly match {
+        def sizeFits(alt: TermRef, tp: Type): Boolean = tp.stripMethodPrefix match {
           case tp: MethodType =>
             val ptypes = tp.paramInfos
             val numParams = ptypes.length

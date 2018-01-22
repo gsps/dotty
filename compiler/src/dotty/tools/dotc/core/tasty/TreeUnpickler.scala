@@ -273,6 +273,8 @@ class TreeUnpickler(reader: TastyReader,
                 // Eta expansion of the latter puts readType() out of the expression.
             case APPLIEDtype =>
               readType().appliedTo(until(end)(readType()))
+            case APPLIEDTERMREF =>
+              AppliedTermRef(readType(), until(end)(readType()))
             case TYPEBOUNDS =>
               TypeBounds(readType(), readType())
             case ANNOTATEDtype =>

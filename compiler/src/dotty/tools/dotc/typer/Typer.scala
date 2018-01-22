@@ -1465,7 +1465,7 @@ class Typer extends Namer
      *  @param psym  Its type symbol
      *  @param cinfo The info of its constructor
      */
-    def maybeCall(ref: Tree, psym: Symbol, cinfo: Type): Tree = cinfo.stripPoly match {
+    def maybeCall(ref: Tree, psym: Symbol, cinfo: Type): Tree = cinfo.stripMethodPrefix match {
       case cinfo @ MethodType(Nil) if cinfo.resultType.isImplicitMethod =>
         val icall = New(ref).select(nme.CONSTRUCTOR).appliedToNone
         typedExpr(untpd.TypedSplice(icall))(superCtx)

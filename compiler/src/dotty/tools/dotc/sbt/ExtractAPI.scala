@@ -167,6 +167,7 @@ private class ExtractAPICollector(implicit val ctx: Context) extends ThunkHolder
     api.Annotation.of(api.Constant.of(Constants.emptyType, name), Array())
   val orMarker = marker("Or")
   val byNameMarker = marker("ByName")
+  val appliedTermRefMarker = marker("AppliedTermRef")
 
 
   /** Extract the API representation of a source file */
@@ -445,6 +446,9 @@ private class ExtractAPICollector(implicit val ctx: Context) extends ThunkHolder
         val apiTycon = apiType(tycon)
         val apiArgs = args.map(processArg)
         api.Parameterized.of(apiTycon, apiArgs.toArray)
+      case tp: AppliedTermRef =>
+        val apiTps = (tp.fn :: tp.args).map(apiType)
+        withMarker(combineApiTypes(apiTps: _*), appliedTermRefMarker)
       case tl: TypeLambda =>
         val apiTparams = tl.typeParams.map(apiTypeParameter)
         val apiRes = apiType(tl.resType)
