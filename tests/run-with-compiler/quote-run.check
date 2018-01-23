@@ -5,5 +5,5 @@ foo
 {
   val a: Int = 3
   println("foo")
-  2.+(a)
+  2.+(a): 2.+(Int).type
 }
