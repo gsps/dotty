@@ -426,8 +426,7 @@ class Scala2Unpickler(bytes: Array[Byte], classRoot: ClassDenotation, moduleClas
     // TODO(gsps): This is a hack to mark certain primitive methods as stable.
     //  In the future such primitive methods should be pickled with the Stable flag set.
     def markPrimitiveStable(owner: Symbol, name: Name, flags: FlagSet): FlagSet =
-      if (defn.ScalaValueClasses().contains(owner)) flags | Stable
-      else flags
+      if (tpnme.ScalaValueNames.contains(defn.scalaClassName(owner))) flags | Stable else flags
 
     tag match {
       case NONEsym => return NoSymbol
