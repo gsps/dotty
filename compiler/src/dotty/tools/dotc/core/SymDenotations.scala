@@ -47,7 +47,8 @@ trait SymDenotations { this: Context =>
   }
 
   def stillValid(denot: SymDenotation): Boolean =
-    if (denot.is(ValidForever) || denot.isRefinementClass || denot.isImport) true
+    if (denot.isInstanceOf[SymDenotationTemplate]) false
+    else if (denot.is(ValidForever) || denot.isRefinementClass || denot.isImport) true
     else {
       val initial = denot.initial
       val firstPhaseId = initial.validFor.firstPhaseId.max(ctx.typerPhase.id)
@@ -1887,6 +1888,23 @@ object SymDenotations {
         if (sym.defRunId != ctx.runId && sym.isClass && sym.asClass.assocFile == file)
           scope.unlink(sym, sym.lastKnownDenotation.name)
       }
+    }
+  }
+
+  class SymDenotationTemplate private[SymDenotations] (symbol: Symbol,
+                                                       maybeOwner: Symbol,
+                                                       name: Name,
+                                                       initFlags: FlagSet,
+                                                       initInfo: Type,
+                                                       initPrivateWithin: Symbol)
+    extends SymDenotation(symbol, maybeOwner, name, initFlags, initInfo, initPrivateWithin)
+
+  object SymDenotationTemplate {
+    def apply(orig: SymDenotation)(implicit ctx: Context): SymDenotationTemplate = {
+      val d = new SymDenotationTemplate(orig.symbol, orig.maybeOwner, orig.name, orig.flags, orig.info,
+        orig.privateWithin)
+      d.validFor = Nowhere
+      d
     }
   }
 
