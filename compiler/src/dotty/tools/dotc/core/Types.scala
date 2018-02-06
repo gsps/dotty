@@ -2025,14 +2025,15 @@ object Types {
       def reload(): NamedType = {
         val allowPrivate = !lastSymbol.exists || lastSymbol.is(Private) && prefix.classSymbol == this.prefix.classSymbol
         var d = memberDenot(prefix, name, allowPrivate)
-        if (d.isOverloaded && lastSymbol.exists)
+        if (d.isOverloaded && lastSymbol.exists) {
           d = disambiguate(d,
-                if (lastSymbol.signature == Signature.NotAMethod) Signature.NotAMethod
-                else lastSymbol.asSeenFrom(prefix).signature)
-        // As a last resort, pass the unambiguous, but invalidated `lastDenotation` to the new TermRef, which can then
-        //  recompute its denotation based on the signature of `lastDenotation`.
-        if (!d.exists && lastDenotation.isInstanceOf[SymDenotation])
-          d = SymDenotationTemplate(lastDenotation.asSymDenotation)
+            if (lastSymbol.signature == Signature.NotAMethod) Signature.NotAMethod
+            else lastSymbol.asSeenFrom(prefix).signature)
+          // As a last resort, pass the unambiguous, but invalidated `lastDenotation` to the new TermRef, which can then
+          //  recompute its denotation based on the signature of `lastDenotation`.
+          if (!d.exists && lastDenotation.isInstanceOf[SymDenotation])
+            d = SymDenotationTemplate(lastDenotation.asSymDenotation)
+        }
         NamedType(prefix, name, d)
       }
       if (prefix eq this.prefix) this
