@@ -433,6 +433,8 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
         }
         def compareRefined: Boolean = {
           val tp1w = tp1.widen
+          if (tp1w.isInstanceOf[RefinedType] && (tp2.refinedName eq nme.PRED))
+            return isPredicateSubType(tp1w, tp2)
           val skipped2 = skipMatching(tp1w, tp2)
           if ((skipped2 eq tp2) || !Config.fastPathForRefinedSubtype)
             tp1 match {
@@ -456,7 +458,10 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
         def compareRec = tp1.safeDealias match {
           case tp1: RecType =>
             val rthis1 = tp1.recThis
-            recur(tp1.parent, tp2.parent.substRecThis(tp2, rthis1))
+            val parent1 = tp1.parent
+            val parent2 = tp2.parent.substRecThis(tp2, rthis1)
+            isPredicateSubType(parent1, parent2) ||
+              recur(parent1, parent2)
           case _ =>
             val tp1stable = ensureStableSingleton(tp1)
             recur(fixRecs(tp1stable, tp1stable.widenExpr), tp2.parent.substRecThis(tp2, tp1stable))
@@ -563,9 +568,10 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
         compareTypeBounds
       case tp2: AppliedTermRef =>
         def compareAppliedTerm = tp1 match {
-          case _ if !ctx.phase.isTyper =>
-            // Need to be more permissive when checking later phases, applications may have been rewritten
-            isSubType(tp1, tp2.resType)
+          case _ if (!ctx.phase.isTyper && !ctx.preciseTypes) => // TODO(gsps): Add `|| tp2.resType.isStable =>`?
+            // We may rewrite the rhs to `tp2.resType` if that is equivalent to `tp2`.
+            // When checking later phases we need to be more permissive overall, as applications may have been rewritten.
+            recur(tp1, tp2.resType)
           case tp1: AppliedTermRef =>
             tp1.args.size == tp2.args.size && isSubType(tp1.fn, tp2.fn) &&
               (tp1.args zip tp2.args).forall(t => isSubType(t._1, t._2))
@@ -947,7 +953,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
   private def fixRecs(anchor: SingletonType, tp: Type): Type = {
     def fix(tp: Type): Type = tp.stripTypeVar match {
       case tp: RecType => fix(tp.parent).substRecThis(tp, anchor)
-      case tp @ RefinedType(parent, rname, rinfo) => tp.derivedRefinedType(fix(parent), rname, rinfo)
+      case tp @ RefinedType(parent, rname, rinfo) => tp.derivedRefinedType(fix(parent), rname, rinfo)  // FIXME: Bug lying in the wait (`fix(rinfo)`!)
       case tp: TypeParamRef => fixOrElse(bounds(tp).hi, tp)
       case tp: TypeProxy => fixOrElse(tp.underlying, tp)
       case tp: AndType => tp.derivedAndType(fix(tp.tp1), fix(tp.tp2))
@@ -1047,7 +1053,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       }
     }
 
-  final def ensureStableSingleton(tp: Type): SingletonType = tp.stripTypeVar match {
+  private final def ensureStableSingleton(tp: Type): SingletonType = tp.stripTypeVar match {
     case tp: SingletonType if tp.isStable => tp
     case tp: ValueType => SkolemType(tp)
     case tp: TypeProxy => ensureStableSingleton(tp.underlying)
@@ -1092,6 +1098,22 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
         tp1.parent.asInstanceOf[RefinedType], tp2.parent.asInstanceOf[RefinedType], limit))
   }
 
+  // PredicateType related checking
+
+  final private def isPredicateSubType(tp1: Type, tp2: Type): Boolean = {
+    tp1 match {
+      case PredicateType(parent1, pred1) =>
+        tp2 match {
+          case PredicateType(parent2, pred2) if parent1 <:< parent2 =>
+            comparePredicate(pred1, pred2)
+          case _ => false
+        }
+      case _ => false
+    }
+  }
+
+  protected def comparePredicate(pred1: Type, pred2: Type): Boolean = true
+
   /** A type has been covered previously in subtype checking if it
    *  is some combination of TypeRefs that point to classes, where the
    *  combiners are AppliedTypes, RefinedTypes, RecTypes, And/Or-Types or AnnotatedTypes.
@@ -1099,7 +1121,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
    private def isCovered(tp: Type): Boolean = tp.dealias.stripTypeVar match {
     case tp: TypeRef => tp.symbol.isClass && tp.symbol != NothingClass && tp.symbol != NullClass
     case tp: AppliedType => isCovered(tp.tycon)
-    case tp: RefinedOrRecType => isCovered(tp.parent)
+    case tp: RefinedOrRecType => isCovered(tp.parent) && PredicateType.WithIdentity.unapply(tp).isEmpty
     case tp: AnnotatedType => isCovered(tp.underlying)
     case tp: AndType => isCovered(tp.tp1) && isCovered(tp.tp2)
     case tp: OrType  => isCovered(tp.tp1) && isCovered(tp.tp2)
@@ -1107,7 +1129,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
   }
 
   /** Defer constraining type variables when compared against prototypes */
-  def isMatchedByProto(proto: ProtoType, tp: Type) = tp.stripTypeVar match {
+  private def isMatchedByProto(proto: ProtoType, tp: Type) = tp.stripTypeVar match {
     case tp: TypeParamRef if constraint contains tp => true
     case _ => proto.isMatchedBy(tp)
   }
@@ -1529,8 +1551,10 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
     case tp1: RefinedType =>
       tp2 match {
         case tp2: RefinedType if tp1.refinedName == tp2.refinedName =>
-          tp1.derivedRefinedType(tp1.parent & tp2.parent, tp1.refinedName,
-            tp1.refinedInfo & tp2.refinedInfo)
+          PredicateType.mergePredicates(tp1, tp2, isAnd = true) orElse {
+            tp1.derivedRefinedType(tp1.parent & tp2.parent, tp1.refinedName,
+              tp1.refinedInfo & tp2.refinedInfo)
+          }
         case _ =>
           NoType
       }
@@ -1567,7 +1591,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
     case tp1: AnnotatedType =>
       tp1.underlying | tp2
     case _ =>
-      NoType
+      PredicateType.mergePredicates(tp1, tp2, isAnd = false)
   }
 
   /** Show type, handling type types better than the default */

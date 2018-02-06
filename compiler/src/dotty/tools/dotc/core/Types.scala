@@ -2186,6 +2186,8 @@ object Types {
       if (myResType == null)
         fn.widen match {
           case methTpe: MethodType => myResType = ctx.typer.applicationResultType(methTpe, args)
+          case NoType => throw new AssertionError("Unexpected NoType as function of AppliedTermRef (probably " +
+            "touched resType) before enclosing type was fully initialized).")
         }
       myResType
     }
@@ -2220,6 +2222,9 @@ object Types {
           }
       }
     }
+
+    def and(tp1: Type, tp2: Type)(implicit ctx: Context): Type = AppliedTermRef(tp1.select(nme.ZAND), List(tp2))
+    def or(tp1: Type, tp2: Type)(implicit ctx: Context): Type = AppliedTermRef(tp1.select(nme.ZOR), List(tp2))
   }
 
   // --- Other SingletonTypes: ThisType/SuperType/ConstantType ---------------------------
@@ -2480,6 +2485,70 @@ object Types {
     def closeOver(parentExp: RecType => Type)(implicit ctx: Context) = {
       val rt = this(parentExp)
       if (rt.isReferredToBy(rt.parent)) rt else rt.parent
+    }
+  }
+
+  // --- PredicateType (encoding) -----------------------------------------------------
+
+  object PredicateType {
+    def apply(subject: ValDef, pred: Type)(implicit ctx: Context): Type = {
+      assertUnerased()
+      val parentTpe = subject.tpt.tpe
+      if (parentTpe.isError || pred.isError) parentTpe
+      else RecType(rt => RefinedType(parentTpe, nme.PRED, pred).subst(List(subject.symbol), List(rt.recThis)))
+    }
+
+    def unapply(tp: Type)(implicit ctx: Context): Option[(Type, Type)] = tp match {
+      case refTp @ RefinedType(parent, nme.PRED, pred) =>
+        Some((parent, pred))
+      case recTp: RecType =>  // roughly: `unapply(recTp.parent)`
+        recTp.parent match {
+          case refTp @ RefinedType(parent, nme.PRED, pred) =>
+            Some((parent, pred))
+        }
+      case _ => None
+    }
+
+    object PseudoDnf {
+      def unapply(tp: Type)(implicit ctx: Context): Option[List[List[Type]]] = {
+        def isAndFn(fn: TermRef): Boolean = fn.symbol eq defn.Boolean_&&
+        def isOrFn(fn: TermRef): Boolean = fn.symbol eq defn.Boolean_||
+        @tailrec def decomposeAnd(acc: List[Type], tp: Type): List[Type] = tp match {
+          case AppliedTermRef(fn: TermRef, List(arg)) if isAndFn(fn) => decomposeAnd(arg :: acc, fn.prefix)
+          case _ => tp :: acc
+        }
+        @tailrec def decomposeOr(acc: List[List[Type]], tp: Type): List[List[Type]] = tp match {
+          case AppliedTermRef(fn: TermRef, List(arg)) if isOrFn(fn) =>
+            decomposeOr(decomposeAnd(Nil, arg) :: acc, fn.prefix)
+          case _ =>
+            decomposeAnd(Nil, tp) :: acc
+        }
+        if (tp.isStable) Some(decomposeOr(Nil, tp)) else None
+      }
+    }
+
+    def mergePredicates(tp1: Type, tp2: Type, isAnd: Boolean)(implicit ctx: Context): Type = {
+      def derived(ptp: Type, pred: Type): Type = ptp match {
+        case refTp: RefinedType => refTp.derivedRefinedType(refTp.parent, nme.PRED, pred)
+        case recTp: RecType => recTp.derivedRecType(derived(recTp.parent, pred))  // assert(recTp.parent : RefinedType)
+      }
+
+      tp1 match {
+        case PredicateType(parent1, pred1 @ PseudoDnf(List(clause11))) if isAnd =>
+          tp2 match {
+            case PredicateType(`parent1`, PseudoDnf(List(clause21))) =>
+              derived(tp1, (pred1 /: clause21) (AppliedTermRef.and))
+            case _ => NoType
+          }
+        case PredicateType(parent1, pred1 @ PseudoDnf(clauses1)) if !isAnd =>
+          tp2 match {
+            case PredicateType(`parent1`, PseudoDnf(clauses2)) =>
+              derived(tp1,
+                (pred1 /: clauses2) { (p, clause) => AppliedTermRef.or(p, clause.reduceLeft(AppliedTermRef.and)) })
+            case _ => NoType
+          }
+        case _ => NoType
+      }
     }
   }
 

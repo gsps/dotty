@@ -149,6 +149,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
         toTextLocal(tp.underlying) ~ "(" ~ toTextRef(tp) ~ ")"
       case AppliedType(tycon, args) =>
         (toTextLocal(tycon) ~ "[" ~ Text(args map argText, ", ") ~ "]").close
+      case PredicateType(parent, pred) =>
+        ("{v:" ~ toTextLocal(parent) ~ " => " ~ toTextLocal(pred) ~ "}").close
       case tp: RefinedType =>
         val parent :: (refined: List[RefinedType @unchecked]) =
           refinementChain(tp).reverse
@@ -265,7 +267,13 @@ class PlainPrinter(_ctx: Context) extends Printer {
       case tp: ThisType =>
         nameString(tp.cls) + ".this"
       case AppliedTermRef(fn, args) =>
-        (toTextRef(fn) ~ "(" ~ Text(args map argText, ", ") ~ ")").close
+        def toTextRefIfSingleton(tp: Type) = tp match {
+          case tp: SingletonType => toTextRef(tp)
+          case _ => argText(tp)
+        }
+        (toTextRef(fn) ~ "(" ~ Text(args map toTextRefIfSingleton, ", ") ~ ")").close
+//        val argText = Text(args.map(arg => toTextRef(arg.asInstanceOf[SingletonType])), ", ")
+//        (toTextRef(fn) ~ "(" ~ argText ~ ")").close
       case SuperType(thistpe: SingletonType, _) =>
         toTextRef(thistpe).map(_.replaceAll("""\bthis$""", "super"))
       case SuperType(thistpe, _) =>

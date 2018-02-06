@@ -385,6 +385,9 @@ object Contexts {
     def source: SourceFile =
       if (compilationUnit == null) NoSource else compilationUnit.source
 
+    /** Is the program precisely typed in the current phase? */
+    def preciseTypes: Boolean = phase.preciseTypes
+
     /** Does current phase use an erased types interpretation? */
     def erasedTypes: Boolean = phase.erasedTypes
 

@@ -277,6 +277,7 @@ object StdNames {
     val TRAIT_CONSTRUCTOR: N        = "$init$"
     val U2EVT: N                    = "u2evt$"
     val ALLARGS: N                  = "$allArgs"
+    val PRED: N                     = "$pred"
 
     final val Nil: N                = "Nil"
     final val Predef: N             = "Predef"
@@ -551,6 +552,7 @@ object StdNames {
     val zip: N                  = "zip"
     val nothingRuntimeClass: N  = "scala.runtime.Nothing$"
     val nullRuntimeClass: N     = "scala.runtime.Null$"
+    val ite: N                  = "<ite>"
 
     val synthSwitch: N          = "$synthSwitch"
     val _scope: N               = "$scope"

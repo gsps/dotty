@@ -256,7 +256,7 @@ class Definitions {
   lazy val AnyValClass: ClassSymbol = completeClass(enterCompleteClassSymbol(ScalaPackageClass, tpnme.AnyVal, Abstract, List(AnyClass.typeRef)))
   def AnyValType = AnyValClass.typeRef
 
-    lazy val Any_==       = enterMethod(AnyClass, nme.EQ, methOfAny(BooleanType), Final)
+    lazy val Any_==       = enterMethod(AnyClass, nme.EQ, methOfAny(BooleanType), Final | Stable)  // FIXME: Unsound...
     lazy val Any_!=       = enterMethod(AnyClass, nme.NE, methOfAny(BooleanType), Final)
     lazy val Any_equals   = enterMethod(AnyClass, nme.equals_, methOfAny(BooleanType))
     lazy val Any_hashCode = enterMethod(AnyClass, nme.hashCode_, MethodType(Nil, IntType))
@@ -333,6 +333,10 @@ class Definitions {
   lazy val typeQuoteMethod = enterPolyMethod(OpsPackageClass, nme.TYPE_QUOTE, 1,
       pt => QuotedTypeType.appliedTo(pt.paramRefs(0) :: Nil),
       useCompleter = true)
+
+  /** Method representing a conditional choice during precise typing */
+  lazy val iteMethod = enterMethod(OpsPackageClass, nme.ite,
+      MethodType(List(BooleanType, AnyType, AnyType), AnyType), Stable)
 
   lazy val NothingClass: ClassSymbol = enterCompleteClassSymbol(
     ScalaPackageClass, tpnme.Nothing, AbstractFinal, List(AnyClass.typeRef))
