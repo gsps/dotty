@@ -1121,7 +1121,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
    private def isCovered(tp: Type): Boolean = tp.dealias.stripTypeVar match {
     case tp: TypeRef => tp.symbol.isClass && tp.symbol != NothingClass && tp.symbol != NullClass
     case tp: AppliedType => isCovered(tp.tycon)
-    case tp: RefinedOrRecType => isCovered(tp.parent) && PredicateType.WithIdentity.unapply(tp).isEmpty
+    case tp: RefinedOrRecType => isCovered(tp.parent)
     case tp: AnnotatedType => isCovered(tp.underlying)
     case tp: AndType => isCovered(tp.tp1) && isCovered(tp.tp2)
     case tp: OrType  => isCovered(tp.tp1) && isCovered(tp.tp2)
