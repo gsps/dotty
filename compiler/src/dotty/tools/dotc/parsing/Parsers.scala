@@ -878,7 +878,15 @@ object Parsers {
     }
 
     def emptyRefinementOrSingletonExpr(): Tree = {
-      if (!isStatSeqEnd && !isDclIntro) SingletonTypeTree(postfixExpr())
+      if (!isStatSeqEnd && !isDclIntro)
+        postfixExpr() match {
+          case ident: Ident if in.token == COLON =>
+            in.nextToken()
+            val subjectVd = makeParameter(ident.name.asTermName, infixType())
+            accept(ARROW)
+            PredicateTypeTree(subjectVd, SingletonTypeTree(expr()))
+          case t => SingletonTypeTree(t)
+        }
       else RefinedTypeTree(EmptyTree, refineStatSeq())
     }
 

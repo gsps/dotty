@@ -603,6 +603,13 @@ object Trees {
     def forwardTo = tpt
   }
 
+  /** { subjectVd => predTpt } */
+  case class PredicateTypeTree[-T >: Untyped] private[ast] (subjectVd: ValDef[T], predTpt: Tree[T])
+    extends ProxyTree[T] with TypTree[T] {
+    type ThisTree[-T >: Untyped] = PredicateTypeTree[T]
+    def forwardTo = subjectVd.tpt
+  }
+
   /** tpt[args] */
   case class AppliedTypeTree[-T >: Untyped] private[ast] (tpt: Tree[T], args: List[Tree[T]])
     extends ProxyTree[T] with TypTree[T] {
@@ -869,6 +876,7 @@ object Trees {
     type AppliedTypeTree = Trees.AppliedTypeTree[T]
     type LambdaTypeTree = Trees.LambdaTypeTree[T]
     type ByNameTypeTree = Trees.ByNameTypeTree[T]
+    type PredicateTypeTree = Trees.PredicateTypeTree[T]
     type TypeBoundsTree = Trees.TypeBoundsTree[T]
     type Bind = Trees.Bind[T]
     type Alternative = Trees.Alternative[T]
@@ -1040,6 +1048,10 @@ object Trees {
         case tree: ByNameTypeTree if result eq tree.result => tree
         case _ => finalize(tree, untpd.ByNameTypeTree(result))
       }
+      def PredicateTypeTree(tree: Tree)(subjectVd: ValDef, pred: Tree): PredicateTypeTree = tree match {
+        case tree: PredicateTypeTree if (subjectVd eq tree.subjectVd) && (pred eq tree.predTpt) => tree
+        case _ => finalize(tree, untpd.PredicateTypeTree(subjectVd, pred))
+      }
       def TypeBoundsTree(tree: Tree)(lo: Tree, hi: Tree): TypeBoundsTree = tree match {
         case tree: TypeBoundsTree if (lo eq tree.lo) && (hi eq tree.hi) => tree
         case _ => finalize(tree, untpd.TypeBoundsTree(lo, hi))
@@ -1188,6 +1200,8 @@ object Trees {
             cpy.LambdaTypeTree(tree)(transformSub(tparams), transform(body))
           case ByNameTypeTree(result) =>
             cpy.ByNameTypeTree(tree)(transform(result))
+          case PredicateTypeTree(subjectVd, predTpt) =>
+            cpy.PredicateTypeTree(tree)(transformSub(subjectVd), transform(predTpt))
           case TypeBoundsTree(lo, hi) =>
             cpy.TypeBoundsTree(tree)(transform(lo), transform(hi))
           case Bind(name, body) =>
@@ -1303,6 +1317,8 @@ object Trees {
             this(this(x, tparams), body)
           case ByNameTypeTree(result) =>
             this(x, result)
+          case PredicateTypeTree(subjectVd, pred) =>
+            this(this(x, subjectVd), pred)
           case TypeBoundsTree(lo, hi) =>
             this(this(x, lo), hi)
           case Bind(name, body) =>

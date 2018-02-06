@@ -1082,6 +1082,11 @@ class TreeUnpickler(reader: TastyReader,
               val tparams = readParams[TypeDef](TYPEPARAM)
               val body = readTpt()
               LambdaTypeTree(tparams, body)
+            case PREDICATEtpt =>
+              val tpe = readType()
+              val sym = ctx.newSymbol(ctx.owner, readName(), EmptyFlags, tpe)
+              registerSym(start, sym)
+              PredicateTypeTree(ValDef(sym), readTpt())
             case TYPEBOUNDStpt =>
               val lo = readTpt()
               val hi = if (currentAddr == end) lo else readTpt()

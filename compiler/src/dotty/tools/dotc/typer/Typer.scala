@@ -1281,6 +1281,13 @@ class Typer extends Namer
     assignType(cpy.ByNameTypeTree(tree)(result1), result1)
   }
 
+  def typedPredicateTypeTree(tree: untpd.PredicateTypeTree)(implicit ctx: Context): PredicateTypeTree = track("typedPredicateTypeTree") {
+    val exprCtx = index(tree.subjectVd)(ctx.fresh.setNewScope).retractMode(Mode.ImplicitsEnabled)
+    val subjectVd1 = typed(tree.subjectVd).asInstanceOf[ValDef]
+    val pred1 = typedExpr(tree.predTpt, defn.BooleanType)(exprCtx)
+    assignType(cpy.PredicateTypeTree(tree)(subjectVd1, pred1), subjectVd1, pred1)
+  }
+
   def typedTypeBoundsTree(tree: untpd.TypeBoundsTree, pt: Type)(implicit ctx: Context): Tree = track("typedTypeBoundsTree") {
     val TypeBoundsTree(lo, hi) = tree
     val lo1 = typed(lo)
@@ -1803,6 +1810,7 @@ class Typer extends Namer
           case tree: untpd.AppliedTypeTree => typedAppliedTypeTree(tree)
           case tree: untpd.LambdaTypeTree => typedLambdaTypeTree(tree)(ctx.localContext(tree, NoSymbol).setNewScope)
           case tree: untpd.ByNameTypeTree => typedByNameTypeTree(tree)
+          case tree: untpd.PredicateTypeTree => typedPredicateTypeTree(tree)
           case tree: untpd.TypeBoundsTree => typedTypeBoundsTree(tree, pt)
           case tree: untpd.Alternative => typedAlternative(tree, pt)
           case tree: untpd.PackageDef => typedPackageDef(tree)

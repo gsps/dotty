@@ -389,6 +389,8 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
         }
       case ByNameTypeTree(tpt) =>
         "=> " ~ toTextLocal(tpt)
+      case PredicateTypeTree(subjectVd, pred) =>
+        "{" ~ toText(subjectVd.name) ~ optAscription(subjectVd.tpt) ~ " => " ~ toTextLocal(pred) ~ "}"
       case TypeBoundsTree(lo, hi) =>
         if (lo eq hi) optText(lo)(" = " ~ _)
         else optText(lo)(" >: " ~ _) ~ optText(hi)(" <: " ~ _)
