@@ -2510,6 +2510,7 @@ object Types {
         recTp.parent match {
           case refTp @ RefinedType(parent, nme.PRED, pred) =>
             Some((parent, pred))
+          case _ => None
         }
       case _ => None
     }
