@@ -19,45 +19,53 @@ import typer.{FrontEnd, Checking, NoChecking}
 import ast.{untpd, tpd}
 import ast.Trees._
 
-class PreciseTyping1 extends MiniPhase with IdentityDenotTransformer { thisPhase =>
+class PreciseTyping1 extends Phase with IdentityDenotTransformer { thisPhase =>
 
   override def phaseName: String = "precisetyping1"
 
-  /** List of names of phases that should precede this phase */
-  override def runsAfter: Set[Class[_ <: Phase]] = Set(classOf[FrontEnd])
+  // NOTE: Should run after FrontEnd, but we can't express that ReplFrontEnd in particular is fine too
 
 //  override def changesMembers: Boolean = true
 //  override def changesParents: Boolean = true
 
-//  def transform(ref: SingleDenotation)(implicit ctx: Context): SingleDenotation = ref match {
-//    case ref: SymDenotation =>
-//      println(i"[ TRANSFORM SymDenot $ref ]")
-//      ref
-//    case ref =>
-//      ref
-//  }
+//  override def isCheckable: Boolean = false  // during precise typing all sorts of assumptions are broken
 
-//  val typer = new PreciseTyping.Typer
-//
-//  def run(implicit ctx: Context): Unit = {
-//    val unit = ctx.compilationUnit
-//    unit.tpdTree = typer.typedExpr(unit.tpdTree)(ctx.fresh.setPhase(this.next))
-//  }
 
   override def checkPostCondition(tree: tpd.Tree)(implicit ctx: Context) = ()
 
-  /** Replace infos of ValDef symbols by most precise rhs-types */
-  // TODO: Check whether this changes program semantics in the presence of overloading.
-  override def prepareForValDef(vdef: tpd.ValDef)(implicit ctx: Context) = {
-    val thisCtx = ctx.withPhase(thisPhase)
-    val rhsTpe = vdef.rhs(thisCtx).typeOpt
-    lazy val sym = vdef.symbol(thisCtx)
-    if (rhsTpe.exists && sym.isEffectivelyFinal && !sym.is(Flags.Mutable) && (rhsTpe ne sym.info)) {
-      val newDenot = sym.denot(thisCtx).copySymDenotation(info = rhsTpe)
-//      println(i"Changing $sym from  ${sym.info(thisCtx)}  to  $rhsTpe")
-      newDenot.installAfter(thisPhase)
+//  /** Replace infos of ValDef symbols by most precise rhs-types */
+//  // TODO: Check whether this changes program semantics in the presence of overloading.
+//  override def prepareForValDef(vdef: tpd.ValDef)(implicit ctx: Context) = {
+//    val thisCtx = ctx.withPhase(thisPhase)
+//    val rhsTpe = vdef.rhs(thisCtx).typeOpt
+//    lazy val sym = vdef.symbol(thisCtx)
+//    if (rhsTpe.exists && sym.isEffectivelyFinal && !sym.is(Flags.Mutable) && (rhsTpe ne sym.info)) {
+//      val newDenot = sym.denot(thisCtx).copySymDenotation(info = rhsTpe)
+////      println(i"Changing $sym from  ${sym.info(thisCtx)}  to  $rhsTpe")
+//      newDenot.installAfter(thisPhase)
+//    }
+//    ctx
+//  }
+
+
+  def run(implicit ctx: Context): Unit = {
+    val traverser = new tpd.TreeTraverser {
+      override def traverse(tree: tpd.Tree)(implicit ctx: Context): Unit = tree match {
+        case vdef: tpd.ValDef =>
+          val thisCtx = ctx.withPhase(thisPhase)
+          val rhsTpe = vdef.rhs(thisCtx).typeOpt
+          lazy val sym = vdef.symbol(thisCtx)
+          if (rhsTpe.exists && sym.isEffectivelyFinal && !sym.is(Flags.Mutable) && (rhsTpe ne sym.info)) {
+            val newDenot = sym.denot(thisCtx).copySymDenotation(info = rhsTpe)
+            // println(i"Changing $sym from  ${sym.info(thisCtx)}  to  $rhsTpe")
+            newDenot.installAfter(thisPhase)
+          }
+          traverseChildren(tree)
+        case _ =>
+          traverseChildren(tree)
+      }
     }
-    ctx
+    traverser.traverse(ctx.compilationUnit.tpdTree)
   }
 }
 
@@ -66,6 +74,8 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
   override def phaseName: String = "precisetyping2"
 
 //  override val isTyper: Boolean = true  // don't relax typing
+
+//  override def isCheckable: Boolean = false  // during precise typing all sorts of assumptions are broken
 
   /** List of names of phases that should precede this phase */
   override def runsAfter: Set[Class[_ <: Phase]] = Set(classOf[PreciseTyping1])
