@@ -345,6 +345,9 @@ object PreciseTyping {
 //
 //    override def assignType(tree: untpd.If, thenp: Tree, elsep: Tree)(implicit ctx: Context) =
 //      tree.withType(AppliedTermRef(defn.iteMethod.termRef, List(tree.cond.tpe, thenp.tpe, elsep.tpe)))
+
+    /** Disabled checks */
+    override def checkInlineConformant(tree: Tree, what: => String)(implicit ctx: Context) = ()
   }
 
 
