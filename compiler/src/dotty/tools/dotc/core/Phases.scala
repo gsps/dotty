@@ -361,7 +361,7 @@ object Phases {
       myBase = base
       myPeriod = Period(NoRunId, start, end)
       myPreciseTypes = (prev.getClass == classOf[ptyper.PreciseTyping1] || prev.erasedTypes) &&
-        (prev.getClass != classOf[ptyper.PreciseTyping2])
+        (prev.getClass != classOf[ptyper.PreciseTyping2]) && !isInstanceOf[TreeChecker]
       myErasedTypes  = prev.getClass == classOf[Erasure]      || prev.erasedTypes
       myFlatClasses  = prev.getClass == classOf[Flatten]      || prev.flatClasses
       myRefChecked   = prev.getClass == classOf[RefChecks]    || prev.refChecked
