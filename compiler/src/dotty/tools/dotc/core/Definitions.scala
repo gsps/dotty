@@ -256,7 +256,7 @@ class Definitions {
   lazy val AnyValClass: ClassSymbol = completeClass(enterCompleteClassSymbol(ScalaPackageClass, tpnme.AnyVal, Abstract, List(AnyClass.typeRef)))
   def AnyValType = AnyValClass.typeRef
 
-    lazy val Any_==       = enterMethod(AnyClass, nme.EQ, methOfAny(BooleanType), Final | Stable)  // FIXME: Unsound...
+    lazy val Any_==       = enterMethod(AnyClass, nme.EQ, methOfAny(BooleanType), Final)
     lazy val Any_!=       = enterMethod(AnyClass, nme.NE, methOfAny(BooleanType), Final)
     lazy val Any_equals   = enterMethod(AnyClass, nme.equals_, methOfAny(BooleanType))
     lazy val Any_hashCode = enterMethod(AnyClass, nme.hashCode_, MethodType(Nil, IntType))
