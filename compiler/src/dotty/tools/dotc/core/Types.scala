@@ -938,6 +938,7 @@ object Types {
      */
     final def widenTermRefExpr(implicit ctx: Context): Type = stripTypeVar match {
       case tp: TermRef if !tp.isOverloaded => tp.underlying.widenExpr.widenTermRefExpr
+      case tp: AppliedTermRef => tp.underlying.widenExpr.widenTermRefExpr
       case _ => this
     }
 
@@ -2213,8 +2214,11 @@ object Types {
     def apply(fn: Type, args: List[Type])(implicit ctx: Context): Type = {
       assertUnerased()
       fn.dealias match {
-        case fn: TermRef => unique(new CachedAppliedTermRef(fn, args))
-        case fn: AppliedTermRef => unique(new CachedAppliedTermRef(fn, args))
+        case fn: TermRef =>
+          assert(!fn.isOverloaded)
+          unique(new CachedAppliedTermRef(fn, args))
+        case fn: AppliedTermRef =>
+          unique(new CachedAppliedTermRef(fn, args))
         case _ =>
           fn.widenDealias match {
             case methTpe: MethodType => ctx.typer.applicationResultType(methTpe, args)
