@@ -454,13 +454,14 @@ object Erasure {
       ref(meth).appliedToArgs(args.toList ++ followingArgs)
     }
 
-    private def protoArgs(pt: Type, methTp: Type): List[untpd.Tree] = (pt, methTp) match {
-      case (pt: FunProto, methTp: MethodType) if methTp.isErasedMethod =>
-        protoArgs(pt.resType, methTp.resType)
-      case (pt: FunProto, methTp: MethodType) =>
-        pt.args ++ protoArgs(pt.resType, methTp.resType)
-      case _ => Nil
-    }
+    private def protoArgs(pt: Type, methTp: Type)(implicit ctx: Context): List[untpd.Tree] =
+      (pt, methTp.stripMethodPrefix) match {
+        case (pt: FunProto, methTp: MethodType) if methTp.isErasedMethod =>
+          protoArgs(pt.resType, methTp.resType)
+        case (pt: FunProto, methTp: MethodType) =>
+          pt.args ++ protoArgs(pt.resType, methTp.resType)
+        case _ => Nil
+      }
 
     override def typedTypeApply(tree: untpd.TypeApply, pt: Type)(implicit ctx: Context) = {
       val ntree = interceptTypeApply(tree.asInstanceOf[TypeApply])(ctx.withPhase(ctx.erasurePhase))
