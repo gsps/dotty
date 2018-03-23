@@ -2030,11 +2030,16 @@ object Types {
           d = disambiguate(d,
             if (lastSymbol.signature == Signature.NotAMethod) Signature.NotAMethod
             else lastSymbol.asSeenFrom(prefix).signature)
-          // As a last resort, pass the unambiguous, but invalidated `lastDenotation` to the new TermRef, which can then
-          //  recompute its denotation based on the signature of `lastDenotation`.
-          if (!d.exists && !prefix.underlyingIfProxy.exists && lastDenotation.isInstanceOf[SymDenotation])
-            d = SymDenotationTemplate(lastDenotation.asSymDenotation)
         }
+        // As a last resort, pass the unambiguous, but invalidated `lastDenotation` to the new TermRef, which can then
+        //  recompute its denotation based on the signature of `lastDenotation`.
+        // -- RecType and such are kind of broken without: `val x: Int { val succ: {this+1} = this+1 } = null`
+        @tailrec def hasUnderlyingNull(tp: Type): Boolean = tp match {
+          case tp: TypeProxy => if (tp.underlying == null) true else hasUnderlyingNull(tp.underlying)
+          case _ => false
+        }
+        if (!d.exists && (hasUnderlyingNull(prefix) /*|| !prefix.underlyingIfProxy.exists*/) && lastDenotation.isInstanceOf[SymDenotation])
+          d = SymDenotationTemplate(lastDenotation.asSymDenotation)
         NamedType(prefix, name, d)
       }
       if (prefix eq this.prefix) this
@@ -2189,7 +2194,7 @@ object Types {
         fn.widen match {
           case methTpe: MethodType => myResType = ctx.typer.applicationResultType(methTpe, args)
           case NoType => throw new AssertionError("Unexpected NoType as function of AppliedTermRef (probably " +
-            "touched resType) before enclosing type was fully initialized).")
+            "touched resType before enclosing type was fully initialized).")
         }
       myResType
     }
@@ -2454,7 +2459,8 @@ object Types {
       case _ => false
     }
 
-    override def toString = s"RecType($parent | $hashCode)"
+    override def toString =
+      if (parent == null) "RecType(<under construction>)" else s"RecType($parent | $hashCode)"
 
     private def checkInst(implicit ctx: Context): this.type = this // debug hook
   }
