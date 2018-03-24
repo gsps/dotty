@@ -1099,19 +1099,16 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
 
   // PredicateType related checking
 
-  final private def isPredicateSubType(tp1: Type, tp2: Type): Boolean = {
+  protected def isPredicateSubType(tp1: Type, tp2: Type): Boolean = {
     tp1 match {
-      case PredicateType(parent1, pred1) =>
+      case PredicateType.Fixed(parent1, pred1) =>
         tp2 match {
-          case PredicateType(parent2, pred2) if parent1 <:< parent2 =>
-            comparePredicate(pred1, pred2)
+          case PredicateType.Fixed(parent2, pred2) if parent1 <:< parent2 => true
           case _ => false
         }
       case _ => false
     }
   }
-
-  protected def comparePredicate(pred1: Type, pred2: Type): Boolean = true
 
   /** A type has been covered previously in subtype checking if it
    *  is some combination of TypeRefs that point to classes, where the

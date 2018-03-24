@@ -52,6 +52,7 @@ class PreciseTyping1 extends Phase with IdentityDenotTransformer { thisPhase =>
     val traverser = new tpd.TreeTraverser {
       override def traverse(tree: tpd.Tree)(implicit ctx: Context): Unit = tree match {
         case vdef: tpd.ValDef =>
+          // FIXME: This might change the semantics of the program through overloading resolution, no?
           val thisCtx = ctx.withPhase(thisPhase)
           val rhsTpe = vdef.rhs(thisCtx).typeOpt
           lazy val sym = vdef.symbol(thisCtx)
@@ -398,25 +399,35 @@ object PreciseTyping {
     override def isSubType(tp1: Type, tp2: Type) = //trace(i"isSubType $tp1 <:< $tp2 {", "}") { ??? }
       super.isSubType(tp1, tp2)
 
-    override def comparePredicate(pred1: Type, pred2: Type) = //trace(i"comparePredicate $pred1 -> $pred2 {", "}") {???}
+    override protected def isPredicateSubType(tp1: Type, tp2: Type) = //trace(i"comparePredicate $pred1 -> $pred2 {", "}") {???}
       if (conservative) false
-      else {
-        val syntacticRes = (pred1, pred2) match {
-          case (PseudoDnf(clauses1), PseudoDnf(clauses2)) =>
-            clauses1.forall { clause1 =>
-              val clause1Set = clause1.toSet
-              clauses2.exists(clause1Set subsetOf _.toSet)
+      else
+        tp1 match {
+          case PredicateType.Fixed(parent1, pred1) =>
+            tp2 match {
+              case PredicateType.Fixed(parent2, pred2) if parent1 <:< parent2 =>
+
+                val syntacticRes = (pred1, pred2) match {
+                  case (PseudoDnf(clauses1), PseudoDnf(clauses2)) =>
+                    clauses1.forall { clause1 =>
+                      val clause1Set = clause1.toSet
+                      clauses2.exists(clause1Set subsetOf _.toSet)
+                    }
+                  case _ => false
+                }
+                if (syntacticRes) {
+                  println(i"Ptyper + (syntactically)  $pred1 -> $pred2")
+                  true
+                } else {
+                  println(i"Ptyper ? (need semantic)  $pred1 -> $pred2")
+//                  solver.check(tp1, tp2)
+                  false
+                }
+
+              case _ => false
             }
           case _ => false
         }
-        if (syntacticRes) {
-//          println(i"Ptyper + (syntactically)  $pred1 -> $pred2")
-          true
-        } else {
-//          println(i"Ptyper ? (need semantic)  $pred1 -> $pred2")
-          false  // TODO: Do semantic check
-        }
-      }
 
 
 //    override def hasMatchingMember(name: Name, tp1: Type, tp2: RefinedType): Boolean =

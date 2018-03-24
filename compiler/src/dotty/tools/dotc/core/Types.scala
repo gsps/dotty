@@ -2510,15 +2510,20 @@ object Types {
     }
 
     def unapply(tp: Type)(implicit ctx: Context): Option[(Type, Type)] = tp match {
-      case refTp @ RefinedType(parent, nme.PRED, pred) =>
-        Some((parent, pred))
-      case recTp: RecType =>  // roughly: `unapply(recTp.parent)`
+      case recTp: RecType =>
         recTp.parent match {
-          case refTp @ RefinedType(parent, nme.PRED, pred) =>
-            Some((parent, pred))
+          case refTp @ RefinedType(parent, nme.PRED, pred) => Some((parent, pred))
           case _ => None
         }
       case _ => None
+    }
+
+    object Fixed {
+      // Matches PredicateTypes whose RecThis has already been fixed
+      def unapply(tp: Type)(implicit ctx: Context): Option[(Type, Type)] = tp match {
+        case refTp @ RefinedType(parent, nme.PRED, pred) => Some((parent, pred))
+        case _ => None
+      }
     }
 
     object PseudoDnf {
@@ -2539,6 +2544,7 @@ object Types {
       }
     }
 
+    // FIXME: This might still be brittle in the face of RecTypes -- might have to fix tp1 and tp2 first?
     def mergePredicates(tp1: Type, tp2: Type, isAnd: Boolean)(implicit ctx: Context): Type = {
       def derived(ptp: Type, pred: Type): Type = ptp match {
         case refTp: RefinedType => refTp.derivedRefinedType(refTp.parent, nme.PRED, pred)
