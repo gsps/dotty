@@ -1336,6 +1336,10 @@ object Types {
     final def substRecThis(binder: RecType, tp: Type)(implicit ctx: Context): Type =
       ctx.substRecThis(this, binder, tp, null)
 
+    /** Substitute all occurrences of `PredicateThis(binder)` by `tp` */
+    final def substPredicateThis(binder: PredicateRefinedType, tp: Type)(implicit ctx: Context): Type =
+      ctx.substPredicateThis(this, binder, tp, null)
+
     /** Substitute a bound type by some other type */
     final def substParam(from: ParamRef, to: Type)(implicit ctx: Context): Type =
       ctx.substParam(this, from, to, null)
@@ -1538,6 +1542,9 @@ object Types {
   trait SingletonType extends TypeProxy with ValueType {
     def isOverloaded(implicit ctx: Context) = false
   }
+
+  /** A marker trait for types that may act as stable term-level reference types. */
+  trait RefType extends SingletonType
 
   /** A trait for types that bind other types that refer to them.
    *  Instances are: LambdaType, RecType.
@@ -2090,7 +2097,7 @@ object Types {
 
   abstract case class TermRef(override val prefix: Type,
                               private var myDesignator: Designator)
-    extends NamedType with SingletonType with ImplicitRef {
+    extends NamedType with RefType with ImplicitRef {
 
     type ThisType = TermRef
     type ThisName = TermName
@@ -2346,10 +2353,9 @@ object Types {
    *  @param infoFn: A function that produces the info of the refinement declaration,
    *                 given the refined type itself.
    */
-  abstract case class RefinedType(parent: Type, refinedName: Name, refinedInfo: Type) extends RefinedOrRecType {
+  abstract class RefinedType(val parent: Type, val refinedName: Name) extends RefinedOrRecType {
+    val refinedInfo: Type
 
-    if (refinedName.isTermName) assert(refinedInfo.isInstanceOf[TermType])
-    else assert(refinedInfo.isInstanceOf[TypeType], this)
     assert(!refinedName.is(NameKinds.ExpandedName), this)
 
     override def underlying(implicit ctx: Context) = parent
@@ -2387,10 +2393,17 @@ object Types {
       case _ => false
     }
     // equals comes from case class; no matching override is needed
+
+    // TODO(gsps): Add equals(that: Any) and hashCode() which consider refinedInfo?
   }
 
-  class CachedRefinedType(parent: Type, refinedName: Name, refinedInfo: Type)
-  extends RefinedType(parent, refinedName, refinedInfo)
+  class CachedRefinedType(parent: Type, refinedName: Name, _refinedInfo: Type)
+  extends RefinedType(parent, refinedName) {
+    val refinedInfo: Type = _refinedInfo
+
+    if (refinedName.isTermName) assert(refinedInfo.isInstanceOf[TermType], s"Expected TermType, got $refinedInfo")
+    else assert(refinedInfo.isInstanceOf[TypeType], this)
+  }
 
   object RefinedType {
     @tailrec def make(parent: Type, names: List[Name], infos: List[Type])(implicit ctx: Context): Type =
@@ -2400,6 +2413,12 @@ object Types {
     def apply(parent: Type, name: Name, info: Type)(implicit ctx: Context): RefinedType = {
       assert(!ctx.erasedTypes)
       unique(new CachedRefinedType(parent, name, info)).checkInst
+    }
+
+    // TODO(gsps): This might be unreasonably slow
+    def unapply(tp: RefinedType): Option[(Type, Name, Type)] = tp match {
+      case tp: RefinedType => Some((tp.parent, tp.refinedName, tp.refinedInfo))
+      case _ => None
     }
   }
 
@@ -2499,33 +2518,74 @@ object Types {
     }
   }
 
-  // --- PredicateType (encoding) -----------------------------------------------------
+  // --- PredicateRefinedType ---------------------------------------------------------
 
-  object PredicateType {
+  class PredicateRefinedType(val subjectName: TermName, parent: Type)(predicateBuilder: PredicateRefinedType => Type)
+    extends RefinedType(parent, NameKinds.PredicateSubjectName(subjectName))
+  {
+    val refinedInfo: Type = predicateBuilder(PredicateRefinedType.this)
+    def predicate: Type = this.refinedInfo
+
+    def predicateThis: PredicateThis = new PredicateThis(this) {}
+
+    override def derivedRefinedType(parent: Type, refinedName: Name, refinedInfo: Type)(implicit ctx: Context): Type = {
+      if (refinedName ne this.refinedName)
+        throw new UnsupportedOperationException("Cannot change refinement name on derived PredicateRefinedType.")
+      else if ((parent eq this.parent) && (refinedInfo eq this.refinedInfo))
+        this
+      else
+        new PredicateRefinedType(subjectName, parent)(prt => refinedInfo.substPredicateThis(this, prt.predicateThis))
+    }
+  }
+
+//  /** Encapsulates a predicate P[v: T] where `P` is a (typically precise) Boolean dependent on a stable value of
+//    * subject type `T`. Can be thought of as a dependent pair `(x: T, P[x])`. */
+//  case class PredicateType private(subjectTp: Type, subjectName: Name)(infoBuilder: PredicateType => Type)
+//    extends UncachedProxyType with ValueType with SingletonType with BindingType
+//  {
+//    val info: Type = infoBuilder(this)
+//
+//    override def underlying(implicit ctx: Context): Type = defn.BooleanType
+//
+//    override def hashCode: Int = identityHash
+//    override def equals(that: Any) = this.eq(that.asInstanceOf[AnyRef])
+//
+//    def predicateThis: PredicateThis = new PredicateThis(this) {}
+//
+//    override def toString = s"PredicateType($subjectTp, $hashCode)"
+//  }
+
+  abstract case class PredicateThis(binder: PredicateRefinedType) extends BoundType with SingletonType {
+    type BT = PredicateRefinedType  // PredicateType
+    override def underlying(implicit ctx: Context): Type = binder.parent  // binder.subjectTp
+    def copyBoundType(bt: BT) = bt.predicateThis
+
+    override def computeHash = addDelta(binder.identityHash, 41)
+
+    override def equals(that: Any) = that match {
+      case that: PredicateThis => binder.eq(that.binder)
+      case _ => false
+    }
+
+    override def toString =
+      try s"PredicateThis(${binder.hashCode})"
+      catch {
+        case ex: NullPointerException => s"PredicateThis(<under construction>)"
+      }
+  }
+
+  object PredicateRefinedType {
     def apply(subject: ValDef, pred: Type)(implicit ctx: Context): Type = {
       assertUnerased()
       val parentTpe = subject.tpt.tpe
       if (parentTpe.isError || pred.isError) parentTpe
-      else RecType(rt => RefinedType(parentTpe, nme.PRED, pred).subst(List(subject.symbol), List(rt.recThis)))
+      else new PredicateRefinedType(subject.name, parentTpe)(prt =>
+        pred.subst(List(subject.symbol), List(prt.predicateThis)))
     }
 
-    def unapply(tp: Type)(implicit ctx: Context): Option[(Type, Type)] = tp match {
-      case recTp: RecType =>
-        recTp.parent match {
-          case refTp @ RefinedType(parent, nme.PRED, pred) => Some((parent, pred))
-          case _ => None
-        }
-      case _ => None
-    }
 
-    object Fixed {
-      // Matches PredicateTypes whose RecThis has already been fixed
-      def unapply(tp: Type)(implicit ctx: Context): Option[(Type, Type)] = tp match {
-        case refTp @ RefinedType(parent, nme.PRED, pred) => Some((parent, pred))
-        case _ => None
-      }
-    }
 
+    /*
     object PseudoDnf {
       def unapply(tp: Type)(implicit ctx: Context): Option[List[List[Type]]] = {
         def isAndFn(fn: TermRef): Boolean = fn.symbol eq defn.Boolean_&&
@@ -2568,6 +2628,10 @@ object Types {
         case _ => NoType
       }
     }
+    */
+
+    // FIXME(gsps): Reimplement (unsound now)
+    def mergePredicates(tp1: Type, tp2: Type, isAnd: Boolean)(implicit ctx: Context): Type = tp1
   }
 
   // --- AndType/OrType ---------------------------------------------------------------
@@ -3410,7 +3474,7 @@ object Types {
   /** Only created in `binder.paramRefs`. Use `binder.paramRefs(paramNum)` to
    *  refer to `TermParamRef(binder, paramNum)`.
    */
-  abstract case class TermParamRef(binder: TermLambda, paramNum: Int) extends ParamRef with SingletonType {
+  abstract case class TermParamRef(binder: TermLambda, paramNum: Int) extends ParamRef with RefType {
     type BT = TermLambda
     def kindString = "Term"
     def copyBoundType(bt: BT) = bt.paramRefs(paramNum)
@@ -3465,7 +3529,7 @@ object Types {
   // ----- Skolem types -----------------------------------------------
 
   /** A skolem type reference with underlying type `binder`. */
-  case class SkolemType(info: Type) extends UncachedProxyType with ValueType with SingletonType {
+  case class SkolemType(info: Type) extends UncachedProxyType with ValueType with RefType {
     override def underlying(implicit ctx: Context) = info
     def derivedSkolemType(info: Type)(implicit ctx: Context) =
       if (info eq this.info) this else SkolemType(info)
@@ -4115,6 +4179,9 @@ object Types {
         case tp: RefinedType =>
           derivedRefinedType(tp, this(tp.parent), this(tp.refinedInfo))
 
+//        case tp: PredicateType =>
+//          PredicateType(this(tp.subjectTp), tp.subjectName)(predTp => this(tp.info).subst(tp, predTp))
+
         case tp: TypeAlias =>
           derivedTypeAlias(tp, atVariance(0)(this(tp.alias)))
 
@@ -4573,6 +4640,9 @@ object Types {
 
       case tp: SkolemType =>
         this(x, tp.info)
+
+//      case tp: PredicateType =>
+//        this(this(x, tp.subjectTp), tp.info)
 
       case SuperType(thistp, supertp) =>
         this(this(x, thistp), supertp)

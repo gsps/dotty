@@ -322,6 +322,7 @@ object TastyFormat {
   final val IMPORTED = 65
   final val RENAMED = 66
   final val SYMBOLconst = 67
+  final val PREDICATEthis = 68
 
   // Cat. 3:    tag AST
 
@@ -417,7 +418,7 @@ object TastyFormat {
   }
 
   final val APPLIEDTERMREF = 180
-  final val PREDICATEtpt = 177
+  final val PREDICATEtpt = 177  // TODO(gsps): Rename to PREDICATEREFINEDtpt?
   final val HOLE = 255
 
   final val firstNatTreeTag = SHAREDterm
@@ -484,7 +485,8 @@ object TastyFormat {
        | ANDtpt
        | ORtpt
        | BYNAMEtpt
-       | BIND => true
+       | BIND
+       | PREDICATEtpt => true
     case _ => false
   }
 
@@ -619,6 +621,8 @@ object TastyFormat {
     case PRIVATEqualified => "PRIVATEqualified"
     case PROTECTEDqualified => "PROTECTEDqualified"
     case HOLE => "HOLE"
+    case PREDICATEtpt => "PREDICATEtpt"
+    case PREDICATEthis => "PREDICATEthis"
   }
 
   /** @return If non-negative, the number of leading references (represented as nats) of a length/trees entry.

@@ -365,6 +365,10 @@ object NameKinds {
   val ModuleClassName = new SuffixNameKind(OBJECTCLASS, "$", optInfoString = "ModuleClass")
   val ImplMethName = new SuffixNameKind(IMPLMETH, "$")
   val AdaptedClosureName = new SuffixNameKind(ADAPTEDCLOSURE, "$adapted") { override def definesNewName = true }
+  val PredicateSubjectName = new SuffixNameKind(FIELD, "$subject") {
+    override def definesNewName = true
+    override def mkString(underlying: TermName, info: ThisInfo) = underlying.toString
+  }
 
   /** A name together with a signature. Used in Tasty trees. */
   object SignedName extends NameKind(SIGNED) {

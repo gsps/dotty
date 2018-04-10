@@ -145,12 +145,15 @@ class PlainPrinter(_ctx: Context) extends Printer {
         ParamRefNameString(tp) ~ lambdaHash(tp.binder)
       case tp: AppliedTermRef =>
         toTextRef(tp) ~ ".type"
+      case tp: PredicateThis =>
+        nameString(tp.binder.subjectName)
       case tp: SingletonType =>
         toTextLocal(tp.underlying) ~ "(" ~ toTextRef(tp) ~ ")"
       case AppliedType(tycon, args) =>
         (toTextLocal(tycon) ~ "[" ~ Text(args map argText, ", ") ~ "]").close
-      case PredicateType(parent, pred) =>
-        ("{v:" ~ toTextLocal(parent) ~ " => " ~ toTextLocal(pred) ~ "}").close
+      case tp: PredicateRefinedType =>
+        ("{" ~ nameString(tp.subjectName) ~ ":" ~ toTextLocal(tp.parent) ~ " => " ~
+          toTextLocal(tp.predicate) ~ "}").close
       case tp: RefinedType =>
         val parent :: (refined: List[RefinedType @unchecked]) =
           refinementChain(tp).reverse
@@ -282,6 +285,8 @@ class PlainPrinter(_ctx: Context) extends Printer {
         toText(value)
       case pref: TermParamRef =>
         nameString(pref.binder.paramNames(pref.paramNum))
+      case tp: PredicateThis =>
+        nameString(tp.binder.subjectName)
       case tp: RecThis =>
         val idx = openRecs.reverse.indexOf(tp.binder)
         if (idx >= 0) selfRecName(idx + 1)

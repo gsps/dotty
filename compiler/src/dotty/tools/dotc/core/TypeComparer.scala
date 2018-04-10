@@ -432,9 +432,10 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
             (name2 == nme.WILDCARD || hasMatchingMember(name2, tp1, tp2))
         }
         def compareRefined: Boolean = {
+          // FIXME(gsps): Does handle case where PredicateRefinedType is skipped via skipMatching below correctly
+          if (tp2.isInstanceOf[PredicateRefinedType])
+            return isPredicateSubType(tp1, tp2.asInstanceOf[PredicateRefinedType])
           val tp1w = tp1.widen
-          if (tp1w.isInstanceOf[RefinedType] && (tp2.refinedName eq nme.PRED))
-            return false  // Would have succeeded one-level up when the types were wrapped in RecTypes
           val skipped2 = skipMatching(tp1w, tp2)
           if ((skipped2 eq tp2) || !Config.fastPathForRefinedSubtype)
             tp1 match {
@@ -1097,18 +1098,13 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
         tp1.parent.asInstanceOf[RefinedType], tp2.parent.asInstanceOf[RefinedType], limit))
   }
 
-  // PredicateType related checking
-
-  protected def isPredicateSubType(tp1: Type, tp2: Type): Boolean = {
-    tp1 match {
-      case PredicateType.Fixed(parent1, pred1) =>
-        tp2 match {
-          case PredicateType.Fixed(parent2, pred2) if parent1 <:< parent2 => true
-          case _ => false
-        }
-      case _ => false
-    }
-  }
+  /* Skips refinement checks for PredicateRefinedTypes -- this is overridden in PreciseTyping. */
+  protected def isPredicateSubType(tp1: Type, tp2: PredicateRefinedType): Boolean =
+//    tp2 match {
+//      case PredicateRefinedType(parent2, pred2) => tp1 <:< parent2
+//      case _ => false
+//    }
+    tp1 <:< tp2.parent
 
   /** A type has been covered previously in subtype checking if it
    *  is some combination of TypeRefs that point to classes, where the
@@ -1547,7 +1543,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
     case tp1: RefinedType =>
       tp2 match {
         case tp2: RefinedType if tp1.refinedName == tp2.refinedName =>
-          PredicateType.mergePredicates(tp1, tp2, isAnd = true) orElse {
+          PredicateRefinedType.mergePredicates(tp1, tp2, isAnd = true) orElse {
             tp1.derivedRefinedType(tp1.parent & tp2.parent, tp1.refinedName,
               tp1.refinedInfo & tp2.refinedInfo)
           }
@@ -1587,7 +1583,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
     case tp1: AnnotatedType =>
       tp1.underlying | tp2
     case _ =>
-      PredicateType.mergePredicates(tp1, tp2, isAnd = false)
+      PredicateRefinedType.mergePredicates(tp1, tp2, isAnd = false)
   }
 
   /** Show type, handling type types better than the default */

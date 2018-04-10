@@ -529,7 +529,7 @@ trait TypeAssigner {
     val predTpe = pred.tpe.dealias
     if (!predTpe.isStable)
       ctx.error(i"Predicate ${predTpe} must be stable!")
-    tree.withType(PredicateType(subjectVd, predTpe))
+    tree.withType(PredicateRefinedType(subjectVd, predTpe))
   }
 
   def assignType(tree: untpd.TypeBoundsTree, lo: Tree, hi: Tree)(implicit ctx: Context) =

@@ -146,6 +146,9 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
   def RefinedTypeTree(parent: Tree, refinements: List[Tree], refineCls: ClassSymbol)(implicit ctx: Context): Tree =
     ta.assignType(untpd.RefinedTypeTree(parent, refinements), parent, refinements, refineCls)
 
+  def PredicateTypeTree(subjectVd: ValDef, pred: Tree)(implicit ctx: Context): PredicateTypeTree =
+    ta.assignType(untpd.PredicateTypeTree(subjectVd, pred), subjectVd, pred)
+
   def AppliedTypeTree(tycon: Tree, args: List[Tree])(implicit ctx: Context): AppliedTypeTree =
     ta.assignType(untpd.AppliedTypeTree(tycon, args), tycon, args)
 

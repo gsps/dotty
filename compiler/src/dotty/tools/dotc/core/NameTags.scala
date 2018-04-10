@@ -34,6 +34,8 @@ object NameTags extends TastyFormat.NameTags {
   final val IMPLMETH = 30       // Used to define methods in implementation classes
                                 // (can probably be removed).
 
+  final val PREDICATESUBJECT = 31  // Used by PredicateRefinedTypes to encode their predicate subject's name
+
   def nameTagToString(tag: Int): String = tag match {
     case UTF8 => "UTF8"
     case QUALIFIED => "QUALIFIED"
