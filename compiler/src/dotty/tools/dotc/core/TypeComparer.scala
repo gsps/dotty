@@ -1543,10 +1543,8 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
     case tp1: RefinedType =>
       tp2 match {
         case tp2: RefinedType if tp1.refinedName == tp2.refinedName =>
-          PredicateRefinedType.mergePredicates(tp1, tp2, isAnd = true) orElse {
-            tp1.derivedRefinedType(tp1.parent & tp2.parent, tp1.refinedName,
-              tp1.refinedInfo & tp2.refinedInfo)
-          }
+          tp1.derivedRefinedType(tp1.parent & tp2.parent, tp1.refinedName,
+            tp1.refinedInfo & tp2.refinedInfo)
         case _ =>
           NoType
       }
@@ -1583,7 +1581,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
     case tp1: AnnotatedType =>
       tp1.underlying | tp2
     case _ =>
-      PredicateRefinedType.mergePredicates(tp1, tp2, isAnd = false)
+      NoType
   }
 
   /** Show type, handling type types better than the default */
