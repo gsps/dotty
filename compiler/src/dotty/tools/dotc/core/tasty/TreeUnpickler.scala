@@ -278,7 +278,10 @@ class TreeUnpickler(reader: TastyReader,
                     // Eta expansion of the latter puts readType() out of the expression.
                 }
               }
-              typeAtAddr.getOrElse(start, readRefined)
+              typeAtAddr.get(start) match {
+                case None => readRefined
+                case Some(tp) => goto(end); tp
+              }
             case APPLIEDtype =>
               readType().appliedTo(until(end)(readType()))
             case APPLIEDTERMREF =>
