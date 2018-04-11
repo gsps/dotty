@@ -14,9 +14,7 @@ object JavaConverters {
     def asJava = opt.getOrElse(null)
   }
 
-  implicit class OptMap(val opt: Option[JMap[String, _]]) extends AnyVal {
-    def asJava = opt.getOrElse(Map.empty.asJava)
-  }
+  def emptyJMap[V]: JMap[String, V] = Map.empty[String, V].asJava
 
   implicit class JavaComment(val cmt: Comment) extends AnyVal {
     def asJava: JMap[String, _] = Map(
@@ -150,7 +148,7 @@ object JavaConverters {
       "name" -> ent.name,
       "path" -> ent.path.asJava,
       "children" -> ent.children.map(_.asJava).asJava,
-      "comment" -> ent.comment.map(_.asJava).asJava,
+      "comment" -> ent.comment.map(_.asJava).getOrElse(emptyJMap),
       "signature" -> ent.signature
     )
     val members = ent match {
@@ -201,13 +199,13 @@ object JavaConverters {
     }
     val implicitlyAddedEntity = ent match {
       case ent: ImplicitlyAddedEntity => Map(
-        "implicitlyAddedFrom" -> ent.implicitlyAddedFrom.map(_.asJava).asJava
+        "implicitlyAddedFrom" -> ent.implicitlyAddedFrom.map(_.asJava).getOrElse(emptyJMap)
       )
       case _ => Map.empty
     }
     val typeAlias : Map[String, _] = ent match {
       case ent: TypeAlias => Map(
-        "alias" -> ent.alias.map(_.asJava).asJava
+        "alias" -> ent.alias.map(_.asJava).getOrElse(emptyJMap)
       )
       case _ => Map.empty
     }
