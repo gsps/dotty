@@ -884,7 +884,7 @@ object Parsers {
             in.nextToken()
             val subjectVd = makeParameter(ident.name.asTermName, infixType())
             accept(ARROW)
-            PredicateTypeTree(subjectVd, SingletonTypeTree(expr()))
+            PredicateTypeTree(subjectVd, expr())
           case t => SingletonTypeTree(t)
         }
       else RefinedTypeTree(EmptyTree, refineStatSeq())

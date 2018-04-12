@@ -155,6 +155,12 @@ object PreciseTyping {
       case _: untpd.UnApply =>
         // can't recheck patterns
         tree.asInstanceOf[tpd.Tree]
+      case tree: untpd.PredicateTypeTree =>
+        val tree1 = promote(tree)
+        // FIXME(gsps): Since we won't retype the actual predicate, we lose precision in ifs and such
+        if (!tree1.predTpt.tpe.isStable)
+          ctx.error(s"Predicate ${tree1.predTpt.show} must be stable!")
+        tree1
       case _ if tree.isType =>
         promote(tree)
       case _ =>
@@ -356,7 +362,8 @@ object PreciseTyping {
 //      tree.withType(AppliedTermRef(fn.tpe, args.tpes))
 
     override def assignType(tree: untpd.If, thenp: Tree, elsep: Tree)(implicit ctx: Context) =
-      tree.withType(AppliedTermRef(defn.iteMethod.termRef, List(tree.cond.tpe, thenp.tpe, elsep.tpe)))
+      tree.withType(AppliedTermRef(defn.OpsPackageVal.termRef.select(defn.iteMethod),
+        List(tree.cond.tpe, thenp.tpe, elsep.tpe)))
 
     /** Disabled checks */
     override def checkInlineConformant(tree: Tree, what: => String)(implicit ctx: Context) = ()

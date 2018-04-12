@@ -122,7 +122,7 @@ trait TypeExtractor { this: Extractor =>
     def refType(refTp: RefType) =
       xst.getOrCreateRefVar(refTp)  // force creation of RefType -> Var binding
 
-    tp.dealias match {
+    tp.widenExpr.dealias match {
       case tp: ConstantType           => constantType(tp)
       case tp: RefType if tp.isStable => refType(tp)
       case _: TermRef | _: TypeRef    => anyValueOfType(tp)  // TODO(gsps): Use underlying
@@ -307,7 +307,7 @@ object ExtractorUtils {
         case tpe if tpe.typeSymbol == defn.BooleanClass => ix.BooleanType()
         case tpe if tpe.typeSymbol == defn.UnitClass    => ix.UnitType()
 
-        case _ => throw new IllegalArgumentException()
+        case tpe => throw new IllegalArgumentException(s"Cannot extract ixType of ${tpe.show} ($tpe)")
       }
 
     ixTypeBasic(findIteResultType(tp).getOrElse(tp))

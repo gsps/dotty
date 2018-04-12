@@ -7,6 +7,7 @@ import pt.SolverResult
 
 import core.Contexts.Context
 import core.StdNames.nme
+import core.Symbols.defn
 import core.Types._
 
 import config.Printers.ptyper
@@ -31,6 +32,10 @@ class Solver extends pt.Solver
   /* Precond: tp1 and tp2 have already been fixed wrt. RecTypes, e.g., via TypeComparer#fixRecs */
   def apply(tp1: Type, tp2: PredicateRefinedType)(implicit ctx: Context): SolverResult =
   {
+    // TODO(gsps): Handle Any and Nothing in the extraction itself.
+    if (tp1.derivesFrom(defn.NothingClass))
+      return SolverResult.Valid
+
     val tp1Ref = ensureStableRef(tp1)
 
     val (tp2PredExpr, tp2Bindings) = extractor.topLevelPredicate(tp2, tp1Ref)
