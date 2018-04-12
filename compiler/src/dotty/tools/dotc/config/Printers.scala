@@ -29,6 +29,7 @@ object Printers {
   val patmatch: Printer = noPrinter
   val pickling: Printer = noPrinter
   val plugins: Printer = noPrinter
+  val ptyper: Printer = noPrinter
   val simplify: Printer = noPrinter
   val subtyping: Printer = noPrinter
   val transforms: Printer = noPrinter

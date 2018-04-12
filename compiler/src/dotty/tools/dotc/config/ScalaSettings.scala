@@ -134,6 +134,8 @@ class ScalaSettings extends Settings.SettingGroup {
   // Extremely experimental language features
   val YkindPolymorphism = BooleanSetting("-Ykind-polymorphism", "Enable kind polymorphism (see http://dotty.epfl.ch/docs/reference/kind-polymorphism.html). Potentially unsound.")
 
+  val YptyperQueryTrace = IntSetting("-Yptyper-query-trace", "Trace PTyper query of the given id.", 0)
+
   /** Area-specific debug output */
   val YexplainLowlevel = BooleanSetting("-Yexplain-lowlevel", "When explaining type errors, show types at a lower level.")
   val YnoDoubleBindings = BooleanSetting("-Yno-double-bindings", "Assert no namedtype is bound twice (should be enabled only if program is error-free).")
