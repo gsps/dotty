@@ -1336,10 +1336,6 @@ object Types {
     final def substRecThis(binder: RecType, tp: Type)(implicit ctx: Context): Type =
       ctx.substRecThis(this, binder, tp, null)
 
-    /** Substitute all occurrences of `PredicateThis(binder)` by `tp` */
-    final def substPredicateThis(binder: PredicateRefinedType, tp: Type)(implicit ctx: Context): Type =
-      ctx.substPredicateThis(this, binder, tp, null)
-
     /** Substitute a bound type by some other type */
     final def substParam(from: ParamRef, to: Type)(implicit ctx: Context): Type =
       ctx.substParam(this, from, to, null)
@@ -2206,11 +2202,16 @@ object Types {
       myResType
     }
 
-    def underlying(implicit ctx: Context): Type = resType
+    final def underlying(implicit ctx: Context): Type = resType
 
     def derivedAppliedTerm(fn: Type, args: List[Type])(implicit ctx: Context): Type =
       if ((this.fn eq fn) && (this.args eq args)) this
       else AppliedTermRef(fn, args)
+
+    final def functionRef: TermRef = fn match {
+      case fn: TermRef => fn
+      case fn: AppliedTermRef => fn.functionRef
+    }
 
     override def computeHash(bs: Binders) = doHash(bs, fn, args)
 
@@ -2353,9 +2354,10 @@ object Types {
    *  @param infoFn: A function that produces the info of the refinement declaration,
    *                 given the refined type itself.
    */
-  abstract class RefinedType(val parent: Type, val refinedName: Name) extends RefinedOrRecType {
-    val refinedInfo: Type
-
+  abstract case class RefinedType(val parent: Type, val refinedName: Name, val refinedInfo: Type)
+    extends RefinedOrRecType {
+    if (refinedName.isTermName) assert(refinedInfo.isInstanceOf[TermType], s"Expected TermType, got $refinedInfo")
+    else assert(refinedInfo.isInstanceOf[TypeType], this)
     assert(!refinedName.is(NameKinds.ExpandedName), this)
 
     override def underlying(implicit ctx: Context) = parent
@@ -2393,17 +2395,10 @@ object Types {
       case _ => false
     }
     // equals comes from case class; no matching override is needed
-
-    // TODO(gsps): Add equals(that: Any) and hashCode() which consider refinedInfo?
   }
 
-  class CachedRefinedType(parent: Type, refinedName: Name, _refinedInfo: Type)
-  extends RefinedType(parent, refinedName) {
-    val refinedInfo: Type = _refinedInfo
-
-    if (refinedName.isTermName) assert(refinedInfo.isInstanceOf[TermType], s"Expected TermType, got $refinedInfo")
-    else assert(refinedInfo.isInstanceOf[TypeType], this)
-  }
+  class CachedRefinedType(parent: Type, refinedName: Name, refinedInfo: Type)
+  extends RefinedType(parent, refinedName, refinedInfo)
 
   object RefinedType {
     @tailrec def make(parent: Type, names: List[Name], infos: List[Type])(implicit ctx: Context): Type =
@@ -2413,12 +2408,6 @@ object Types {
     def apply(parent: Type, name: Name, info: Type)(implicit ctx: Context): RefinedType = {
       assert(!ctx.erasedTypes)
       unique(new CachedRefinedType(parent, name, info)).checkInst
-    }
-
-    // TODO(gsps): This might be unreasonably slow
-    def unapply(tp: RefinedType): Option[(Type, Name, Type)] = tp match {
-      case tp: RefinedType => Some((tp.parent, tp.refinedName, tp.refinedInfo))
-      case _ => None
     }
   }
 
@@ -2520,21 +2509,22 @@ object Types {
 
   // --- PredicateRefinedType ---------------------------------------------------------
 
-  class PredicateRefinedType(val subjectName: TermName, parent: Type)(predicateBuilder: PredicateRefinedType => Type)
-    extends RefinedType(parent, NameKinds.PredicateSubjectName(subjectName))
+  class PredicateRefinedType(val subjectName: TermName, parent: Type, val predicate: AppliedTermRef)
+    extends RefinedType(parent, NameKinds.PredicateSubjectName(subjectName), predicate)
   {
-    val refinedInfo: Type = predicateBuilder(PredicateRefinedType.this)
-    def predicate: Type = this.refinedInfo
 
-    def predicateThis: PredicateThis = new PredicateThis(this) {}
+    assert(refinedInfo.isInstanceOf[AppliedTermRef], "PredicateRefinedType only takes AppliedTermRefs as refinedInfo.")
+    def predicateSymbol(implicit ctx: Context): TermSymbol = predicate.functionRef.termSymbol.asTerm
 
     override def derivedRefinedType(parent: Type, refinedName: Name, refinedInfo: Type)(implicit ctx: Context): Type = {
       if (refinedName ne this.refinedName)
         throw new UnsupportedOperationException("Cannot change refinement name on derived PredicateRefinedType.")
       else if ((parent eq this.parent) && (refinedInfo eq this.refinedInfo))
         this
+      else if (!refinedInfo.isInstanceOf[AppliedTermRef])
+        throw new UnsupportedOperationException("PredicateRefinedType only takes an AppliedTermRef as refinedInfo.")
       else
-        new PredicateRefinedType(subjectName, parent)(prt => refinedInfo.substPredicateThis(this, prt.predicateThis))
+        new PredicateRefinedType(subjectName, parent, refinedInfo.asInstanceOf[AppliedTermRef])
     }
   }
 
@@ -2555,35 +2545,80 @@ object Types {
 //    override def toString = s"PredicateType($subjectTp, $hashCode)"
 //  }
 
-  abstract case class PredicateThis(binder: PredicateRefinedType) extends BoundType with SingletonType {
-    type BT = PredicateRefinedType  // PredicateType
-    override def underlying(implicit ctx: Context): Type = binder.parent  // binder.subjectTp
-    def copyBoundType(bt: BT) = bt.predicateThis
-
-    override def computeHash = addDelta(binder.identityHash, 41)
-
-    override def equals(that: Any) = that match {
-      case that: PredicateThis => binder.eq(that.binder)
-      case _ => false
-    }
-
-    override def toString =
-      try s"PredicateThis(${binder.hashCode})"
-      catch {
-        case ex: NullPointerException => s"PredicateThis(<under construction>)"
-      }
-  }
 
   object PredicateRefinedType {
-    def apply(subject: ValDef, pred: Type)(implicit ctx: Context): Type = {
+    def apply(subjectVd: ValDef, predTree: Tree)(implicit ctx: Context): Type = {
+      def registerPredicate(): AppliedTermRef = {
+        val freeSyms   = PredicateRefinedType.typeTreeFreeSyms(subjectVd, predTree)
+        val paramNames = subjectVd.name    :: freeSyms.map(_.name.asTermName)
+        val paramTpes  = subjectVd.tpt.tpe :: freeSyms.map(_.info)
+        val argTpes    = SubjectSentinel   :: freeSyms.map(_.termRef)
+
+        val predMethName = NameKinds.PredicateName.fresh(ctx.owner.name.toTermName)
+        val predMeth = ctx.newSymbol(ctx.owner.enclosingClass, predMethName,
+          Final | Stable | Synthetic | Method,  // TODO: Mark Unused
+          MethodType(paramNames, paramTpes, defn.BooleanType),
+          coord = predTree.pos)
+
+        AppliedTermRef(predMeth.termRef, argTpes).asInstanceOf[AppliedTermRef]
+      }
+
       assertUnerased()
-      val parentTpe = subject.tpt.tpe
-      if (parentTpe.isError || pred.isError) parentTpe
-      else new PredicateRefinedType(subject.name, parentTpe)(prt =>
-        pred.subst(List(subject.symbol), List(prt.predicateThis)))
+      val parentTpe = subjectVd.tpt.tpe
+      if (parentTpe.isError || predTree.tpe.isError) parentTpe
+      else new PredicateRefinedType(subjectVd.name, parentTpe, registerPredicate())
     }
 
 
+
+
+    /** Auxiliary type to distinguish the subject passed in predicate method invocations */
+
+    object Unchecked extends FlexType
+
+    object SubjectSentinel extends UncachedProxyType with SingletonType {
+      override def underlying(implicit ctx: Context): Type = Unchecked
+
+      override def toText(printer: Printer): Text = "V"
+      override def fallbackToText(printer: Printer): Text = toText(printer)
+    }
+
+    /** Compute the free symbols of a predicate tree. */
+
+    def typeTreeFreeSyms(subjectVd: ValDef, predTree: Tree)(implicit ctx: Context): List[Symbol] = {
+      val predicateOwner: Symbol = subjectVd.symbol
+      val symOrd: Ordering[Symbol] = Ordering.by((_: Symbol).id)
+      val freeSymsSet = scala.collection.mutable.TreeSet.empty[Symbol](symOrd)
+
+      class CollectDependencies extends TreeTraverser {
+        private def isLocal(sym: Symbol)(implicit ctx: Context): Boolean = {
+          val owner = sym.maybeOwner
+          owner.isTerm ||
+            owner.is(Trait) && isLocal(owner) ||
+            sym.isConstructor && isLocal(owner)
+        }
+
+        private def isPredicateLocal(sym: Symbol)(implicit ctx: Context): Boolean =
+          (sym eq predicateOwner) || sym.ownersIterator.exists(_ eq predicateOwner)
+
+        def traverse(tree: Tree)(implicit ctx: Context) = {
+          val sym = tree.symbol
+
+          tree match {
+            case tree: Ident =>
+              if (isLocal(sym) && !isPredicateLocal(sym) && sym.isTerm)
+                freeSymsSet.add(sym)
+            case tree: Super => ???  // TODO: Handle
+            case tree: New => ???  // TODO: Prohibit
+            case _ =>
+          }
+          traverseChildren(tree)
+        }
+      }
+
+      (new CollectDependencies).traverse(predTree)
+      freeSymsSet.toList
+    }
 
     /*
     object PseudoDnf {
@@ -4179,9 +4214,6 @@ object Types {
         case tp: RefinedType =>
           derivedRefinedType(tp, this(tp.parent), this(tp.refinedInfo))
 
-//        case tp: PredicateType =>
-//          PredicateType(this(tp.subjectTp), tp.subjectName)(predTp => this(tp.info).subst(tp, predTp))
-
         case tp: TypeAlias =>
           derivedTypeAlias(tp, atVariance(0)(this(tp.alias)))
 
@@ -4640,9 +4672,6 @@ object Types {
 
       case tp: SkolemType =>
         this(x, tp.info)
-
-//      case tp: PredicateType =>
-//        this(this(x, tp.subjectTp), tp.info)
 
       case SuperType(thistp, supertp) =>
         this(this(x, thistp), supertp)

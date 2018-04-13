@@ -334,10 +334,6 @@ class Definitions {
       pt => QuotedTypeType.appliedTo(pt.paramRefs(0) :: Nil),
       useCompleter = true)
 
-  /** Method representing a conditional choice during precise typing */
-  lazy val iteMethod = enterMethod(OpsPackageClass, nme.ite,
-      MethodType(List(BooleanType, AnyType, AnyType), new FlexType {}), Stable)
-
   lazy val NothingClass: ClassSymbol = enterCompleteClassSymbol(
     ScalaPackageClass, tpnme.Nothing, AbstractFinal, List(AnyClass.typeRef))
   def NothingType = NothingClass.typeRef

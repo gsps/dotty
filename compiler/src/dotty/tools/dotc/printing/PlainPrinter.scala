@@ -145,8 +145,6 @@ class PlainPrinter(_ctx: Context) extends Printer {
         ParamRefNameString(tp) ~ lambdaHash(tp.binder)
       case tp: AppliedTermRef =>
         toTextRef(tp) ~ ".type"
-      case tp: PredicateThis =>
-        nameString(tp.binder.subjectName)
       case tp: SingletonType =>
         toTextLocal(tp.underlying) ~ "(" ~ toTextRef(tp) ~ ")"
       case AppliedType(tycon, args) =>
@@ -285,14 +283,14 @@ class PlainPrinter(_ctx: Context) extends Printer {
         toText(value)
       case pref: TermParamRef =>
         nameString(pref.binder.paramNames(pref.paramNum))
-      case tp: PredicateThis =>
-        nameString(tp.binder.subjectName)
       case tp: RecThis =>
         val idx = openRecs.reverse.indexOf(tp.binder)
         if (idx >= 0) selfRecName(idx + 1)
         else "{...}.this" // TODO move underlying type to an addendum, e.g. ... z3 ... where z3: ...
       case tp: SkolemType =>
         if (homogenizedView) toText(tp.info) else toText(tp.repr)
+      case _ =>
+        tp.fallbackToText(this)  // Best effort for ad-hoc defined types
     }
   }
 

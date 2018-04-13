@@ -322,7 +322,6 @@ object TastyFormat {
   final val IMPORTED = 65
   final val RENAMED = 66
   final val SYMBOLconst = 67
-  final val PREDICATEthis = 68
 
   // Cat. 3:    tag AST
 
@@ -622,7 +621,6 @@ object TastyFormat {
     case PROTECTEDqualified => "PROTECTEDqualified"
     case HOLE => "HOLE"
     case PREDICATEtpt => "PREDICATEtpt"
-    case PREDICATEthis => "PREDICATEthis"
   }
 
   /** @return If non-negative, the number of leading references (represented as nats) of a length/trees entry.

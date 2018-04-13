@@ -1282,8 +1282,9 @@ class Typer extends Namer
   }
 
   def typedPredicateTypeTree(tree: untpd.PredicateTypeTree)(implicit ctx: Context): PredicateTypeTree = track("typedPredicateTypeTree") {
-    val exprCtx = index(tree.subjectVd)(ctx.fresh.setNewScope).retractMode(Mode.ImplicitsEnabled)
+    val vdCtx = index(tree.subjectVd)(ctx.fresh.setNewScope)
     val subjectVd1 = typed(tree.subjectVd).asInstanceOf[ValDef]
+    val exprCtx = vdCtx.fresh.setOwner(subjectVd1.symbol).retractMode(Mode.ImplicitsEnabled)
     val pred1 = typedExpr(tree.predTpt, defn.BooleanType)(exprCtx)
     assignType(cpy.PredicateTypeTree(tree)(subjectVd1, pred1), subjectVd1, pred1)
   }

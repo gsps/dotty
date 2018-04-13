@@ -5,6 +5,7 @@ package semantic
 import core.Contexts.Context
 import core.Decorators._
 import core.Names.{Name, TermName}
+import core.NameKinds
 import core.StdNames.nme
 import core.Symbols.{defn, ClassSymbol, Symbol}
 import core.Types._
@@ -19,7 +20,7 @@ import scala.annotation.tailrec
 
 
 class Extractor(_xst: ExtractionState, _ctx: Context)
-  extends ExtractorBase with SubjectExtractor with TypeExtractor
+  extends ExtractorBase with TypeExtractor
 {
   implicit val ctx: Context = _ctx
   implicit val xst: ExtractionState = _xst
@@ -53,8 +54,9 @@ protected class ExtractionState {
 }
 
 /* Ephemeral state built up as we recursively extract a type. */
-protected case class ExtractionContext(predicateBindings: Map[PredicateThis, Var]) {
-  def withPredicateBinding(from: PredicateThis, to: Var): ExtractionContext =
+// TODO(gsps): Remove, we don't need it anymore
+protected case class ExtractionContext(predicateBindings: Map[PredicateRefinedType, Var]) {
+  def withPredicateBinding(from: PredicateRefinedType, to: Var): ExtractionContext =
     this.copy(predicateBindings = predicateBindings + (from -> to))
 }
 
@@ -64,7 +66,7 @@ protected object ExtractionContext {
 
 
 trait TypeExtractor { this: Extractor =>
-  import ExtractorUtils.ixNotEquals
+  import ExtractorUtils.{ixNotEquals, MethodApplication, PreExtractedType}
 
   protected lazy val AnyType: Type = defn.AnyType
   protected lazy val ObjectType: Type = defn.ObjectType
@@ -74,7 +76,8 @@ trait TypeExtractor { this: Extractor =>
   protected lazy val IntClass: ClassSymbol = defn.IntClass
   protected lazy val OpsPackageClass: ClassSymbol = defn.OpsPackageClass
 
-  protected lazy val PrimitiveClasses: scala.collection.Set[Symbol] = defn.ScalaValueClasses() + OpsPackageClass
+  protected lazy val PrimitiveClasses: scala.collection.Set[Symbol] =
+    defn.ScalaValueClasses() + ptDefn.PTyperPackageClass
 
 
   final def binding(refTp: RefType): Cnstr = trace(i"Extractor#binding $refTp", ptyper)
@@ -95,8 +98,7 @@ trait TypeExtractor { this: Extractor =>
 //            (predExpr, usedBindings(predExpr))
 //        }
 //    }
-    val xctx1 = ExtractionContext.empty.withPredicateBinding(predRefinedType.predicateThis, subject.variable)
-    val predExpr = typ(predRefinedType.predicate)(xctx1)
+    val predExpr = predicate(predRefinedType.predicate, subject)(ExtractionContext.empty)
     (predExpr, usedBindings(predExpr))
   }
 
@@ -130,13 +132,9 @@ trait TypeExtractor { this: Extractor =>
       case _: RecType                 => throw new AssertionError(s"Unexpected RecType during Extraction: $tp")
       case _: RecThis                 => throw new AssertionError(s"Unexpected RecThis during Extraction: $tp")
 
-//      case PredicateRefinedType(subjectTp, predTp) =>
-//        // TODO(gsps): !predTp1.isInstanceOf[PredicateType] ==> assert(!predTp1.exists) && predTp1.isAPredicateHole
-//        predRefinedType(subjectTp, forceSubstitutions(predTp).asInstanceOf[PredicateType])
-//      case tp: PredicateType =>
-//        throw new AssertionError(i"Expected PredicateType $tp to have been eliminated before!")
       case tp: PredicateRefinedType => predRefinedType(tp)
-      case tp: PredicateThis        => xctx.predicateBindings(tp)
+
+      case tp: PreExtractedType => tp.variable
 
       case _ =>
         throw new IllegalArgumentException(i"Unhandled type $tp which widens to ${tp.widenDealias}")
@@ -155,6 +153,12 @@ trait TypeExtractor { this: Extractor =>
   }
 
   final def appliedTermRef(tp: AppliedTermRef)(implicit xctx: ExtractionContext): Expr = {
+    def checkFunIsNotPredicate(fn: TermRef): Unit = fn.name match {
+      case NameKinds.PredicateName(_, _) =>
+        throw new AssertionError(i"Predicate AppliedTermRef $tp should only occur as argument to PredicateRefinedType.")
+      case _ =>
+    }
+
 //    def uninterpretedExpr: Expr =
 //      if (tp.isStable) {
 //        val sym = tp.fn.termSymbol
@@ -168,14 +172,12 @@ trait TypeExtractor { this: Extractor =>
 //    val expr: Expr = ix.and(resTypeExpr, uninterpretedExpr)
 //    Cnstr(tp, freshSubject(tp), expr)
 
-    // ScalaValueClasses.exists(fnTp.prefix.derivesFrom)
-    tp.fn match {
-      case fnTp: TermRef =>
-        val clazz = fnTp.prefix.widenDealias.classSymbol
-        if (PrimitiveClasses.contains(clazz) && tp.isStable) primitiveOp(tp, clazz.asClass)
-        else typ(tp.resType)
-      case _ => typ(tp.resType)
-    }
+    val fn: TermRef = tp.functionRef
+    val clazz = fn.prefix.widenDealias.classSymbol
+
+    checkFunIsNotPredicate(fn)
+    if (PrimitiveClasses.contains(clazz) && tp.isStable) primitiveOp(tp, clazz.asClass)
+    else typ(tp.resType)
   }
 
   final protected def primitiveOp(tp: AppliedTermRef, clazz: ClassSymbol)(implicit xctx: ExtractionContext): Expr =
@@ -184,7 +186,7 @@ trait TypeExtractor { this: Extractor =>
     val fnTp: TermRef = tp.fn.asInstanceOf[TermRef]
     val opName: TermName = fnTp.name
 
-    lazy val arg0Expr: Expr      = typ(fnTp.prefix)
+    lazy val arg0Expr: Expr = typ(fnTp.prefix)
     lazy val arg1Expr: Expr = typ(tp.args.head)
     lazy val arg2Expr: Expr = typ(tp.args.tail.head)
     lazy val arg3Expr: Expr = typ(tp.args.tail.tail.head)
@@ -240,7 +242,7 @@ trait TypeExtractor { this: Extractor =>
         }
         binaryPrim(builder)
 
-      case (OpsPackageClass, nme.ite, _) =>
+      case _ if fnTp.symbol eq ptDefn.iteMethod =>
         ix.IfExpr(arg1Expr, arg2Expr, arg3Expr)
 
       case _ =>
@@ -261,9 +263,26 @@ trait TypeExtractor { this: Extractor =>
   {
     val subjectExpr = typ(tp.parent)
     val subjectVar  = freshSubject(tp.parent, tp.subjectName)
-    val xctx1       = xctx.withPredicateBinding(tp.predicateThis, subjectVar)
-    val predExpr    = typ(tp.predicate)(xctx1)
+    val predExpr    = predicate(tp.predicate, PreExtractedType(subjectVar, tp.parent))  // FIXME: Murky PreExtractedType
     ix.Choose(subjectVar.toVal, ix.and(ix.Equals(subjectVar, subjectExpr), predExpr))
+  }
+
+  final protected def predicate(tp: AppliedTermRef, subject: Type)(implicit xctx: ExtractionContext): Expr = {
+    val MethodApplication(fn, List(args)) = tp
+
+    fn.name match {
+      case NameKinds.PredicateName(_, _) =>
+      case _ => throw new NotImplementedError(i"Currently cannot extract composed predicate: $tp")
+    }
+
+    extractableMethods.get(fn.symbol) match {
+      case Some(ddef) =>
+        val PredicateRefinedType.SubjectSentinel :: args1 = args
+        val vparams :: Nil = ddef.vparamss
+        val rhsTpe = ddef.rhs.tpe.subst(vparams.map(_.symbol), subject :: args1)
+        typ(rhsTpe)
+      case None => throw new AssertionError(i"Expected predicate method ${fn.symbol} to be extractable.")
+    }
   }
 }
 
@@ -272,15 +291,14 @@ trait TypeExtractor { this: Extractor =>
 
 trait ExtractorBase {
   implicit val ctx: Context
-}
 
-trait SubjectExtractor { this: ExtractorBase =>
-  import ExtractorUtils.ixType
+  lazy val ptDefn: PreciseTyper.Definitions = ctx.property(PreciseTyping.PTyperDefinitions).get
+  lazy val extractableMethods: PreciseTyping.MethodMap = ctx.property(PreciseTyping.ExtractableMethods).get
 
   // TODO: Simpler way to get to a ClassSymbol's type?  Maybe `tp.classSymbol.typeRef`?
   def freshSubject(tp: Type, name: Name = ExtractorUtils.nme.VAR_AUX): Var =
     tp.classSymbol.info.asInstanceOf[ClassInfo].selfType match { case tp: TypeRef =>
-      val itp = ixType(tp)
+      val itp = ExtractorUtils.ixType(tp)
       Utils.freshVar(itp, name.toString)
     }
 }
@@ -292,9 +310,35 @@ object ExtractorUtils {
     val VAR_SUBJECT: TermName = "u".toTermName
   }
 
+  /* Dotty-related helpers */
+
+  object MethodApplication {
+    def unapply(tp: AppliedTermRef): Option[(TermRef, List[List[Type]])] = {
+      @tailrec def rec(tp: AppliedTermRef, argss: List[List[Type]]): (TermRef, List[List[Type]]) =
+        tp.fn match {
+          case fn: TermRef => (fn, tp.args :: argss)
+          case fn: AppliedTermRef => rec(fn, tp.args :: argss)
+        }
+      Some(rec(tp, Nil))
+    }
+  }
+
+  case class PreExtractedType(variable: Var, _underlying: Type) extends UncachedProxyType with SingletonType {
+    override def underlying(implicit ctx: Context) = _underlying
+
+    import printing.Printer
+    import printing.Texts.{Text, stringToText}
+    override def toText(printer: Printer): Text = s"PreExtractedType($variable: " ~ printer.toText(_underlying) ~ ")"
+    override def fallbackToText(printer: Printer): Text = toText(printer)
+  }
+
+  /* Inox-related helpers */
+
   def ixType(tp: Type)(implicit ctx: Context): ix.Type = {
+    import PreciseTyper.Definitions.ptDefn
+
     @tailrec def findIteResultType(tp: Type): Option[Type] = tp match {
-      case AppliedTermRef(fnTp, List(_, thenTp, _)) if fnTp.termSymbol == defn.iteMethod => Some(thenTp)  // TODO: LUB
+      case AppliedTermRef(fnTp, List(_, thenTp, _)) if fnTp.termSymbol == ptDefn.iteMethod => Some(thenTp)  // TODO: LUB
       case tp: TypeProxy => findIteResultType(tp.underlying)
       case _ => None
     }

@@ -161,19 +161,6 @@ trait Substituters { this: Context =>
           .mapOver(tp)
     }
 
-  final def substPredicateThis(tp: Type, from: PredicateRefinedType, to: Type, theMap: SubstPredicateThisMap): Type =
-    tp match {
-      case tp @ PredicateThis(binder) =>
-        if (binder eq from) to else tp
-      case tp: NamedType =>
-        if (tp.currentSymbol.isStatic) tp
-        else tp.derivedSelect(substPredicateThis(tp.prefix, from, to, theMap))
-      case _: ThisType | _: BoundType | NoPrefix =>
-        tp
-      case _ =>
-        (if (theMap != null) theMap else new SubstPredicateThisMap(from, to))
-          .mapOver(tp)
-    }
 
   final def substParam(tp: Type, from: ParamRef, to: Type, theMap: SubstParamMap): Type =
     tp match {
@@ -238,10 +225,6 @@ trait Substituters { this: Context =>
 
   final class SubstRecThisMap(from: RecType, to: Type) extends DeepTypeMap {
     def apply(tp: Type): Type = substRecThis(tp, from, to, this)
-  }
-
-  final class SubstPredicateThisMap(from: PredicateRefinedType, to: Type) extends DeepTypeMap {
-    def apply(tp: Type): Type = substPredicateThis(tp, from, to, this)
   }
 
   final class SubstParamMap(from: ParamRef, to: Type) extends DeepTypeMap {

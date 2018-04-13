@@ -264,24 +264,13 @@ class TreeUnpickler(reader: TastyReader,
                 case _ => TypeRef(prefix, name, space.decl(name).asSeenFrom(prefix))
               }
             case REFINEDtype =>
-              def readRefined: RefinedType = {
-                var name: Name = readName()
-                val parent = readType()
-                name match {
-                  case PredicateSubjectName(subjectName) =>
-                    new PredicateRefinedType(subjectName, parent)(prt => registeringType(prt, readType()))
-                  case _ =>
-                    val ttag = nextUnsharedTag
-                    if (ttag == TYPEBOUNDS || ttag == TYPEALIAS) name = name.toTypeName
-                    RefinedType(parent, name, readType())
-                    // Note that the lambda "rt => ..." is not equivalent to a wildcard closure!
-                    // Eta expansion of the latter puts readType() out of the expression.
-                }
-              }
-              typeAtAddr.get(start) match {
-                case None => readRefined
-                case Some(tp) => goto(end); tp
-              }
+              var name: Name = readName()
+              val parent = readType()
+              val ttag = nextUnsharedTag
+              if (ttag == TYPEBOUNDS || ttag == TYPEALIAS) name = name.toTypeName
+              RefinedType(parent, name, readType())
+              // Note that the lambda "rt => ..." is not equivalent to a wildcard closure!
+              // Eta expansion of the latter puts readType() out of the expression.
             case APPLIEDtype =>
               readType().appliedTo(until(end)(readType()))
             case APPLIEDTERMREF =>
@@ -350,8 +339,6 @@ class TreeUnpickler(reader: TastyReader,
           typeAtAddr.getOrElse(start, RecType(rt => registeringType(rt, readType())))
         case RECthis =>
           readTypeRef().asInstanceOf[RecType].recThis
-        case PREDICATEthis =>
-          readTypeRef().asInstanceOf[PredicateRefinedType].predicateThis
         case TYPEALIAS =>
           TypeAlias(readType())
         case SHAREDtype =>

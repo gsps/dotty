@@ -51,14 +51,18 @@ class Solver extends pt.Solver
 
     /* Query debug printing */
     queryCount += 1
+    val printQueryInfo = ctx.settings.YptyperQueryTrace.value == queryCount
     ptyper.println(Magenta(s"[[ PTyper query #$queryCount ]]").show)
-    if (ctx.settings.YptyperQueryTrace.value == queryCount) {
+    if (printQueryInfo) {
       val bindingsStr = bindingCnstrs.map(_.toString).mkString("\t\t", "\n\t\t", "\n")
       ptyper.println(s"\t${bindingCnstrs.size} bindings extracted:\n$bindingsStr")
       ptyper.println(s"\tQuery:\n\t\t$query")
     }
 
-    runQuery(query)
+    val result = runQuery(query)
+
+    if (printQueryInfo) ptyper.println(s"\t=> $result")
+    result
   }
 
 

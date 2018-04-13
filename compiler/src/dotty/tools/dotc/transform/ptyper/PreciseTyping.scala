@@ -1,82 +1,144 @@
 package dotty.tools.dotc
 package transform.ptyper
 
+import ast.{TreeTypeMap, untpd}
+import ast.tpd._
 import core.Phases._
 import core.DenotTransformers._
-import core.Flags
+import core.Flags._
+import core.Names.Name
 import core.Symbols._
 import core.Contexts._
 import core.Types._
 import core.Decorators._
-import ast.{untpd, tpd}
+import transform.MacroTransform
 import typer.ProtoTypes.FunProto
 import typer.ErrorReporting.err
+import util.Property
 
 import config.Printers.ptyper
 import reporting.trace
 
-class PreciseTyping1 extends Phase with IdentityDenotTransformer { thisPhase =>
+import scala.collection.mutable.{Map => MutableMap, ListBuffer}
+
+
+class PreciseTyping1 extends MacroTransform with IdentityDenotTransformer { thisPhase =>
 
   override def phaseName: String = "precisetyping1"
 
-  // NOTE: Should run after FrontEnd, but we can't express that ReplFrontEnd in particular is fine too
+  override def changesMembers: Boolean = true
 
-//  override def changesMembers: Boolean = true
-//  override def changesParents: Boolean = true
+  override def checkPostCondition(tree: Tree)(implicit ctx: Context) = ()
 
-//  override def isCheckable: Boolean = false  // during precise typing all sorts of assumptions are broken
+  /* Setup */
 
+  private val predicateMethods = new PredicateMethods(thisPhase)
 
-  override def checkPostCondition(tree: tpd.Tree)(implicit ctx: Context) = ()
+  val extractableMethods: PreciseTyping.MethodMap = MutableMap.empty
 
-//  /** Replace infos of ValDef symbols by most precise rhs-types */
-//  // TODO: Check whether this changes program semantics in the presence of overloading.
-//  override def prepareForValDef(vdef: tpd.ValDef)(implicit ctx: Context) = {
-//    val thisCtx = ctx.withPhase(thisPhase)
-//    val rhsTpe = vdef.rhs(thisCtx).typeOpt
-//    lazy val sym = vdef.symbol(thisCtx)
-//    if (rhsTpe.exists && sym.isEffectivelyFinal && !sym.is(Flags.Mutable) && (rhsTpe ne sym.info)) {
-//      val newDenot = sym.denot(thisCtx).copySymDenotation(info = rhsTpe)
-////      println(i"Changing $sym from  ${sym.info(thisCtx)}  to  $rhsTpe")
-//      newDenot.installAfter(thisPhase)
-//    }
-//    ctx
-//  }
+  override def initContext(ctx: FreshContext): Unit = {
+    ctx.setProperty(PreciseTyping.ExtractableMethods, extractableMethods)
+  }
 
+  override def run(implicit ctx: Context): Unit = {
+    super.run
 
-  // TODO(gsps): Clarify semantics of this phase before we re-enable it.
-  def run(implicit ctx: Context): Unit = {
-    /*
-    val traverser = new tpd.TreeTraverser {
-      override def traverse(tree: tpd.Tree)(implicit ctx: Context): Unit = tree match {
-        case vdef: tpd.ValDef =>
-          // FIXME: This might change the semantics of the program through overloading resolution, no?
-          val thisCtx = ctx.withPhase(thisPhase)
-          val rhsTpe = vdef.rhs(thisCtx).typeOpt
-          lazy val sym = vdef.symbol(thisCtx)
-          if (rhsTpe.exists && sym.isEffectivelyFinal && !sym.is(Flags.Mutable) && (rhsTpe ne sym.info)) {
-            val oldDenot = sym.denot(thisCtx)
-            val newDenot = oldDenot.copySymDenotation(info = rhsTpe).copyCaches(oldDenot, ctx.phase.next)
-//             println(i"Changing $sym from  ${sym.info(thisCtx)}  to  $rhsTpe")
-            newDenot.installAfter(thisPhase)
-          }
-          traverseChildren(tree)
-        case _ =>
-          traverseChildren(tree)
+    // Register new predicate methods as extractable
+    for (ddef <- predicateMethods.predicateMethods.valuesIterator.flatten)
+      extractableMethods(ddef.symbol) = ddef
+
+    if (ptyper ne config.Printers.noPrinter) {
+      ptyper.println(s"Extractable Methods:")
+      for (sym <- extractableMethods.keys)
+        ptyper.println(s"* ${sym.fullName}")
+    }
+  }
+
+  /* Components */
+
+  protected def newTransformer(implicit ctx: Context): Transformer =
+    new PreciseTyper1Transformer
+
+  /** A transformer that integrates several pre-processing steps for PreciseTyping2. */
+  class PreciseTyper1Transformer extends Transformer {
+    override def transform(tree: Tree)(implicit ctx: Context): Tree = tree match {
+      /*
+      // TODO(gsps): Clarify semantics of this transformation before we re-enable it.
+      case vdef: ValDef =>
+        // FIXME: This might change the semantics of the program through overloading resolution, no?
+        val thisCtx = ctx.withPhase(thisPhase)
+        val rhsTpe = vdef.rhs(thisCtx).typeOpt
+        lazy val sym = vdef.symbol(thisCtx)
+        if (rhsTpe.exists && sym.isEffectivelyFinal && !sym.is(Flags.Mutable) && (rhsTpe ne sym.info)) {
+          val oldDenot = sym.denot(thisCtx)
+          val newDenot = oldDenot.copySymDenotation(info = rhsTpe).copyCaches(oldDenot, ctx.phase.next)
+          // println(i"Changing $sym from  ${sym.info(thisCtx)}  to  $rhsTpe")
+          newDenot.installAfter(thisPhase)
+        }
+        traverseChildren(tree)
+      */
+
+      case tree: PredicateTypeTree =>
+        predicateMethods.collectPredicateBody(tree)
+        tree
+      case tree: Template =>
+        val tree1 = super.transform(tree).asInstanceOf[Template]
+        predicateMethods.addPredicateMethods(tree1)
+
+      case tree: DefDef =>
+        val sym = tree.symbol
+        if (sym.is(Stable) && sym.isEffectivelyFinal)
+          extractableMethods(sym) = tree
+        super.transform(tree)
+
+      case _ =>
+        super.transform(tree)
+    }
+  }
+
+  /** A sub-component of PreciseTyping1 that lifts predicates into dedicated methods on the enclosing class. */
+  class PredicateMethods(thisPhase: PreciseTyping1) {
+    // For each class that gains predicate methods, we gather the synthesized DefDefs
+    val predicateMethods: MutableMap[ClassSymbol, ListBuffer[DefDef]] = MutableMap.empty
+
+    def collectPredicateBody(tree: PredicateTypeTree)(implicit ctx: Context): Unit = {
+      val clazz = ctx.owner.enclosingClass.asClass
+      val predMethSym = tree.tpe.asInstanceOf[PredicateRefinedType].predicateSymbol
+
+      def syntheticBody(implicit ctx: Context): List[List[Tree]] => Tree = vrefss => {
+        val origFreeSyms = PredicateRefinedType.typeTreeFreeSyms(tree.subjectVd, tree.predTpt)
+        val origSubjectSym = tree.subjectVd.symbol
+        val subjectRef :: argRefs = vrefss.flatten
+
+        val freeSymOwners = origFreeSyms.map(_.owner.enclosingMethod).distinct
+        val oldOwners = origSubjectSym :: freeSymOwners
+        val newOwners = oldOwners.map(_ => predMethSym)
+
+        new TreeTypeMap(
+          typeMap = _.subst(origSubjectSym :: origFreeSyms, subjectRef.tpe :: argRefs.map(_.tpe)),
+          oldOwners = oldOwners,
+          newOwners = newOwners
+        ).transform(tree.predTpt)
+      }
+
+      val ddef = DefDef(predMethSym, syntheticBody(ctx.withOwner(predMethSym))).withPos(ctx.owner.pos.focus)
+      predicateMethods.getOrElseUpdate(clazz, ListBuffer.empty).append(ddef)
+    }
+
+    def addPredicateMethods(tree: Template)(implicit ctx: Context): Template = {
+      val clazz = ctx.owner.asClass
+      predicateMethods.get(clazz) match {
+        case Some(ddefs) => cpy.Template(tree)(body = tree.body ++ ddefs)
+        case None => tree
       }
     }
-    traverser.traverse(ctx.compilationUnit.tpdTree)
-    */
   }
 }
+
 
 class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
 
   override def phaseName: String = "precisetyping2"
-
-//  override val isTyper: Boolean = true  // don't relax typing
-
-//  override def isCheckable: Boolean = false  // during precise typing all sorts of assumptions are broken
 
   /** List of names of phases that should precede this phase */
   override def runsAfter: Set[Class[_ <: Phase]] = Set(classOf[PreciseTyping1])
@@ -84,345 +146,195 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
   //  override def changesMembers: Boolean = true
   //  override def changesParents: Boolean = true
 
-//    def transform(ref: SingleDenotation)(implicit ctx: Context): SingleDenotation = ref match {
-//      case ref: SymDenotation =>
-//        println(i"[ TRANSFORM SymDenot $ref : ${ref.info}  (vs old: ${ref.info(ctx.withPhase(thisPhase.prev))}  /  ${ref.info(ctx.withPhase(thisPhase.prev.prev))}) ]")
-//        ref
-//      case ref =>
-//        ref
-//    }
+  /* Setup */
 
-    val typer = new PreciseTyping.Typer(thisPhase)
-    val solver = new semantic.Solver()
+  override def initContext(ctx: FreshContext) = {
+    val ptDefn = new PreciseTyper.Definitions()(ctx)
+    ctx.setProperty(PreciseTyping.PTyperDefinitions, ptDefn)
+  }
 
-    def run(implicit ctx: Context): Unit = {
-//      println("\n===== PreciseTyping =====\n")
-      val unit = ctx.compilationUnit
-      val ctx1 = ctx.fresh.setTypeComparerFn(ctx => new PreciseTyping.TypeComparer(ctx, solver))
-      val tree1 = typer.typedExpr(unit.tpdTree)(ctx1)
+  val typer = new PreciseTyping2Typer()
+  val solver = new semantic.Solver()
 
-//      val treeString = tree1.show(ctx.withProperty(printing.XprintMode, Some(())))
-//      ctx.echo(s"result of $unit as seen by precise typer:")
-//      ctx.echo(treeString)
-    }
+  def run(implicit ctx: Context): Unit = {
+    val unit = ctx.compilationUnit
+    val ctx1 = ctx.fresh.setTypeComparerFn(ctx => new PreciseTypeComparer(ctx, solver))
+    val tree1 = typer.typedExpr(unit.tpdTree)(ctx1)
 
-//  override def checkPostCondition(tree: tpd.Tree)(implicit ctx: Context) = ()
+    // val treeString = tree1.show(ctx.withProperty(printing.XprintMode, Some(())))
+    // ctx.echo(s"result of $unit as seen by precise typer:")
+    // ctx.echo(treeString)
+  }
 
-//  /** Restore infos of those symbols that had temporarily received precise types */
-//  override def prepareForValDef(vdef: tpd.ValDef)(implicit ctx: Context) = {
-//    val sym = vdef.symbol(ctx.withPhase(thisPhase))
-//    val oldDenot = sym.denot(ctx.withPhase(thisPhase.prev))
-//    if (sym.denot ne oldDenot) {
-//      println(i"[ TRANSFORMED SymDenot $sym : ${sym.denot.info}   <~~  ${oldDenot.info} ]")
-//      oldDenot.installAfter(thisPhase)
-//    }
-//    ctx
-//  }
-}
+  /* Components */
 
-
-
-object PreciseTyping {
-  import ast.tpd._
-
-  class Typer(thisPhase: PreciseTyping2) extends typer.ReTyper {
-
+  /** A version of PreciseTyper that restores the denotations previously refined by the PreciseTyping1 phase. */
+  class PreciseTyping2Typer extends PreciseTyper {
     /** Restore infos of those symbols that had temporarily received precise types */
     private def restoreImpreciseSymDenot(sym: Symbol)(implicit ctx: Context): Unit = {
       val oldDenot = sym.denot(ctx.withPhase(thisPhase.prev))
       if (sym.denot ne oldDenot) {
-//        println(i"[ TRANSFORMED SymDenot $sym : ${sym.denot.info}   <~~  ${oldDenot.info} ]")
         // FIXME: Can we avoid copying the denotation verbatim and just make the current denot undone?
         //  (Using `oldDenot.installAfter(thisPhase)` results in an infinite loop in later phases)
         oldDenot.copySymDenotation().installAfter(thisPhase)
       }
     }
 
-    override def promote(tree: untpd.Tree)(implicit ctx: Context): tree.ThisTree[Type] = {
-      assert(tree.hasType)
-      val promoted = tree.typeOpt
-//      println(s"promoting ${tree.show}: ${promoted.showWithUnderlying()}")
-      tree.withType(promoted)
-    }
-
-//    override def retrieveSym(tree: untpd.Tree)(implicit ctx: Context): Symbol = {
-//      val sym = tree.symbol
-//      // Some typing methods introduce new trees that only have their symbols attached as SymOfTree at this point
-//      if (sym.exists) sym else super.retrieveSym(tree)
-//    }
-
-    override def typedUnadapted(tree: untpd.Tree, pt: Type)(implicit ctx: Context): tpd.Tree = tree match {
-      case _: untpd.UnApply =>
-        // can't recheck patterns
-        tree.asInstanceOf[tpd.Tree]
-      case tree: untpd.PredicateTypeTree =>
-        val tree1 = promote(tree)
-        // FIXME(gsps): Since we won't retype the actual predicate, we lose precision in ifs and such
-        if (!tree1.predTpt.tpe.isStable)
-          ctx.error(s"Predicate ${tree1.predTpt.show} must be stable!")
-        tree1
-      case _ if tree.isType =>
-        promote(tree)
-      case _ =>
-        super.typedUnadapted(tree, pt)
-    }
-
-    // TODO(gsps): Factor out logic in adapt that is shared with TreeChecker
-    override def adapt(tree: Tree, pt: Type)(implicit ctx: Context) = {
-      def isPrimaryConstructorReturn =
-        ctx.owner.isPrimaryConstructor && pt.isRef(ctx.owner.owner) && tree.tpe.isRef(defn.UnitClass)
-      if (ctx.mode.isExpr &&
-        !tree.isEmpty &&
-        !isPrimaryConstructorReturn &&
-        !pt.isInstanceOf[FunProto] &&
-        !(tree.tpe <:< pt))
-        ctx.error(err.typeMismatchMsg(tree.tpe, pt), tree.pos)
-      tree
-    }
-
-//    override def typedLiteral(tree: untpd.Literal)(implicit ctx: Context): Tree =
-//      if (tree.typeOpt.isRef(defn.UnitClass))
-//        tree.withType(tree.typeOpt)
-//      else if (tree.const.tag == Constants.ClazzTag)
-//        Literal(Constant(erasure(tree.const.typeValue)))
-//      else if (tree.const.tag == Constants.ScalaSymbolTag)
-//        ref(defn.ScalaSymbolModule)
-//          .select(defn.ScalaSymbolModule_apply)
-//          .appliedTo(Literal(Constant(tree.const.scalaSymbolValue.name)))
-//      else
-//        super.typedLiteral(tree)
-
-//    override def typedSelect(tree: untpd.Select, pt: Type)(implicit ctx: Context): Tree = {
-//
-//      def mapOwner(sym: Symbol): Symbol = {
-//        def recur(owner: Symbol): Symbol =
-//          if ((owner eq defn.AnyClass) || (owner eq defn.AnyValClass)) {
-//            assert(sym.isConstructor, s"${sym.showLocated}")
-//            defn.ObjectClass
-//          } else if (defn.isSyntheticFunctionClass(owner))
-//            defn.erasedFunctionClass(owner)
-//          else
-//            owner
-//        recur(sym.owner)
-//      }
-//
-//      val origSym = tree.symbol
-//      val owner = mapOwner(origSym)
-//      val sym = if (owner eq origSym.owner) origSym else owner.info.decl(origSym.name).symbol
-//      assert(sym.exists, origSym.showLocated)
-//
-//      def select(qual: Tree, sym: Symbol): Tree =
-//        untpd.cpy.Select(tree)(qual, sym.name).withType(NamedType(qual.tpe, sym))
-//
-//      def selectArrayMember(qual: Tree, erasedPre: Type): Tree =
-//        if (erasedPre isRef defn.ObjectClass)
-//          runtimeCallWithProtoArgs(tree.name.genericArrayOp, pt, qual)
-//        else if (!(qual.tpe <:< erasedPre))
-//          selectArrayMember(cast(qual, erasedPre), erasedPre)
-//        else
-//          assignType(untpd.cpy.Select(tree)(qual, tree.name.primitiveArrayOp), qual)
-//
-//      def adaptIfSuper(qual: Tree): Tree = qual match {
-//        case Super(thisQual, untpd.EmptyTypeIdent) =>
-//          val SuperType(thisType, supType) = qual.tpe
-//          if (sym.owner is Flags.Trait)
-//            cpy.Super(qual)(thisQual, untpd.Ident(sym.owner.asClass.name))
-//              .withType(SuperType(thisType, sym.owner.typeRef))
-//          else
-//            qual.withType(SuperType(thisType, thisType.firstParent.typeConstructor))
-//        case _ =>
-//          qual
-//      }
-//
-//      def recur(qual: Tree): Tree = {
-//        val qualIsPrimitive = qual.tpe.widen.isPrimitiveValueType
-//        val symIsPrimitive = sym.owner.isPrimitiveValueClass
-//        if (qualIsPrimitive && !symIsPrimitive || qual.tpe.widenDealias.isErasedValueType)
-//          recur(box(qual))
-//        else if (!qualIsPrimitive && symIsPrimitive)
-//          recur(unbox(qual, sym.owner.typeRef))
-//        else if (sym.owner eq defn.ArrayClass)
-//          selectArrayMember(qual, erasure(tree.qualifier.typeOpt.widen.finalResultType))
-//        else {
-//          val qual1 = adaptIfSuper(qual)
-//          if (qual1.tpe.derivesFrom(sym.owner) || qual1.isInstanceOf[Super])
-//            select(qual1, sym)
-//          else
-//            recur(cast(qual1, sym.owner.typeRef))
-//        }
-//      }
-//
-//      if ((origSym eq defn.Phantom_assume) || (origSym.is(Flags.ParamAccessor) && wasPhantom(pt)))
-//        PhantomErasure.erasedAssume
-//      else recur(typed(tree.qualifier, AnySelectionProto))
-//    }
-//
-//    override def typedIdent(tree: untpd.Ident, pt: Type)(implicit ctx: Context): tpd.Tree =
-//      if (tree.symbol eq defn.Phantom_assume) PhantomErasure.erasedAssume
-//      else if (tree.symbol.is(Flags.Param) && wasPhantom(tree.typeOpt)) PhantomErasure.erasedParameterRef
-//      else super.typedIdent(tree, pt)
-
-//    override def typedApply(tree: untpd.Apply, pt: Type)(implicit ctx: Context): Tree = {
-//      val Apply(fun, args) = tree
-//      if (fun.symbol == defn.cbnArg)
-//        typedUnadapted(args.head, pt)
-//      else typedExpr(fun, FunProto(args, pt, this)) match {
-//        case fun1: Apply => // arguments passed in prototype were already passed
-//          fun1
-//        case fun1 =>
-//          fun1.tpe.widen match {
-//            case mt: MethodType =>
-//              val outers = outer.args(fun.asInstanceOf[tpd.Tree]) // can't use fun1 here because its type is already erased
-//              var args0 = outers ::: args ++ protoArgs(pt)
-//              if (args0.length > MaxImplementedFunctionArity && mt.paramInfos.length == 1) {
-//                val bunchedArgs = untpd.JavaSeqLiteral(args0, TypeTree(defn.ObjectType))
-//                  .withType(defn.ArrayOf(defn.ObjectType))
-//                args0 = bunchedArgs :: Nil
-//              }
-//              // Arguments are phantom if an only if the parameters are phantom, guaranteed by the separation of type lattices
-//              val args1 = args0.filterConserve(arg => !wasPhantom(arg.typeOpt)).zipWithConserve(mt.paramInfos)(typedExpr)
-//              untpd.cpy.Apply(tree)(fun1, args1) withType mt.resultType
-//            case _ =>
-//              throw new MatchError(i"tree $tree has unexpected type of function ${fun1.tpe.widen}, was ${fun.typeOpt.widen}")
-//          }
-//      }
-//    }
-
-//    override def typedIf(tree: untpd.If, pt: Type)(implicit ctx: Context) =
-//      super.typedIf(tree, adaptProto(tree, pt))
-//
-//    override def typedMatch(tree: untpd.Match, pt: Type)(implicit ctx: Context) =
-//      super.typedMatch(tree, adaptProto(tree, pt))
-//
-//    override def typedTry(tree: untpd.Try, pt: Type)(implicit ctx: Context) =
-//      super.typedTry(tree, adaptProto(tree, pt))
-
     override def typedValDef(vdef: untpd.ValDef, sym: Symbol)(implicit ctx: Context): ValDef = {
-//      super.typedValDef(untpd.cpy.ValDef(vdef)(
-//        tpt = untpd.TypedSplice(TypeTree(sym.info).withPos(vdef.tpt.pos))), sym)
-
-//      println(i">> ValDef $sym : ${sym.info}")
       restoreImpreciseSymDenot(sym)
       super.typedValDef(vdef, sym)
     }
+  }
+}
 
-    override def typedDefDef(ddef: untpd.DefDef, sym: Symbol)(implicit ctx: Context) = {
-//      val restpe =
-//        if (sym.isConstructor) defn.UnitType
-//        else sym.info.resultType
-//      var vparamss1 = (outer.paramDefs(sym) ::: ddef.vparamss.flatten) :: Nil
-//      var rhs1 = ddef.rhs match {
-//        case id @ Ident(nme.WILDCARD) => untpd.TypedSplice(id.withType(restpe))
-//        case _ => ddef.rhs
-//      }
-//      if (sym.isAnonymousFunction && vparamss1.head.length > MaxImplementedFunctionArity) {
-//        val bunchedParam = ctx.newSymbol(sym, nme.ALLARGS, Flags.TermParam, JavaArrayType(defn.ObjectType))
-//        def selector(n: Int) = ref(bunchedParam)
-//          .select(defn.Array_apply)
-//          .appliedTo(Literal(Constant(n)))
-//        val paramDefs = vparamss1.head.zipWithIndex.map {
-//          case (paramDef, idx) =>
-//            assignType(untpd.cpy.ValDef(paramDef)(rhs = selector(idx)), paramDef.symbol)
-//        }
-//        vparamss1 = (tpd.ValDef(bunchedParam) :: Nil) :: Nil
-//        rhs1 = untpd.Block(paramDefs, rhs1)
-//      }
-//      vparamss1 = vparamss1.mapConserve(_.filterConserve(vparam => !wasPhantom(vparam.tpe)))
-//      if (sym.is(Flags.ParamAccessor) && wasPhantom(ddef.tpt.tpe)) {
-//        sym.resetFlag(Flags.ParamAccessor)
-//        rhs1 = PhantomErasure.erasedParameterRef
-//      }
-//      val ddef1 = untpd.cpy.DefDef(ddef)(
-//        tparams = Nil,
-//        vparamss = vparamss1,
-//        tpt = untpd.TypedSplice(TypeTree(restpe).withPos(ddef.tpt.pos)),
-//        rhs = rhs1)
 
-//      println(i">> DefDef $sym : ${sym.info}")
-      super.typedDefDef(ddef, sym)
-    }
+class PreciseTyper extends typer.ReTyper {
 
-//    override def typedStats(stats: List[untpd.Tree], exprOwner: Symbol)(implicit ctx: Context): List[Tree] = {
-//      val stats1 =
-//        if (takesBridges(ctx.owner)) new Bridges(ctx.owner.asClass).add(stats)
-//        else stats
-//      super.typedStats(stats1, exprOwner).filter(!_.isEmpty)
-//    }
+  override def promote(tree: untpd.Tree)(implicit ctx: Context): tree.ThisTree[Type] = {
+    assert(tree.hasType)
+    val promoted = tree.typeOpt
+//      println(s"promoting ${tree.show}: ${promoted.showWithUnderlying()}")
+    tree.withType(promoted)
+  }
 
-//    override def adapt(tree: Tree, pt: Type)(implicit ctx: Context): Tree =
-//      trace(i"adapting ${tree.showSummary}: ${tree.tpe} to $pt", show = true) {
-//        assert(ctx.phase == ctx.erasurePhase.next, ctx.phase)
-//        if (tree.isEmpty) tree
-//        else if (ctx.mode is Mode.Pattern) tree // TODO: replace with assertion once pattern matcher is active
-//        else adaptToType(tree, pt)
-//      }
+  override def typedUnadapted(tree: untpd.Tree, pt: Type)(implicit ctx: Context): Tree = tree match {
+    case _: untpd.UnApply =>
+      // can't recheck patterns
+      tree.asInstanceOf[Tree]
+    case tree: untpd.PredicateTypeTree =>
+      val tree1 = promote(tree)
+      // TODO(gsps): Make this stability check conform to what we can extract soundly
+      if (!tree1.predTpt.tpe.isStable)
+        ctx.error(s"Predicate ${tree1.predTpt.show} must be stable!")
+      tree1
+    case _ if tree.isType =>
+      promote(tree)
+    case _ =>
+      super.typedUnadapted(tree, pt)
+  }
 
+  // TODO(gsps): Factor out logic in adapt that is shared with TreeChecker
+  override def adapt(tree: Tree, pt: Type)(implicit ctx: Context) = {
+    def isPrimaryConstructorReturn =
+      ctx.owner.isPrimaryConstructor && pt.isRef(ctx.owner.owner) && tree.tpe.isRef(defn.UnitClass)
+    if (ctx.mode.isExpr &&
+      !tree.isEmpty &&
+      !isPrimaryConstructorReturn &&
+      !pt.isInstanceOf[FunProto] &&
+      !(tree.tpe <:< pt))
+      ctx.error(err.typeMismatchMsg(tree.tpe, pt), tree.pos)
+    tree
+  }
 
 //    override def assignType(tree: untpd.Apply, fn: Tree, args: List[Tree])(implicit ctx: Context) =
 //      tree.withType(AppliedTermRef(fn.tpe, args.tpes))
 
-    override def assignType(tree: untpd.If, thenp: Tree, elsep: Tree)(implicit ctx: Context) =
-      tree.withType(AppliedTermRef(defn.OpsPackageVal.termRef.select(defn.iteMethod),
-        List(tree.cond.tpe, thenp.tpe, elsep.tpe)))
+  override def assignType(tree: untpd.If, thenp: Tree, elsep: Tree)(implicit ctx: Context) =
+    tree.withType(PreciseTyper.Types.IteType(tree.cond.tpe, thenp.tpe, elsep.tpe))
 
-    /** Disabled checks */
-    override def checkInlineConformant(tree: Tree, what: => String)(implicit ctx: Context) = ()
-    override def checkDerivedValueClass(clazz: Symbol, stats: List[Tree])(implicit ctx: Context) = ()
+  /** Disabled checks */
+  override def checkInlineConformant(tree: Tree, what: => String)(implicit ctx: Context) = ()
+  override def checkDerivedValueClass(clazz: Symbol, stats: List[Tree])(implicit ctx: Context) = ()
+}
+
+/* Various names, symbols and types that are specific to PreciseTyper and have some magic semantics. */
+object PreciseTyper {
+  object nme {
+    val PTYPER_PACKAGE = "<pt>".toTermName
+    val ite = "<ite>".toTermName
   }
 
+  class Definitions(implicit ctx: Context) {
+    private def defn = ctx.definitions
 
-  /** A TypeComparer for detecting predicate proof obligations.
-    *
-    * This TypeComparer should produce a sufficient set of proof obligations under the assumption that is is called with
-    * all the subtyping checks that must succeed for the original program to be type-safe. We effectively rely on two
-    * assumptions:
-    *   - ReTyper does the right thing and re-issues all such subtyping checks for a given compilation unit.
-    *   - isSubType(tp1, tp2) only depends positively on isPredicateSubType(tp1', tp2') where tp1' and tp2' are part
-    *       of tp1 and tp2, respectively.
-    *   - Narrowing (see `PreciseTyping1`) the types of ValDefs' symbols does not change the set of necessary checks.
-    *
-    * For this TypeComparer to not produce false alarms we rely on the following assumptions:
-    *   - It is only called for checks that *must* succeed for the program to be type-safe.
-    *   - Within this TypeComparer predicates are always checked as a last resort -- failure of the predicate check
-    *     implies failure of the overall (possibly recursive) subtyping check.
-    * In the absence of these two assumptions we will probably see some unnecessary proof obligations, potentially
-    * preventing a type-safe program from passing the `PreciseTyping2` phase.
-    * */
-  class TypeComparer(initctx: Context, solver: Solver) extends core.TypeComparer(initctx) {
-    frozenConstraint = true
+    private def newSymbol[N <: Name](owner: Symbol, name: N, flags: FlagSet, info: Type) =
+      ctx.newSymbol(owner, name, flags | Permanent, info)
 
-    private[this] var conservative: Boolean = false
+    lazy val PTyperPackageVal = ctx.newCompletePackageSymbol(defn.RootClass, nme.PTYPER_PACKAGE).entered
+    lazy val PTyperPackageClass = PTyperPackageVal.moduleClass.asClass
 
-    private def conservatively[T](op: => T): T = {
-      val saved = conservative
-      conservative = true
-      try { op }
-      finally { conservative = saved }
-    }
+    lazy val iteMethod = newSymbol(PTyperPackageClass, nme.ite, Method | Stable,
+      MethodType(List(defn.BooleanType, defn.AnyType, defn.AnyType), PredicateRefinedType.Unchecked))
+  }
 
+  object Definitions {
+    def ptDefn(implicit ctx: Context): Definitions = ctx.property(PreciseTyping.PTyperDefinitions).get
+  }
 
-    override def isSubType(tp1: Type, tp2: Type) =
-      super.isSubType(tp1, tp2)
+  /*  */
+  object Types {
+    // TODO(gsps): Factor out "magic" AppliedTermRefs with special resType computations
+    class IteType(fn: TermRef, condTp: Type, thenTp: Type, elseTp: Type)
+      extends AppliedTermRef(fn, List(condTp, thenTp, elseTp)) {
+      override def resType(implicit ctx: Context): Type = {
+        if (myResType == null) myResType = thenTp | elseTp
+        myResType
+      }
 
-    override protected def isPredicateSubType(tp1: Type, tp2: PredicateRefinedType) =
-      trace(i"isPredicateSubType $tp1 vs $tp2", ptyper)
-    {
-      def checkSemantic(tp1: Type, tp2: PredicateRefinedType): Boolean =
-        solver(tp1, tp2) match {
-          case SolverResult.Valid => true
-          case SolverResult.NotValid => false
-          case _ => ctx.warning(i"Result of ptyper check $tp1 <:< $tp2 is unknown."); false
+      override def derivedAppliedTerm(fn: Type, args: List[Type])(implicit ctx: Context): Type =
+        if (this.fn ne fn) throw new UnsupportedOperationException(i"Cannot change function of IteType: $fn")
+        else if (this.args eq args) this
+        else {
+          val condTp :: thenTp :: elseTp :: Nil = args
+          new IteType(this.fn, condTp, thenTp, elseTp)
         }
-
-      if (conservative) false
-      else (tp1 <:< tp2.parent) && checkSemantic(tp1, tp2)
-//        tp1 match {
-//          case tp1: PredicateRefinedType if tp1.parent <:< tp2.parent => checkSemantic(tp1, tp2)
-//          case _ if tp1 <:< tp2.parent => checkSemantic(tp1, tp2)
-//          case _ => false
-//        }
     }
 
+    object IteType {
+      def apply(condTp: Type, thenTp: Type, elseTp: Type)(implicit ctx: Context): IteType = {
+        val ptDefn = Definitions.ptDefn
+        val ref = ptDefn.PTyperPackageVal.termRef.select(ptDefn.iteMethod)
+        new IteType(ref.asInstanceOf[TermRef], condTp, thenTp, elseTp)
+      }
+    }
+  }
+}
+
+
+/** A TypeComparer for detecting predicate proof obligations.
+  *
+  * This TypeComparer should produce a sufficient set of proof obligations under the assumption that is is called with
+  * all the subtyping checks that must succeed for the original program to be type-safe. We effectively rely on two
+  * assumptions:
+  *   - ReTyper does the right thing and re-issues all such subtyping checks for a given compilation unit.
+  *   - isSubType(tp1, tp2) only depends positively on isPredicateSubType(tp1', tp2') where tp1' and tp2' are part
+  *       of tp1 and tp2, respectively.
+  *   - Narrowing (see `PreciseTyping1`) the types of ValDefs' symbols does not change the set of necessary checks.
+  *
+  * For this TypeComparer to not produce false alarms we rely on the following assumptions:
+  *   - It is only called for checks that *must* succeed for the program to be type-safe.
+  *   - Within this TypeComparer predicates are always checked as a last resort -- failure of the predicate check
+  *     implies failure of the overall (possibly recursive) subtyping check.
+  * In the absence of these two assumptions we will probably see some unnecessary proof obligations, potentially
+  * preventing a type-safe program from passing the `PreciseTyping2` phase.
+  * */
+class PreciseTypeComparer(initctx: Context, solver: Solver) extends core.TypeComparer(initctx) {
+  frozenConstraint = true
+
+  private[this] var conservative: Boolean = false
+
+  private def conservatively[T](op: => T): T = {
+    val saved = conservative
+    conservative = true
+    try { op }
+    finally { conservative = saved }
+  }
+
+  override protected def isPredicateSubType(tp1: Type, tp2: PredicateRefinedType) =
+    trace(i"isPredicateSubType $tp1 vs $tp2", ptyper)
+  {
+    def checkSemantic(tp1: Type, tp2: PredicateRefinedType): Boolean =
+      solver(tp1, tp2) match {
+        case SolverResult.Valid => true
+        case SolverResult.NotValid => false
+        case _ => ctx.warning(i"Result of ptyper check $tp1 <:< $tp2 is unknown."); false
+      }
+
+    if (conservative) false
+    else (tp1 <:< tp2.parent) && checkSemantic(tp1, tp2)
+  }
+
+  /* The various public methods of TypeComparer that we may or may not want to influence. */
 
 //    override def hasMatchingMember(name: Name, tp1: Type, tp2: RefinedType): Boolean =
 //      unsupported("hasMatchingMember")
@@ -434,16 +346,24 @@ object PreciseTyping {
 //    final def andType ???
 //    final def orType ???
 
-    override def lub(tp1: Type, tp2: Type, canConstrain: Boolean = false) =
-      conservatively { super.lub(tp1, tp2, canConstrain) }
+  override def lub(tp1: Type, tp2: Type, canConstrain: Boolean = false) =
+    conservatively { super.lub(tp1, tp2, canConstrain) }
 
-    override def glb(tp1: Type, tp2: Type) =
-      conservatively { super.glb(tp1, tp2) }
+  override def glb(tp1: Type, tp2: Type) =
+    conservatively { super.glb(tp1, tp2) }
 
-    override def addConstraint(param: TypeParamRef, bound: Type, fromBelow: Boolean): Boolean =
-      unsupported("addConstraint")
+  override def addConstraint(param: TypeParamRef, bound: Type, fromBelow: Boolean): Boolean =
+    unsupported("addConstraint")
 
-    override def copyIn(ctx: Context) = new TypeComparer(ctx, solver)
-  }
+  override def copyIn(ctx: Context) = new PreciseTypeComparer(ctx, solver)
+}
 
+
+object PreciseTyping {
+  type MethodMap = MutableMap[Symbol, DefDef]
+
+  /* Properties used by various components that run during PreciseTyping: */
+  // TODO(gsps): Put such "PreciseTypingState" into a dedicated class and store it in ContextBase (property(_) is slow!)
+  val PTyperDefinitions = new Property.Key[PreciseTyper.Definitions]
+  val ExtractableMethods = new Property.Key[MethodMap]
 }

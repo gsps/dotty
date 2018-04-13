@@ -1099,6 +1099,13 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
   }
 
   /* Skips refinement checks for PredicateRefinedTypes -- this is overridden in PreciseTyping. */
+  /* FIXME(gsps): Should also have a conservative mode here if the check happens, e.g., in a lub.
+      Consider, for instance, `lub(Int(0), Pos(n))` which at the moment erroneously returns `Pos(n)`
+      If we make isPredicateSubType return false during lubs, we will fall back to computing
+       lub(Int(0).widen, Pos(n).widen) = lub(Int, Pos) = Int
+      If neither of the arguments can widen any further we will try distributeOr(_, _), which is yet
+      to be (re-)implemented for PredicateRefinedTypes.
+   */
   protected def isPredicateSubType(tp1: Type, tp2: PredicateRefinedType): Boolean =
 //    tp2 match {
 //      case PredicateRefinedType(parent2, pred2) => tp1 <:< parent2
