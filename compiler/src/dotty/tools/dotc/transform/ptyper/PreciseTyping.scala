@@ -229,8 +229,21 @@ class PreciseTyper extends typer.ReTyper {
 //    override def assignType(tree: untpd.Apply, fn: Tree, args: List[Tree])(implicit ctx: Context) =
 //      tree.withType(AppliedTermRef(fn.tpe, args.tpes))
 
-  override def assignType(tree: untpd.If, thenp: Tree, elsep: Tree)(implicit ctx: Context) =
-    tree.withType(PreciseTyper.Types.IteType(tree.cond.tpe, thenp.tpe, elsep.tpe))
+  override def assignType(tree: untpd.If, thenp: Tree, elsep: Tree)(implicit ctx: Context) = {
+    val thenTp = thenp.tpe
+    val elseTp = elsep.tpe
+    /** Try the simple case of forming a lub before introducing a precise IteType.
+      * This is not only a performance optimization, but also affects completeness both positively and negatively:
+      * Positively, in the sense that TypeComparer is rather limited when it comes to comparing traditional types and
+      *  IteTypes, and we therefore gain a bit of completeness by not introducing an IteType here.
+      * On the other hand we do lose some information that could have been used during semantic checking of predicates.
+      */
+    val tpe =
+      if (thenTp <:< elseTp) elseTp
+      else if (elseTp <:< thenTp) thenTp
+      else PreciseTyper.Types.IteType(tree.cond.tpe, thenTp, elseTp)
+    tree.withType(tpe)
+  }
 
   /** Disabled checks */
   override def checkInlineConformant(tree: Tree, what: => String)(implicit ctx: Context) = ()
