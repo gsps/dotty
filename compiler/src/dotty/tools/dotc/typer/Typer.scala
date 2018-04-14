@@ -1137,7 +1137,7 @@ class Typer extends Namer
       else if (isFullyDefined(proto1, ForceDegree.none)) proto1
       else if (tree.elems.isEmpty && tree.isInstanceOf[Trees.JavaSeqLiteral[_]])
         defn.ObjectType // generic empty Java varargs are of type Object[]
-      else ctx.typeComparer.lub(elems1.tpes)
+      else ctx.typeComparer.topLevelLub(elems1.tpes)
     val elemtpt1 = typed(tree.elemtpt, proto2)
     assignType(cpy.SeqLiteral(tree)(elems1, elemtpt1), elems1, elemtpt1)
   }
@@ -1598,7 +1598,7 @@ class Typer extends Namer
       case _ =>
         val pcls = (defn.ObjectClass /: parents)(improve)
         typr.println(i"ensure first is class $parents%, % --> ${parents map (_ baseType pcls)}%, %")
-        val first = ctx.typeComparer.glb(defn.ObjectType :: parents.map(_.baseType(pcls)))
+        val first = ctx.typeComparer.topLevelGlb(defn.ObjectType :: parents.map(_.baseType(pcls)))
         checkFeasibleParent(first, pos, em" in inferred superclass $first") :: parents
     }
   }

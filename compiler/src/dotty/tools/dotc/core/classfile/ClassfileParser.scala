@@ -496,7 +496,7 @@ class ClassfileParser(
           val elems = arr.toList
           val elemType =
             if (elems.isEmpty) defn.ObjectType
-            else ctx.typeComparer.lub(elems.tpes).widen
+            else ctx.typeComparer.topLevelLub(elems.tpes).widen
           Some(JavaSeqLiteral(elems, TypeTree(elemType)))
         }
       case ANNOTATION_TAG =>

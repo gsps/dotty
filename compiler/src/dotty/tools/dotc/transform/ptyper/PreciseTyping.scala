@@ -324,14 +324,14 @@ object PreciseTyper {
 class PreciseTypeComparer(initctx: Context, solver: Solver) extends core.TypeComparer(initctx) {
   frozenConstraint = true
 
-  private[this] var conservative: Boolean = false
-
-  private def conservatively[T](op: => T): T = {
-    val saved = conservative
-    conservative = true
-    try { op }
-    finally { conservative = saved }
-  }
+//  private[this] var conservative: Boolean = false
+//
+//  private def conservatively[T](op: => T): T = {
+//    val saved = conservative
+//    conservative = true
+//    try { op }
+//    finally { conservative = saved }
+//  }
 
   override protected def isPredicateSubType(tp1: Type, tp2: PredicateRefinedType) =
     trace(i"isPredicateSubType $tp1 vs $tp2", ptyper)
@@ -343,7 +343,7 @@ class PreciseTypeComparer(initctx: Context, solver: Solver) extends core.TypeCom
         case _ => ctx.warning(i"Result of ptyper check $tp1 <:< $tp2 is unknown."); false
       }
 
-    if (conservative) false
+    if (isInLubOrGlb) false
     else (tp1 <:< tp2.parent) && checkSemantic(tp1, tp2)
   }
 
@@ -359,11 +359,11 @@ class PreciseTypeComparer(initctx: Context, solver: Solver) extends core.TypeCom
 //    final def andType ???
 //    final def orType ???
 
-  override def lub(tp1: Type, tp2: Type, canConstrain: Boolean = false) =
-    conservatively { super.lub(tp1, tp2, canConstrain) }
+//  override def lub(tp1: Type, tp2: Type, canConstrain: Boolean = false) =
+//    conservatively { super.lub(tp1, tp2, canConstrain) }
 
-  override def glb(tp1: Type, tp2: Type) =
-    conservatively { super.glb(tp1, tp2) }
+//  override def glb(tp1: Type, tp2: Type) =
+//    conservatively { super.glb(tp1, tp2) }
 
   override def addConstraint(param: TypeParamRef, bound: Type, fromBelow: Boolean): Boolean =
     unsupported("addConstraint")

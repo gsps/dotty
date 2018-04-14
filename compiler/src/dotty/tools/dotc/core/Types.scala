@@ -861,7 +861,7 @@ object Types {
     }
 
     def & (that: Type)(implicit ctx: Context): Type = track("&") {
-      ctx.typeComparer.glb(this, that)
+      ctx.typeComparer.topLevelGlb(this, that)
     }
 
     /** Safer version of `&`.
@@ -890,7 +890,7 @@ object Types {
       }
 
     def | (that: Type)(implicit ctx: Context): Type = track("|") {
-      ctx.typeComparer.lub(this, that)
+      ctx.typeComparer.topLevelLub(this, that)
     }
 
 // ----- Unwrapping types -----------------------------------------------
@@ -978,7 +978,7 @@ object Types {
      */
     def widenUnion(implicit ctx: Context): Type = this match {
       case OrType(tp1, tp2) =>
-        ctx.typeComparer.lub(tp1.widenUnion, tp2.widenUnion, canConstrain = true) match {
+        ctx.typeComparer.topLevelLub(tp1.widenUnion, tp2.widenUnion, canConstrain = true) match {
           case union: OrType => union.join
           case res => res
         }

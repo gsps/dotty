@@ -535,7 +535,7 @@ trait TypeAssigner {
     tree.withType(NamedType(NoPrefix, sym))
 
   def assignType(tree: untpd.Alternative, trees: List[Tree])(implicit ctx: Context) =
-    tree.withType(ctx.typeComparer.lub(trees.tpes))
+    tree.withType(ctx.typeComparer.topLevelLub(trees.tpes))
 
   def assignType(tree: untpd.UnApply, proto: Type)(implicit ctx: Context) =
     tree.withType(proto)

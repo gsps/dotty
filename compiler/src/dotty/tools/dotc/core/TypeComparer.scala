@@ -29,6 +29,9 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
 
   private[this] var needsGc = false
 
+  private[this] var inLubOrGlb = false
+  protected def isInLubOrGlb: Boolean = inLubOrGlb
+
   /** Is a subtype check in progress? In that case we may not
    *  permanently instantiate type variables, because the corresponding
    *  constraint might still be retracted and the instantiation should
@@ -1098,20 +1101,13 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
         tp1.parent.asInstanceOf[RefinedType], tp2.parent.asInstanceOf[RefinedType], limit))
   }
 
-  /* Skips refinement checks for PredicateRefinedTypes -- this is overridden in PreciseTyping. */
-  /* FIXME(gsps): Should also have a conservative mode here if the check happens, e.g., in a lub.
-      Consider, for instance, `lub(Int(0), Pos(n))` which at the moment erroneously returns `Pos(n)`
-      If we make isPredicateSubType return false during lubs, we will fall back to computing
-       lub(Int(0).widen, Pos(n).widen) = lub(Int, Pos) = Int
-      If neither of the arguments can widen any further we will try distributeOr(_, _), which is yet
-      to be (re-)implemented for PredicateRefinedTypes.
-   */
+  /**
+    * Skips refinement checks for PredicateRefinedTypes -- this is overridden in PreciseTyping.
+    * Note that we are currently conservative in the presence of lubs and glbs.
+    */
   protected def isPredicateSubType(tp1: Type, tp2: PredicateRefinedType): Boolean =
-//    tp2 match {
-//      case PredicateRefinedType(parent2, pred2) => tp1 <:< parent2
-//      case _ => false
-//    }
-    tp1 <:< tp2.parent
+    if (isInLubOrGlb) false  // To remain sound, we return false and thus don't allow lubs and glbs to be simplified
+    else tp1 <:< tp2.parent
 
   /** A type has been covered previously in subtype checking if it
    *  is some combination of TypeRefs that point to classes, where the
@@ -1257,8 +1253,20 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
     else NoType
   }
 
+  final protected def trackLubOrGlb[T](op: => T): T = {
+    val saved = inLubOrGlb
+    inLubOrGlb = true
+    try { op } finally { inLubOrGlb = saved }
+  }
+
+  final def topLevelGlb(tp1: Type, tp2: Type): Type =
+    trackLubOrGlb(glb(tp1, tp2))
+
+  final def topLevelLub(tp1: Type, tp2: Type, canConstrain: Boolean = false): Type =
+    trackLubOrGlb(lub(tp1, tp2, canConstrain))
+
   /** The greatest lower bound of two types */
-  def glb(tp1: Type, tp2: Type): Type = /*>|>*/ trace(s"glb(${tp1.show}, ${tp2.show})", subtyping, show = true) /*<|<*/ {
+  protected def glb(tp1: Type, tp2: Type): Type = /*>|>*/ trace(s"glb(${tp1.show}, ${tp2.show})", subtyping, show = true) /*<|<*/ {
     if (tp1 eq tp2) tp1
     else if (!tp1.exists) tp2
     else if (!tp2.exists) tp1
@@ -1294,20 +1302,21 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
                   }
                 case _ => andType(tp1, tp2)
               }
-          }
+            }
         }
     }
   }
 
   /** The greatest lower bound of a list types */
-  final def glb(tps: List[Type]): Type =
+  final def topLevelGlb(tps: List[Type]): Type = trackLubOrGlb {
     ((defn.AnyType: Type) /: tps)(glb)
+  }
 
   /** The least upper bound of two types
    *  @param canConstrain  If true, new constraints might be added to simplify the lub.
    *  @note  We do not admit singleton types in or-types as lubs.
    */
-  def lub(tp1: Type, tp2: Type, canConstrain: Boolean = false): Type = /*>|>*/ trace(s"lub(${tp1.show}, ${tp2.show}, canConstrain=$canConstrain)", subtyping, show = true) /*<|<*/ {
+  protected def lub(tp1: Type, tp2: Type, canConstrain: Boolean = false): Type = /*>|>*/ trace(s"lub(${tp1.show}, ${tp2.show}, canConstrain=$canConstrain)", subtyping, show = true) /*<|<*/ {
     if (tp1 eq tp2) tp1
     else if (!tp1.exists) tp1
     else if (!tp2.exists) tp2
@@ -1330,8 +1339,9 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
   }
 
   /** The least upper bound of a list of types */
-  final def lub(tps: List[Type]): Type =
+  final def topLevelLub(tps: List[Type]): Type = trackLubOrGlb {
     ((defn.NothingType: Type) /: tps)(lub(_,_, canConstrain = false))
+  }
 
   /** Try to produce joint arguments for a lub `A[T_1, ..., T_n] | A[T_1', ..., T_n']` using
    *  the following strategies:
@@ -1340,7 +1350,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
    *    - if corresponding parameter variance is co/contra-variant, the lub/glb.
    *    - otherwise a TypeBounds containing both arguments
    */
-  def lubArgs(args1: List[Type], args2: List[Type], tparams: List[TypeParamInfo], canConstrain: Boolean = false): List[Type] =
+  def lubArgs(args1: List[Type], args2: List[Type], tparams: List[TypeParamInfo], canConstrain: Boolean = false): List[Type] = trackLubOrGlb {
     tparams match {
       case tparam :: tparamsRest =>
         val arg1 :: args1Rest = args1
@@ -1357,6 +1367,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       case nil =>
         Nil
     }
+  }
 
   /** Try to produce joint arguments for a glb `A[T_1, ..., T_n] & A[T_1', ..., T_n']` using
    *  the following strategies:
@@ -1372,7 +1383,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
    *  The unification rule is contentious because it cuts the constraint set.
    *  Therefore it is subject to Config option `alignArgsInAnd`.
    */
-  def glbArgs(args1: List[Type], args2: List[Type], tparams: List[TypeParamInfo]): List[Type] =
+  def glbArgs(args1: List[Type], args2: List[Type], tparams: List[TypeParamInfo]): List[Type] = trackLubOrGlb {
     tparams match {
       case tparam :: tparamsRest =>
         val arg1 :: args1Rest = args1
@@ -1392,6 +1403,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       case nil =>
         Nil
     }
+  }
 
   private def recombineAnd(tp: AndType, tp1: Type, tp2: Type) =
     if (!tp1.exists) tp2
