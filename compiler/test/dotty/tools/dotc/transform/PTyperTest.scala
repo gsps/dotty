@@ -27,7 +27,7 @@ class PTyperTest extends DottyTest {
       val predRef = prt.predicate.asInstanceOf[AppliedTermRef]
       val argTpes = predRef.args
       assertEquals(expectedOwner, predRef.fn.termSymbol.owner.name.toString)
-      assertEquals(PredicateRefinedType.SubjectSentinel, argTpes.head)
+      assertTrue(PredicateRefinedType.SubjectSentinel.unapply(argTpes.head))
       assertEquals(expectedArgNames.length, argTpes.tail.length)
       (argTpes.tail zip expectedArgNames) foreach {
         case (argTpe: NamedType, expected) => assertEquals(expected, argTpe.name.toString)

@@ -2552,7 +2552,7 @@ object Types {
         val freeSyms   = PredicateRefinedType.typeTreeFreeSyms(subjectVd, predTree)
         val paramNames = subjectVd.name    :: freeSyms.map(_.name.asTermName)
         val paramTpes  = subjectVd.tpt.tpe :: freeSyms.map(_.info)
-        val argTpes    = SubjectSentinel   :: freeSyms.map(_.termRef)
+        val argTpes    = SubjectSentinel() :: freeSyms.map(_.termRef)
 
         val predMethName = NameKinds.PredicateName.fresh(ctx.owner.name.toTermName)
         val predMeth = ctx.newSymbol(ctx.owner.enclosingClass, predMethName,
@@ -2574,13 +2574,14 @@ object Types {
 
     /** Auxiliary type to distinguish the subject passed in predicate method invocations */
 
-    object Unchecked extends FlexType
+    object SubjectSentinel {
+      def apply()(implicit ctx: Context): Type =
+        AppliedTermRef(defn.Predef_undefinedR, List())
 
-    object SubjectSentinel extends UncachedProxyType with SingletonType {
-      override def underlying(implicit ctx: Context): Type = Unchecked
-
-      override def toText(printer: Printer): Text = "V"
-      override def fallbackToText(printer: Printer): Text = toText(printer)
+      def unapply(tp: Type)(implicit ctx: Context): Boolean = tp match {
+        case tp: AppliedTermRef => tp.fn eq defn.Predef_undefinedR
+        case _ => false
+      }
     }
 
     /** Compute the free symbols of a predicate tree. */

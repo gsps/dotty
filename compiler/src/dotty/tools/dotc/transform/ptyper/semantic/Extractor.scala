@@ -276,7 +276,7 @@ trait TypeExtractor { this: Extractor =>
 
     extractableMethods.get(fn.symbol) match {
       case Some(ddef) =>
-        val PredicateRefinedType.SubjectSentinel :: args1 = args
+        val PredicateRefinedType.SubjectSentinel() :: args1 = args
         val vparams :: Nil = ddef.vparamss
         val rhsTpe = ddef.rhs.tpe.subst(vparams.map(_.symbol), subject :: args1)
         typ(rhsTpe)

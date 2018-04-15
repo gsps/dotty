@@ -290,7 +290,7 @@ object PreciseTyper {
     lazy val PTyperPackageClass = PTyperPackageVal.moduleClass.asClass
 
     lazy val iteMethod = newSymbol(PTyperPackageClass, nme.ite, Method | Stable,
-      MethodType(List(defn.BooleanType, defn.AnyType, defn.AnyType), PredicateRefinedType.Unchecked))
+      MethodType(List(defn.BooleanType, defn.AnyType, defn.AnyType), Types.Unchecked))
   }
 
   object Definitions {
@@ -299,6 +299,8 @@ object PreciseTyper {
 
   /*  */
   object Types {
+    object Unchecked extends FlexType
+
     // TODO(gsps): Factor out "magic" AppliedTermRefs with special resType computations
     class IteType(fn: TermRef, condTp: Type, thenTp: Type, elseTp: Type)
       extends AppliedTermRef(fn, List(condTp, thenTp, elseTp)) {
