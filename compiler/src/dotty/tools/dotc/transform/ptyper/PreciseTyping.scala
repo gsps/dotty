@@ -230,7 +230,7 @@ class PreciseTyper extends typer.ReTyper {
   override def typedIf(tree: untpd.If, pt: Type)(implicit ctx: Context): Tree = track("typedIf") {
     val cond1 = typed(tree.cond, defn.BooleanType)
     val thenp2 :: elsep2 :: Nil = harmonic(harmonize) {
-      val condTp = Utils.ensureStableRef(cond1.tpe)
+      val condTp = Utils.ensureStableRef(cond1.tpe, Utils.nme.PC_SUBJECT)
       _pathConditions = (true, condTp) :: _pathConditions
       val thenp1 = typed(tree.thenp, pt.notApplied)
       _pathConditions = (false, condTp) :: _pathConditions.tail

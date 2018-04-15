@@ -64,6 +64,7 @@ class Solver extends pt.Solver
     ptyper.println(Magenta(s"[[ PTyper query #$queryCount ]]  ${posString(pos)}").show)
     if (printQueryInfo) {
       val bindingsStr = bindingCnstrs.map(_.toString).mkString("\t\t", "\n\t\t", "\n")
+      ptyper.println(s"\t${pcs.size} path conditions")
       ptyper.println(s"\t${bindingCnstrs.size} bindings extracted:\n$bindingsStr")
       ptyper.println(s"\tQuery:\n\t\t$query")
     }

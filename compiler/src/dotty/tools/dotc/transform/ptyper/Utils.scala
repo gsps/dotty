@@ -3,12 +3,14 @@ package transform.ptyper
 
 import core.Contexts.Context
 import core.Decorators._
+import core.Names.Name
 import core.Types._
 
 
 object Utils {
   object nme {
     val VAR_SUBJECT = "u".toTermName
+    val PC_SUBJECT = "pc".toTermName
   }
 
   // Something akin to a relatively qualified name, e.g. `x.y` for TermRef(TermRef(NoPrefix, "x"), "y")
@@ -31,9 +33,9 @@ object Utils {
     sb.toString
   }
 
-  def ensureStableRef(tp: Type)(implicit ctx: Context): RefType = tp.stripTypeVar match {
+  def ensureStableRef(tp: Type, name: Name = nme.VAR_SUBJECT)(implicit ctx: Context): RefType = tp.stripTypeVar match {
     case tp: RefType if tp.isStable => tp
-    case tp: ValueType => SkolemType(tp).withName(nme.VAR_SUBJECT)
+    case tp: ValueType => SkolemType(tp).withName(name)
     case tp: TypeProxy => ensureStableRef(tp.underlying)
   }
 }
