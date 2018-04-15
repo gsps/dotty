@@ -12,8 +12,9 @@ import core.Contexts._
 import core.Types._
 import core.Decorators._
 import transform.MacroTransform
-import typer.ProtoTypes.FunProto
 import typer.ErrorReporting.err
+import typer.NoChecking
+import typer.ProtoTypes.FunProto
 import util.Property
 import util.Stats.track
 import util.Positions.{NoPosition, Position}
@@ -130,7 +131,7 @@ class PreciseTyping1 extends MacroTransform with IdentityDenotTransformer { this
     def addPredicateMethods(tree: Template)(implicit ctx: Context): Template = {
       val clazz = ctx.owner.asClass
       predicateMethods.get(clazz) match {
-        case Some(ddefs) => cpy.Template(tree)(body = tree.body ++ ddefs)
+        case Some(ddefs) => cpy.Template(tree)(body = List.concat(tree.body, ddefs))
         case None => tree
       }
     }
@@ -155,23 +156,38 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
     ctx.setProperty(PreciseTyping.PTyperDefinitions, ptDefn)
   }
 
-  val typer = new PreciseTyping2Typer()
   val solver = new semantic.Solver()
 
   def run(implicit ctx: Context): Unit = {
-    val unit = ctx.compilationUnit
-    val ctx1 = ctx.fresh.setTypeComparerFn(ctx => new PreciseTypeComparer(ctx, typer, solver))
-    val tree1 = typer.typedExpr(unit.tpdTree)(ctx1)
+    val extractingTyper = new ExtractingTyper()
+    val checkingTyper = new CheckingTyper()
 
-    // val treeString = tree1.show(ctx.withProperty(printing.XprintMode, Some(())))
+    val unit = ctx.compilationUnit
+    val tree1 = extractingTyper.typedExpr(unit.tpdTree)
+    val ctx1 = ctx.fresh.setTypeComparerFn(ctx => new PreciseTypeComparer(ctx, checkingTyper, solver))
+    val tree2 = checkingTyper.typedExpr(tree1)(ctx1)
+
+    // val treeString = tree2.show(ctx.withProperty(printing.XprintMode, Some(())))
     // ctx.echo(s"result of $unit as seen by precise typer:")
     // ctx.echo(treeString)
   }
 
   /* Components */
 
+  class ExtractingTyper extends PreciseTyper with NoChecking {
+    override def typedDefDef(tree: untpd.DefDef, sym: Symbol)(implicit ctx: Context): DefDef = {
+      val tree1 = super.typedDefDef(tree, sym)
+      if (sym.is(Stable))
+        solver.extractor.extractMethod(tree1)
+      tree1
+    }
+
+    override def adapt(tree: Tree, pt: Type)(implicit ctx: Context) =
+      tree
+  }
+
   /** A version of PreciseTyper that restores the denotations previously refined by the PreciseTyping1 phase. */
-  class PreciseTyping2Typer extends PreciseTyper {
+  class CheckingTyper extends PreciseTyper {
     /** Restore infos of those symbols that had temporarily received precise types */
     private def restoreImpreciseSymDenot(sym: Symbol)(implicit ctx: Context): Unit = {
       val oldDenot = sym.denot(ctx.withPhase(thisPhase.prev))
@@ -185,6 +201,24 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
     override def typedValDef(vdef: untpd.ValDef, sym: Symbol)(implicit ctx: Context): ValDef = {
       restoreImpreciseSymDenot(sym)
       super.typedValDef(vdef, sym)
+    }
+
+    // TODO(gsps): Factor out logic in adapt that is shared with TreeChecker
+    override def adapt(tree: Tree, pt: Type)(implicit ctx: Context) = {
+      def isPrimaryConstructorReturn =
+        ctx.owner.isPrimaryConstructor && pt.isRef(ctx.owner.owner) && tree.tpe.isRef(defn.UnitClass)
+      if (ctx.mode.isExpr &&
+        !tree.isEmpty &&
+        !isPrimaryConstructorReturn &&
+        !pt.isInstanceOf[FunProto])
+      {
+        val saved = _currentTree
+        _currentTree = tree
+        if (!(tree.tpe <:< pt))
+          ctx.error(err.typeMismatchMsg(tree.tpe, pt), tree.pos)
+        _currentTree = saved
+      }
+      tree
     }
   }
 }
@@ -209,12 +243,6 @@ class PreciseTyper extends typer.ReTyper {
     case _: untpd.UnApply =>
       // can't recheck patterns
       tree.asInstanceOf[Tree]
-    case tree: untpd.PredicateTypeTree =>
-      val tree1 = promote(tree)
-      // TODO(gsps): Make this stability check conform to what we can extract soundly
-      if (!tree1.predTpt.tpe.isStable)
-        ctx.error(s"Predicate ${tree1.predTpt.show} must be stable!")
-      tree1
     case _ if tree.isType =>
       promote(tree)
     case _ =>
@@ -239,24 +267,6 @@ class PreciseTyper extends typer.ReTyper {
       thenp1 :: elsep1 :: Nil
     }
     assignType(untpd.cpy.If(tree)(cond1, thenp2, elsep2), thenp2, elsep2)
-  }
-
-  // TODO(gsps): Factor out logic in adapt that is shared with TreeChecker
-  override def adapt(tree: Tree, pt: Type)(implicit ctx: Context) = {
-    def isPrimaryConstructorReturn =
-      ctx.owner.isPrimaryConstructor && pt.isRef(ctx.owner.owner) && tree.tpe.isRef(defn.UnitClass)
-    if (ctx.mode.isExpr &&
-      !tree.isEmpty &&
-      !isPrimaryConstructorReturn &&
-      !pt.isInstanceOf[FunProto])
-    {
-      val saved = _currentTree
-      _currentTree = tree
-      if (!(tree.tpe <:< pt))
-        ctx.error(err.typeMismatchMsg(tree.tpe, pt), tree.pos)
-      _currentTree = saved
-    }
-    tree
   }
 
 //    override def assignType(tree: untpd.Apply, fn: Tree, args: List[Tree])(implicit ctx: Context) =

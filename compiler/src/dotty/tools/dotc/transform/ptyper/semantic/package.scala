@@ -7,6 +7,9 @@ import inox.{trees => ix}
 
 package object semantic {
 
+  type Id = inox.Identifier
+  val FreshIdentifier = inox.FreshIdentifier
+
   type Var = ix.Variable
   type Expr = ix.Expr
   val TrueExpr = ix.BooleanLiteral(true)

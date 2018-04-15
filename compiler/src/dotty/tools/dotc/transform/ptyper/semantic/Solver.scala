@@ -23,7 +23,7 @@ class Solver extends pt.Solver
   import pt.Solver.PathCond
 
   private[this] var _extractor: Extractor = _
-  private def extractor(implicit ctx: Context): Extractor = {
+  def extractor(implicit ctx: Context): Extractor = {
     if (_extractor == null)         _extractor = new Extractor(new ExtractionState, ctx)
     else if (_extractor.ctx ne ctx) _extractor = _extractor.copyInto(ctx)
     _extractor
@@ -63,8 +63,9 @@ class Solver extends pt.Solver
       White(if (sp.exists) s"${sp.source.name} @ ${sp.line + 1}:${sp.column + 1}" else "???").show
     ptyper.println(Magenta(s"[[ PTyper query #$queryCount ]]  ${posString(pos)}").show)
     if (printQueryInfo) {
-      val bindingsStr = bindingCnstrs.map(_.toString).mkString("\t\t", "\n\t\t", "\n")
-      ptyper.println(s"\t${pcs.size} path conditions")
+      val xst = extractor.xst
+      val bindingsStr = bindingCnstrs.map(c => s"${xst.getRefVar(c.subject)}:  $c").mkString("\t\t", "\n\t\t", "\n")
+      ptyper.println(s"\t${pcs.size} path condition(s)")
       ptyper.println(s"\t${bindingCnstrs.size} bindings extracted:\n$bindingsStr")
       ptyper.println(s"\tQuery:\n\t\t$query")
     }

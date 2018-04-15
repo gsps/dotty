@@ -4,6 +4,7 @@ package semantic
 
 import core.Contexts.Context
 import core.Decorators._
+import core.Flags.Stable
 import core.Names.{Name, TermName}
 import core.NameKinds
 import core.StdNames.nme
@@ -20,7 +21,7 @@ import scala.annotation.tailrec
 
 
 class Extractor(_xst: ExtractionState, _ctx: Context)
-  extends ExtractorBase with TypeExtractor
+  extends ExtractorBase with MethodExtractor with TypeExtractor
 {
   implicit val ctx: Context = _ctx
   implicit val xst: ExtractionState = _xst
@@ -35,9 +36,15 @@ protected class ExtractionState {
   import ExtractorUtils.{freshVar, ixType}
 
   private val refType2Var = new inox.utils.Bijection[RefType, Var]
+  private val method2Id = new inox.utils.Bijection[Symbol, Id]
+  private val id2FunDef = new inox.utils.Bijection[Id, ix.FunDef]
 
-  private var _inoxProgram: InoxProgram = InoxProgram(Seq.empty, Seq.empty)
-  def inoxProgram: InoxProgram = _inoxProgram
+  private var _inoxProgram: InoxProgram = _
+  def inoxProgram: InoxProgram = {
+    if (_inoxProgram == null) _inoxProgram = InoxProgram(id2FunDef.bSet.toSeq, Seq.empty)
+    _inoxProgram
+  }
+
 
   def getRefVar(refTp: RefType): Var =
     refType2Var.toB(refTp)
@@ -50,6 +57,18 @@ protected class ExtractionState {
 
   def getRefType(refVar: Var): RefType =
     refType2Var.toA(refVar)
+
+
+  def getMethodId(sym: Symbol): Option[Id] =
+    method2Id.getB(sym)
+
+  def addMethod(sym: Symbol)(fdBuilder: Id => ix.FunDef)(implicit ctx: Context): Id =
+    method2Id.cachedB(sym) {
+      val id = FreshIdentifier(sym.fullName.toString)
+      id2FunDef.cachedB(id)(fdBuilder(id))
+      _inoxProgram = null
+      id
+    }
 }
 
 /* Ephemeral state built up as we recursively extract a type. */
@@ -65,7 +84,7 @@ protected object ExtractionContext {
 
 
 trait TypeExtractor { this: Extractor =>
-  import ExtractorUtils.{ixNotEquals, MethodApplication, PreExtractedType}
+  import ExtractorUtils.{ixNotEquals, MethodCall, isPredicateMethod, PreExtractedType}
 
   protected lazy val AnyType: Type = defn.AnyType
   protected lazy val ObjectType: Type = defn.ObjectType
@@ -147,17 +166,12 @@ trait TypeExtractor { this: Extractor =>
     tp.value.value match {
       case v: Boolean => ix.BooleanLiteral(v)
       case v: Int     => ix.Int32Literal(v)
+      case v: Unit    => ix.UnitLiteral()
       case _          => throw new IllegalArgumentException()
     }
   }
 
   final def appliedTermRef(tp: AppliedTermRef)(implicit xctx: ExtractionContext): Expr = {
-    def checkFunIsNotPredicate(fn: TermRef): Unit = fn.name match {
-      case NameKinds.PredicateName(_, _) =>
-        throw new AssertionError(i"Predicate AppliedTermRef $tp should only occur as argument to PredicateRefinedType.")
-      case _ =>
-    }
-
 //    def uninterpretedExpr: Expr =
 //      if (tp.isStable) {
 //        val sym = tp.fn.termSymbol
@@ -171,11 +185,11 @@ trait TypeExtractor { this: Extractor =>
 //    val expr: Expr = ix.and(resTypeExpr, uninterpretedExpr)
 //    Cnstr(tp, freshSubject(tp), expr)
 
-    val fn: TermRef = tp.functionRef
+    val MethodCall(fn, argss) = tp
     val clazz = fn.prefix.widenDealias.classSymbol
 
-    checkFunIsNotPredicate(fn)
     if (PrimitiveClasses.contains(clazz) && tp.isStable) primitiveOp(tp, clazz.asClass)
+    else if (fn.symbol.is(Stable)) methodCall(fn, argss)
     else typ(tp.resType)
   }
 
@@ -250,14 +264,17 @@ trait TypeExtractor { this: Extractor =>
     }
   }
 
-//  final protected def predRefinedType(subjectTp: Type, predTp: PredicateType)(implicit xctx: ExtractionContext): Expr =
-//  {
-//    val subjectExpr = typ(subjectTp)
-//    val subjectVar  = freshSubject(subjectTp, predTp.subjectName)
-//    val xctx1       = xctx.withPredicateBinding(predTp.predicateThis, subjectVar)
-//    val predExpr    = typ(predTp.info)(xctx1)
-//    ix.Choose(subjectVar.toVal, ix.and(ix.Equals(subjectVar, subjectExpr), predExpr))
-//  }
+  // TODO(gsps): Implement inlining
+  final protected def methodCall(fn: TermRef, argss: List[List[Type]], inline: Boolean = false)(
+    implicit xctx: ExtractionContext): Expr =
+  {
+    assert(fn.symbol.is(Stable))
+    xst.getMethodId(fn.symbol) match {
+      case Some(id) => ix.FunctionInvocation(id, Nil, argss.flatten.map(typ))
+      case None => ctx.warning(i"Method ${fn.symbol} is stable but has not been extracted."); typ(fn.finalResultType)
+    }
+  }
+
   final protected def predRefinedType(tp: PredicateRefinedType)(implicit xctx: ExtractionContext): Expr =
   {
     val subjectExpr = typ(tp.parent)
@@ -267,20 +284,39 @@ trait TypeExtractor { this: Extractor =>
   }
 
   final protected def predicate(tp: AppliedTermRef, subject: Type)(implicit xctx: ExtractionContext): Expr = {
-    val MethodApplication(fn, List(args)) = tp
+    val MethodCall(fn, List(args)) = tp
+    val PredicateRefinedType.SubjectSentinel() :: args1 = args
 
-    fn.name match {
-      case NameKinds.PredicateName(_, _) =>
-      case _ => throw new NotImplementedError(i"Currently cannot extract composed predicate: $tp")
-    }
+    if (!isPredicateMethod(fn.symbol))
+      throw new NotImplementedError(i"Currently cannot extract composed predicate: $tp")
 
-    extractableMethods.get(fn.symbol) match {
-      case Some(ddef) =>
-        val PredicateRefinedType.SubjectSentinel() :: args1 = args
-        val vparams :: Nil = ddef.vparamss
-        val rhsTpe = ddef.rhs.tpe.subst(vparams.map(_.symbol), subject :: args1)
-        typ(rhsTpe)
-      case None => throw new AssertionError(i"Expected predicate method ${fn.symbol} to be extractable.")
+    methodCall(fn, List(subject :: args1), inline = true)
+  }
+}
+
+
+trait MethodExtractor { this: Extractor =>
+  import ast.tpd._
+  import ExtractorUtils.ixType
+
+  private def checkNoFreeVars(fd: ix.FunDef): ix.FunDef = {
+    val fvs = ix.exprOps.variablesOf(fd.fullBody) diff fd.params.map(_.toVariable).toSet
+    assert(fvs.isEmpty, s"Expected $fd to have no free variables, but the following are: ${fvs.mkString(", ")}")
+    fd
+  }
+
+  final def extractMethod(ddef: DefDef): Id = {
+    val sym = ddef.symbol
+    val methodicTpe = sym.info.stripMethodPrefix
+    assert(sym.is(Stable))
+
+    xst.addMethod(sym) { id =>
+      val paramRefVars = ddef.vparamss.flatMap(_.map(vd => xst.getOrCreateRefVar(vd.symbol.termRef)))
+      val params = paramRefVars.map(_.freshen)
+      val body0 = typ(ddef.rhs.tpe)(ExtractionContext.empty)  // TODO(gsps): "Approximation: *None* | Warn | Silent"
+      val body1 = ix.exprOps.replaceFromSymbols((paramRefVars zip params).toMap, body0)
+      val retType = ixType(methodicTpe.finalResultType)
+      checkNoFreeVars(new ix.FunDef(id, Nil, params.map(_.toVal), retType, body1, Set.empty))
     }
   }
 }
@@ -311,7 +347,7 @@ object ExtractorUtils {
 
   /* Dotty-related helpers */
 
-  object MethodApplication {
+  object MethodCall {
     def unapply(tp: AppliedTermRef): Option[(TermRef, List[List[Type]])] = {
       @tailrec def rec(tp: AppliedTermRef, argss: List[List[Type]]): (TermRef, List[List[Type]]) =
         tp.fn match {
@@ -320,6 +356,11 @@ object ExtractorUtils {
         }
       Some(rec(tp, Nil))
     }
+  }
+
+  def isPredicateMethod(sym: Symbol)(implicit ctx: Context): Boolean = sym.name match {
+    case NameKinds.PredicateName(_, _) => true
+    case _ => false
   }
 
   case class PreExtractedType(variable: Var, _underlying: Type) extends UncachedProxyType with SingletonType {
