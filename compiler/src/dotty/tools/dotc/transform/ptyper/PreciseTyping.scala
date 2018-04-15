@@ -15,6 +15,7 @@ import transform.MacroTransform
 import typer.ProtoTypes.FunProto
 import typer.ErrorReporting.err
 import util.Property
+import util.Stats.track
 
 import config.Printers.ptyper
 import reporting.trace
@@ -48,7 +49,7 @@ class PreciseTyping1 extends MacroTransform with IdentityDenotTransformer { this
       extractableMethods(ddef.symbol) = ddef
 
     if (ptyper ne config.Printers.noPrinter) {
-      ptyper.println(s"Extractable Methods:")
+      ptyper.println(s"[[ PTyper Extractable Methods: ]]")
       for (sym <- extractableMethods.keys)
         ptyper.println(s"* ${sym.fullName}")
     }
@@ -158,7 +159,7 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
 
   def run(implicit ctx: Context): Unit = {
     val unit = ctx.compilationUnit
-    val ctx1 = ctx.fresh.setTypeComparerFn(ctx => new PreciseTypeComparer(ctx, solver))
+    val ctx1 = ctx.fresh.setTypeComparerFn(ctx => new PreciseTypeComparer(ctx, typer, solver))
     val tree1 = typer.typedExpr(unit.tpdTree)(ctx1)
 
     // val treeString = tree1.show(ctx.withProperty(printing.XprintMode, Some(())))
@@ -189,6 +190,8 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
 
 
 class PreciseTyper extends typer.ReTyper {
+  protected var _pathConditions: List[Solver.PathCond] = List.empty
+  def pathConditions: List[Solver.PathCond] = _pathConditions
 
   override def promote(tree: untpd.Tree)(implicit ctx: Context): tree.ThisTree[Type] = {
     assert(tree.hasType)
@@ -211,6 +214,26 @@ class PreciseTyper extends typer.ReTyper {
       promote(tree)
     case _ =>
       super.typedUnadapted(tree, pt)
+  }
+
+  override def typedDefDef(tree: untpd.DefDef, sym: Symbol)(implicit ctx: Context): DefDef = {
+    val saved = _pathConditions
+    _pathConditions = List.empty
+    try { super.typedDefDef(tree, sym) } finally { _pathConditions = saved }
+  }
+
+  override def typedIf(tree: untpd.If, pt: Type)(implicit ctx: Context): Tree = track("typedIf") {
+    val cond1 = typed(tree.cond, defn.BooleanType)
+    val thenp2 :: elsep2 :: Nil = harmonic(harmonize) {
+      val condTp = Utils.ensureStableRef(cond1.tpe)
+      _pathConditions = (true, condTp) :: _pathConditions
+      val thenp1 = typed(tree.thenp, pt.notApplied)
+      _pathConditions = (false, condTp) :: _pathConditions.tail
+      val elsep1 = typed(tree.elsep orElse (untpd.unitLiteral withPos tree.pos), pt.notApplied)
+      _pathConditions = _pathConditions.tail
+      thenp1 :: elsep1 :: Nil
+    }
+    assignType(untpd.cpy.If(tree)(cond1, thenp2, elsep2), thenp2, elsep2)
   }
 
   // TODO(gsps): Factor out logic in adapt that is shared with TreeChecker
@@ -321,7 +344,7 @@ object PreciseTyper {
   * In the absence of these two assumptions we will probably see some unnecessary proof obligations, potentially
   * preventing a type-safe program from passing the `PreciseTyping2` phase.
   * */
-class PreciseTypeComparer(initctx: Context, solver: Solver) extends core.TypeComparer(initctx) {
+class PreciseTypeComparer(initctx: Context, ptyper: PreciseTyper, solver: Solver) extends core.TypeComparer(initctx) {
   frozenConstraint = true
 
 //  private[this] var conservative: Boolean = false
@@ -334,10 +357,10 @@ class PreciseTypeComparer(initctx: Context, solver: Solver) extends core.TypeCom
 //  }
 
   override protected def isPredicateSubType(tp1: Type, tp2: PredicateRefinedType) =
-    trace(i"isPredicateSubType $tp1 vs $tp2", ptyper)
+    trace(i"isPredicateSubType $tp1 vs $tp2", config.Printers.ptyper)
   {
     def checkSemantic(tp1: Type, tp2: PredicateRefinedType): Boolean =
-      solver(tp1, tp2) match {
+      solver(ptyper.pathConditions, tp1, tp2) match {
         case SolverResult.Valid => true
         case SolverResult.NotValid => false
         case _ => ctx.warning(i"Result of ptyper check $tp1 <:< $tp2 is unknown."); false
@@ -368,7 +391,7 @@ class PreciseTypeComparer(initctx: Context, solver: Solver) extends core.TypeCom
   override def addConstraint(param: TypeParamRef, bound: Type, fromBelow: Boolean): Boolean =
     unsupported("addConstraint")
 
-  override def copyIn(ctx: Context) = new PreciseTypeComparer(ctx, solver)
+  override def copyIn(ctx: Context) = new PreciseTypeComparer(ctx, ptyper, solver)
 }
 
 

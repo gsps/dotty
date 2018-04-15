@@ -2,11 +2,16 @@ package dotty.tools.dotc
 package transform.ptyper
 
 import core.Contexts.Context
-import core.Types.{PredicateRefinedType, Type}
+import core.Types.{PredicateRefinedType, RefType, Type}
 
 
 trait Solver {
-  def apply(tp1: Type, tp2: PredicateRefinedType)(implicit ctx: Context): SolverResult
+  import Solver.PathCond
+  def apply(pcs: List[PathCond], tp1: Type, tp2: PredicateRefinedType)(implicit ctx: Context): SolverResult
+}
+
+object Solver {
+  type PathCond = (Boolean, RefType)
 }
 
 

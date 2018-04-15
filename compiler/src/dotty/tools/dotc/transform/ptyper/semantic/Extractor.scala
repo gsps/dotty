@@ -32,7 +32,7 @@ class Extractor(_xst: ExtractionState, _ctx: Context)
 
 /* "Persistent" state between calls to the public interface of Extractor. */
 protected class ExtractionState {
-  import ExtractorUtils.ixType
+  import ExtractorUtils.{freshVar, ixType}
 
   private val refType2Var = new inox.utils.Bijection[RefType, Var]
 
@@ -45,8 +45,7 @@ protected class ExtractionState {
   def getOrCreateRefVar(refTp: RefType)(implicit ctx: Context): Var =
     refType2Var.cachedB(refTp) {
       val itp = ixType(refTp)
-      val v = Utils.freshVar(itp, Utils.qualifiedNameString(refTp))
-      v
+      freshVar(itp, Utils.qualifiedNameString(refTp))
     }
 
   def getRefType(refVar: Var): RefType =
@@ -127,7 +126,7 @@ trait TypeExtractor { this: Extractor =>
     tp.widenExpr.dealias match {
       case tp: ConstantType           => constantType(tp)
       case tp: RefType if tp.isStable => refType(tp)
-      case _: TermRef | _: TypeRef    => anyValueOfType(tp)  // TODO(gsps): Use underlying
+      case _: TermRef | _: TypeRef    => anyValueOfType(tp)  // TODO(gsps): Use underlying of TermRef
       case tp: AppliedTermRef         => appliedTermRef(tp)
       case _: RecType                 => throw new AssertionError(s"Unexpected RecType during Extraction: $tp")
       case _: RecThis                 => throw new AssertionError(s"Unexpected RecThis during Extraction: $tp")
@@ -299,7 +298,7 @@ trait ExtractorBase {
   def freshSubject(tp: Type, name: Name = ExtractorUtils.nme.VAR_AUX): Var =
     tp.classSymbol.info.asInstanceOf[ClassInfo].selfType match { case tp: TypeRef =>
       val itp = ExtractorUtils.ixType(tp)
-      Utils.freshVar(itp, name.toString)
+      ExtractorUtils.freshVar(itp, name.toString)
     }
 }
 
@@ -333,6 +332,9 @@ object ExtractorUtils {
   }
 
   /* Inox-related helpers */
+
+  def freshVar(itp: ix.Type, name: String): Var =
+    ix.Variable.fresh(name, itp, alwaysShowUniqueID = true)
 
   def ixType(tp: Type)(implicit ctx: Context): ix.Type = {
     import PreciseTyper.Definitions.ptDefn

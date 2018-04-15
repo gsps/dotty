@@ -1,6 +1,5 @@
 package dotty.tools.dotc
-package transform.ptyper
-package semantic
+package transform.ptyper.semantic
 
 import transform.{ptyper => pt}
 import pt.SolverResult
@@ -19,6 +18,8 @@ import inox.InoxProgram
 
 class Solver extends pt.Solver
 {
+  import pt.Solver.PathCond
+
   private[this] var _extractor: Extractor = _
   private def extractor(implicit ctx: Context): Extractor = {
     if (_extractor == null)         _extractor = new Extractor(new ExtractionState, ctx)
@@ -30,15 +31,17 @@ class Solver extends pt.Solver
 
 
   /* Precond: tp1 and tp2 have already been fixed wrt. RecTypes, e.g., via TypeComparer#fixRecs */
-  def apply(tp1: Type, tp2: PredicateRefinedType)(implicit ctx: Context): SolverResult =
+  def apply(pcs: List[PathCond], tp1: Type, tp2: PredicateRefinedType)(implicit ctx: Context): SolverResult =
   {
     // TODO(gsps): Handle Any and Nothing in the extraction itself.
     if (tp1.derivesFrom(defn.NothingClass))
       return SolverResult.Valid
 
-    val tp1Ref = ensureStableRef(tp1)
+    val tp1Ref = pt.Utils.ensureStableRef(tp1)
 
     val (tp2PredExpr, tp2Bindings) = extractor.topLevelPredicate(tp2, tp1Ref)
+
+    val (pcExpr, pcBindings) = extractPathConditions(pcs)
 
     val bindings = tp2Bindings + tp1Ref
     val bindingCnstrs = extractBindings(bindings)
@@ -46,12 +49,13 @@ class Solver extends pt.Solver
     val query = {
       // TODO(gsps): Report dotty bug? Triggers cyclic reference error when not providing declared type
       implicit val xst: ExtractionState = extractor.xst
-      ix.Implies(ix.andJoin(bindingCnstrs.map(c => ix.Equals(c.subject.variable, c.expr))), tp2PredExpr)
+      val bindingExprs = bindingCnstrs.map(c => ix.Equals(c.subject.variable, c.expr))
+      ix.Implies(ix.andJoin(pcExpr :: bindingExprs), tp2PredExpr)
     }
 
     /* Query debug printing */
     queryCount += 1
-    val printQueryInfo = ctx.settings.YptyperQueryTrace.value == queryCount
+    val printQueryInfo = ctx.settings.YptyperQueryTrace.value < 0 || ctx.settings.YptyperQueryTrace.value == queryCount
     ptyper.println(Magenta(s"[[ PTyper query #$queryCount ]]").show)
     if (printQueryInfo) {
       val bindingsStr = bindingCnstrs.map(_.toString).mkString("\t\t", "\n\t\t", "\n")
@@ -66,10 +70,17 @@ class Solver extends pt.Solver
   }
 
 
-  final protected def ensureStableRef(tp: Type)(implicit ctx: Context): RefType = tp.stripTypeVar match {
-    case tp: RefType if tp.isStable => tp
-    case tp: ValueType => SkolemType(tp).withName(ExtractorUtils.nme.VAR_SUBJECT)
-    case tp: TypeProxy => ensureStableRef(tp.underlying)
+  final protected def extractPathConditions(pcs: List[PathCond])(implicit ctx: Context): (Expr, Set[RefType]) = {
+    var expr: Expr = TrueExpr
+    var bindings: Set[RefType] = Set.empty
+
+    for ((notNegated, condTp) <- pcs) {
+      val cnstr = extractor.binding(condTp)
+      expr = ix.and(expr, if (notNegated) cnstr.expr else ix.Not(cnstr.expr))
+      bindings ++= cnstr.bindings
+    }
+
+    (expr, bindings)
   }
 
   final protected def extractBindings(tps0: Set[RefType])(implicit cxt: Context): List[Cnstr] =
