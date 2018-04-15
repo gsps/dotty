@@ -263,6 +263,7 @@ class PreciseTyper extends typer.ReTyper {
 //      tree.withType(AppliedTermRef(fn.tpe, args.tpes))
 
   override def assignType(tree: untpd.If, thenp: Tree, elsep: Tree)(implicit ctx: Context) = {
+    /*
     val thenTp = thenp.tpe
     val elseTp = elsep.tpe
     /** Try the simple case of forming a lub before introducing a precise IteType.
@@ -275,6 +276,8 @@ class PreciseTyper extends typer.ReTyper {
       if (thenTp <:< elseTp) elseTp
       else if (elseTp <:< thenTp) thenTp
       else PreciseTyper.Types.IteType(tree.cond.tpe, thenTp, elseTp)
+    */
+    val tpe = PreciseTyper.Types.IteType(tree.cond.tpe, thenp.tpe, elsep.tpe)
     tree.withType(tpe)
   }
 
@@ -319,6 +322,9 @@ object PreciseTyper {
         myResType
       }
 
+      def upperBound(implicit ctx: Context): Type = resType
+      def lowerBound(implicit ctx: Context): Type = thenTp & elseTp
+
       override def derivedAppliedTerm(fn: Type, args: List[Type])(implicit ctx: Context): Type =
         if (this.fn ne fn) throw new UnsupportedOperationException(i"Cannot change function of IteType: $fn")
         else if (this.args eq args) this
@@ -359,14 +365,14 @@ object PreciseTyper {
 class PreciseTypeComparer(initctx: Context, ptyper: PreciseTyper, solver: Solver) extends core.TypeComparer(initctx) {
   frozenConstraint = true
 
-//  private[this] var conservative: Boolean = false
-//
-//  private def conservatively[T](op: => T): T = {
-//    val saved = conservative
-//    conservative = true
-//    try { op }
-//    finally { conservative = saved }
-//  }
+  private[this] var conservative: Boolean = false
+
+  private def conservatively[T](op: => T): T = {
+    val saved = conservative
+    conservative = true
+    try { op }
+    finally { conservative = saved }
+  }
 
   private[this] var lastCheckTp1: Type = _
   private[this] var lastCheckTp2: PredicateRefinedType = _
@@ -396,9 +402,16 @@ class PreciseTypeComparer(initctx: Context, ptyper: PreciseTyper, solver: Solver
 
     cacheLastCheck(tp1, tp2) {
       if (checkTrivial(tp1, tp2)) true
-      else if (isInLubOrGlb) false
+      else if (isInLubOrGlb || conservative) false
       else (tp1 <:< tp2.parent) && checkSemantic(tp1, tp2)
     }
+  }
+
+  override def isSubType(tp1: Type, tp2: Type): Boolean = {
+    import PreciseTyper.Types.IteType
+    (tp1.isInstanceOf[IteType] && conservatively { super.isSubType(tp1.asInstanceOf[IteType].upperBound, tp2) }) ||
+    (tp2.isInstanceOf[IteType] && conservatively { super.isSubType(tp1, tp2.asInstanceOf[IteType].lowerBound) }) ||
+    super.isSubType(tp1, tp2)
   }
 
   /* The various public methods of TypeComparer that we may or may not want to influence. */
