@@ -3,11 +3,13 @@ package transform.ptyper
 
 import core.Contexts.Context
 import core.Types.{PredicateRefinedType, RefType, Type}
+import util.Positions.{NoPosition, Position}
 
 
 trait Solver {
   import Solver.PathCond
-  def apply(pcs: List[PathCond], tp1: Type, tp2: PredicateRefinedType)(implicit ctx: Context): SolverResult
+  def apply(pcs: List[PathCond], tp1: Type, tp2: PredicateRefinedType,
+            pos: Position = NoPosition)(implicit ctx: Context): SolverResult
 }
 
 object Solver {

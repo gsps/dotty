@@ -16,6 +16,7 @@ import typer.ProtoTypes.FunProto
 import typer.ErrorReporting.err
 import util.Property
 import util.Stats.track
+import util.Positions.{NoPosition, Position}
 
 import config.Printers.ptyper
 import reporting.trace
@@ -191,7 +192,11 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
 
 class PreciseTyper extends typer.ReTyper {
   protected var _pathConditions: List[Solver.PathCond] = List.empty
-  def pathConditions: List[Solver.PathCond] = _pathConditions
+  final def pathConditions: List[Solver.PathCond] = _pathConditions
+
+  protected var _currentTree: Tree = _
+  final def currentTree: Tree = _currentTree
+  final def currentTreePos: Position = if (_currentTree != null) _currentTree.pos else NoPosition
 
   override def promote(tree: untpd.Tree)(implicit ctx: Context): tree.ThisTree[Type] = {
     assert(tree.hasType)
@@ -243,9 +248,14 @@ class PreciseTyper extends typer.ReTyper {
     if (ctx.mode.isExpr &&
       !tree.isEmpty &&
       !isPrimaryConstructorReturn &&
-      !pt.isInstanceOf[FunProto] &&
-      !(tree.tpe <:< pt))
-      ctx.error(err.typeMismatchMsg(tree.tpe, pt), tree.pos)
+      !pt.isInstanceOf[FunProto])
+    {
+      val saved = _currentTree
+      _currentTree = tree
+      if (!(tree.tpe <:< pt))
+        ctx.error(err.typeMismatchMsg(tree.tpe, pt), tree.pos)
+      _currentTree = saved
+    }
     tree
   }
 
@@ -358,18 +368,37 @@ class PreciseTypeComparer(initctx: Context, ptyper: PreciseTyper, solver: Solver
 //    finally { conservative = saved }
 //  }
 
+  private[this] var lastCheckTp1: Type = _
+  private[this] var lastCheckTp2: PredicateRefinedType = _
+  private[this] var lastCheckResult: Boolean = false
+
+  @inline protected def cacheLastCheck(tp1: Type, tp2: PredicateRefinedType)(op: => Boolean): Boolean =
+    if ((tp1 eq lastCheckTp1) && (tp2 eq lastCheckTp2)) lastCheckResult
+    else {
+      lastCheckTp1 = tp1
+      lastCheckTp2 = tp2
+      lastCheckResult = op
+      lastCheckResult
+    }
+
   override protected def isPredicateSubType(tp1: Type, tp2: PredicateRefinedType) =
     trace(i"isPredicateSubType $tp1 vs $tp2", config.Printers.ptyper)
   {
+    def checkTrivial(tp1: Type, tp2: PredicateRefinedType): Boolean =
+      tp1.widenTermRefExpr eq tp2
+
     def checkSemantic(tp1: Type, tp2: PredicateRefinedType): Boolean =
-      solver(ptyper.pathConditions, tp1, tp2) match {
+      solver(ptyper.pathConditions, tp1, tp2, pos = ptyper.currentTreePos) match {
         case SolverResult.Valid => true
         case SolverResult.NotValid => false
         case _ => ctx.warning(i"Result of ptyper check $tp1 <:< $tp2 is unknown."); false
       }
 
-    if (isInLubOrGlb) false
-    else (tp1 <:< tp2.parent) && checkSemantic(tp1, tp2)
+    cacheLastCheck(tp1, tp2) {
+      if (checkTrivial(tp1, tp2)) true
+      else if (isInLubOrGlb) false
+      else (tp1 <:< tp2.parent) && checkSemantic(tp1, tp2)
+    }
   }
 
   /* The various public methods of TypeComparer that we may or may not want to influence. */

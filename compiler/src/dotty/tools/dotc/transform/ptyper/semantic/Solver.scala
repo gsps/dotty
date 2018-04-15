@@ -5,9 +5,11 @@ import transform.{ptyper => pt}
 import pt.SolverResult
 
 import core.Contexts.Context
+import core.Decorators.sourcePos
 import core.StdNames.nme
 import core.Symbols.defn
 import core.Types._
+import util.Positions.{NoPosition, Position}
 
 import config.Printers.ptyper
 import printing.Highlighting._
@@ -31,7 +33,8 @@ class Solver extends pt.Solver
 
 
   /* Precond: tp1 and tp2 have already been fixed wrt. RecTypes, e.g., via TypeComparer#fixRecs */
-  def apply(pcs: List[PathCond], tp1: Type, tp2: PredicateRefinedType)(implicit ctx: Context): SolverResult =
+  def apply(pcs: List[PathCond], tp1: Type, tp2: PredicateRefinedType,
+            pos: Position = NoPosition)(implicit ctx: Context): SolverResult =
   {
     // TODO(gsps): Handle Any and Nothing in the extraction itself.
     if (tp1.derivesFrom(defn.NothingClass))
@@ -56,7 +59,9 @@ class Solver extends pt.Solver
     /* Query debug printing */
     queryCount += 1
     val printQueryInfo = ctx.settings.YptyperQueryTrace.value < 0 || ctx.settings.YptyperQueryTrace.value == queryCount
-    ptyper.println(Magenta(s"[[ PTyper query #$queryCount ]]").show)
+    def posString(sp: util.SourcePosition): String =
+      White(if (sp.exists) s"${sp.source.name} @ ${sp.line + 1}:${sp.column + 1}" else "???").show
+    ptyper.println(Magenta(s"[[ PTyper query #$queryCount ]]  ${posString(pos)}").show)
     if (printQueryInfo) {
       val bindingsStr = bindingCnstrs.map(_.toString).mkString("\t\t", "\n\t\t", "\n")
       ptyper.println(s"\t${bindingCnstrs.size} bindings extracted:\n$bindingsStr")

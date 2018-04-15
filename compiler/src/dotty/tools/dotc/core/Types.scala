@@ -2198,6 +2198,7 @@ object Types {
           case methTpe: MethodType => myResType = ctx.typer.applicationResultType(methTpe, args)
           case NoType => throw new AssertionError("Unexpected NoType as function of AppliedTermRef (probably " +
             "touched resType before enclosing type was fully initialized).")
+          case tp => assert(tp isRef defn.NothingClass); tp  // Only occurs in PredicateRefinedType.SubjectSentinel
         }
       myResType
     }
