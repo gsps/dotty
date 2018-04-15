@@ -362,8 +362,15 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
     case _ => Tuple(ts)
   }
 
+  def completePredicateTypeTreeSubject(t: Tree, bindingName: TermName)(implicit ctx: Context): Tree = t match {
+    case PredicateTypeTree(vd, pred) if vd.name eq nme.NO_NAME =>
+      cpy.PredicateTypeTree(t)(cpy.ValDef(vd)(name = bindingName), pred)
+    case t: ByNameTypeTree => cpy.ByNameTypeTree(t)(completePredicateTypeTreeSubject(t.result, bindingName))
+    case _ => t
+  }
+
   def makeParameter(pname: TermName, tpe: Tree, mods: Modifiers = EmptyModifiers)(implicit ctx: Context): ValDef =
-    ValDef(pname, tpe, EmptyTree).withMods(mods | Param)
+    ValDef(pname, completePredicateTypeTreeSubject(tpe, pname), EmptyTree).withMods(mods | Param)
 
   def makeSyntheticParameter(n: Int = 1, tpt: Tree = TypeTree())(implicit ctx: Context): ValDef =
     ValDef(nme.syntheticParamName(n), tpt, EmptyTree).withFlags(SyntheticTermParam)

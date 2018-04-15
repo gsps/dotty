@@ -822,7 +822,7 @@ object Parsers {
 
     def refinedTypeRest(t: Tree): Tree = {
       newLineOptWhenFollowedBy(LBRACE)
-      if (in.token == LBRACE) refinedTypeRest(atPos(startOffset(t)) { RefinedTypeTree(t, refinement()) })
+      if (in.token == LBRACE) refinedTypeRest(atPos(startOffset(t)) { refinement(t) })
       else t
     }
 
@@ -969,9 +969,14 @@ object Parsers {
      */
     def typeArgs(namedOK: Boolean, wildOK: Boolean): List[Tree] = inBrackets(argTypes(namedOK, wildOK))
 
-    /** Refinement ::= `{' RefineStatSeq `}'
+    /** Refinement ::= `{' ( RefineStatSeq | Predicate ) `}'
      */
-    def refinement(): List[Tree] = inBraces(refineStatSeq())
+    def refinement(parent: Tree): Tree = inBraces(refineStatSeqOrPredicate(parent))
+
+    /** RefineStatSeq | Predicate */
+    def refineStatSeqOrPredicate(parent: Tree): Tree =
+      if (isDclIntro || isStatSeqEnd) RefinedTypeTree(parent, refineStatSeq())
+      else PredicateTypeTree(makeParameter(nme.NO_NAME, parent, Modifiers(Synthetic | TermParam)), expr())
 
     /** TypeBounds ::= [`>:' Type] [`<:' Type]
      */
@@ -1877,7 +1882,7 @@ object Parsers {
           accept(COLON)
           if (in.token == ARROW && owner.isTypeName && !(mods is Local))
             syntaxError(VarValParametersMayNotBeCallByName(name, mods is Mutable))
-          val tpt = paramType()
+          val tpt = completePredicateTypeTreeSubject(paramType(), name)
           val default =
             if (in.token == EQUALS) { in.nextToken(); expr() }
             else EmptyTree
@@ -2049,7 +2054,8 @@ object Parsers {
         } else EmptyTree
       lhs match {
         case (id @ Ident(name: TermName)) :: Nil => {
-          ValDef(name, tpt, rhs).withMods(mods).setComment(in.getDocComment(start))
+          val tpt1 = completePredicateTypeTreeSubject(tpt, name)
+          ValDef(name, tpt1, rhs).withMods(mods).setComment(in.getDocComment(start))
         } case _ =>
           PatDef(mods, lhs, tpt, rhs)
       }
