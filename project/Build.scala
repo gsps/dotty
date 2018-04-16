@@ -506,8 +506,7 @@ object Build {
         ("org.scala-lang.modules" %% "scala-xml" % "1.0.6").withDottyCompat(scalaVersion.value),
         "org.scala-lang" % "scala-library" % scalacVersion % "test",
         Dependencies.compilerInterface(sbtVersion.value),
-        "ch.epfl.lara" % "inox_2.12" % "1.0.2-191-g3b196ab",
-        "uuverifiers" % "princess_2.12" % "2016-12-26" % "provided"  // NOTE(gsps): Somehow fixes resolution on the CI
+        "ch.epfl.lara" % "inox_2.12" % "1.0.2-191-g3b196ab" exclude("uuverifiers", "princess_2.12")
       ),
 
       // For convenience, change the baseDirectory when running the compiler
