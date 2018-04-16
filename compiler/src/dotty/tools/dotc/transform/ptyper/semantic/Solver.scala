@@ -9,7 +9,7 @@ import core.Decorators.sourcePos
 import core.StdNames.nme
 import core.Symbols.defn
 import core.Types._
-import util.Positions.{NoPosition, Position}
+import util.{NoSourcePosition, SourcePosition}
 
 import config.Printers.ptyper
 import printing.Highlighting._
@@ -34,7 +34,7 @@ class Solver extends pt.Solver
 
   /* Precond: tp1 and tp2 have already been fixed wrt. RecTypes, e.g., via TypeComparer#fixRecs */
   def apply(pcs: List[PathCond], tp1: Type, tp2: PredicateRefinedType,
-            pos: Position = NoPosition)(implicit ctx: Context): SolverResult =
+            pos: SourcePosition = NoSourcePosition)(implicit ctx: Context): SolverResult =
   {
     // TODO(gsps): Handle Any and Nothing in the extraction itself.
     if (tp1.derivesFrom(defn.NothingClass))

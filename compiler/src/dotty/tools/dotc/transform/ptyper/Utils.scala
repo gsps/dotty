@@ -27,7 +27,7 @@ object Utils {
       case tp: TermParamRef => sb.append(tp.paramName)
       case tp: SkolemType => sb.append(tp.repr)
       case tp: ConstantType => sb.append(s"<${tp.value.value}>")
-      case _ => s"<???>"
+      case _ => sb.append("<???>")
     }
     doRef(tp)
     sb.toString

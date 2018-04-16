@@ -10,6 +10,8 @@ import core.NameKinds
 import core.StdNames.nme
 import core.Symbols.{defn, ClassSymbol, Symbol}
 import core.Types._
+import reporting.diagnostic.Message
+import util.{NoSourcePosition, SourcePosition}
 
 import config.Printers.ptyper
 import reporting.trace
@@ -21,20 +23,42 @@ import scala.annotation.tailrec
 
 
 class Extractor(_xst: ExtractionState, _ctx: Context)
-  extends ExtractorBase with MethodExtractor with TypeExtractor
+  extends ExtractorBase with TypeExtractor with ExprExtractor with MethodExtractor
 {
   implicit val ctx: Context = _ctx
   implicit val xst: ExtractionState = _xst
 
   def copyInto(newCtx: Context): Extractor =
     new Extractor(xst, newCtx)
+
+  /* Solver interface */
+
+  final def binding(refTp: RefType): Cnstr = trace(i"Extractor#binding $refTp", ptyper)
+  {
+    implicit val xctx = ExtractionContext.default
+    ensureRefTypeRegistered(refTp)
+    val expr = typ(refTp.underlying)
+    Cnstr(refTp, expr, usedBindings(expr))
+  }
+
+  final def topLevelPredicate(predRefinedType: PredicateRefinedType, subject: RefType): (Expr, Set[RefType]) =
+  {
+    implicit val xctx = ExtractionContext.default
+    ensureRefTypeRegistered(subject)
+    val predExpr = predicate(predRefinedType.predicate, subject)
+    (predExpr, usedBindings(predExpr))
+  }
+
+  protected def ensureRefTypeRegistered(refTp: RefType)(implicit xctx: ExtractionContext): Unit =
+    getOrCreateRefVar(refTp)  // force creation of RefType -> Var binding
+
+  protected def usedBindings(expr: Expr): Set[RefType] =
+    ix.exprOps.variablesOf(expr).map(xst.getRefType)
 }
 
 
 /* "Persistent" state between calls to the public interface of Extractor. */
 protected class ExtractionState {
-  import ExtractorUtils.{freshVar, ixType}
-
   private val refType2Var = new inox.utils.Bijection[RefType, Var]
   private val method2Id = new inox.utils.Bijection[Symbol, Id]
   private val id2FunDef = new inox.utils.Bijection[Id, ix.FunDef]
@@ -49,11 +73,8 @@ protected class ExtractionState {
   def getRefVar(refTp: RefType): Var =
     refType2Var.toB(refTp)
 
-  def getOrCreateRefVar(refTp: RefType)(implicit ctx: Context): Var =
-    refType2Var.cachedB(refTp) {
-      val itp = ixType(refTp)
-      freshVar(itp, Utils.qualifiedNameString(refTp))
-    }
+  def getOrCreateRefVar(refTp: RefType)(computeRefVar: => Var): Var =
+    refType2Var.cachedB(refTp)(computeRefVar)
 
   def getRefType(refVar: Var): RefType =
     refType2Var.toA(refVar)
@@ -69,21 +90,83 @@ protected class ExtractionState {
       _inoxProgram = null
       id
     }
+
+  def idToMethod(id: Id): Symbol =
+    method2Id.toA(id)
 }
 
-/* Ephemeral state built up as we recursively extract a type. */
-// TODO(gsps): Remove, we don't need it anymore
-protected case class ExtractionContext(predicateBindings: Map[PredicateRefinedType, Var]) {
-  def withPredicateBinding(from: PredicateRefinedType, to: Var): ExtractionContext =
-    this.copy(predicateBindings = predicateBindings + (from -> to))
+/* Configuration and ephemeral state built up as we recursively extract a type. */
+protected case class ExtractionContext(approxMode: ApproxMode) {
+  import ApproxMode._
+
+  def extractionError(msg: Message, pos: SourcePosition = NoSourcePosition)(implicit ctx: Context) =
+    throw ExtractionException(msg, pos)
+
+  def recoverableExtractionError[T](msg: Message, pos: SourcePosition = NoSourcePosition)(
+      fallback: => T)(implicit ctx: Context) =
+    approxMode match {
+      case Throw => throw ExtractionException(msg, pos)
+      case Warn => ctx.warning(msg, pos); fallback
+      case Silent => fallback
+    }
 }
 
-protected object ExtractionContext {
-  val empty = ExtractionContext(Map.empty)
+object ExtractionContext {
+  def default: ExtractionContext = ExtractionContext(ApproxMode.Warn)
+}
+
+sealed trait ApproxMode
+object ApproxMode {
+  case object Throw extends ApproxMode
+  case object Warn extends ApproxMode
+  case object Silent extends ApproxMode
 }
 
 
-trait TypeExtractor { this: Extractor =>
+trait TypeExtractor { this: ExtractorBase =>
+  implicit val xst: ExtractionState
+
+  import ExtractorUtils.freshVar
+
+  // TODO: Simpler way to get to a ClassSymbol's type?  Maybe `tp.classSymbol.typeRef`?
+  protected def freshSubject(tp: Type, name: Name = ExtractorUtils.nme.VAR_AUX)(implicit xctx: ExtractionContext): Var =
+    tp.classSymbol.info.asInstanceOf[ClassInfo].selfType match { case tp: TypeRef =>
+      val itp = ixType(tp)
+      freshVar(itp, name.toString)
+    }
+
+  protected def getOrCreateRefVar(refTp: RefType)(implicit xctx: ExtractionContext): Var =
+    xst.getOrCreateRefVar(refTp) {
+      val itp = ixType(refTp)
+      freshVar(itp, Utils.qualifiedNameString(refTp))
+    }
+
+  def ixType(tp: Type)(implicit xctx: ExtractionContext): ix.Type = {
+    @tailrec def findIteResultType(tp: Type): Option[Type] = tp match {
+      case AppliedTermRef(fnTp, List(_, thenTp, _)) if fnTp.termSymbol == ptDefn.iteMethod => Some(thenTp)  // TODO: LUB
+      case tp: TypeProxy => findIteResultType(tp.underlying)
+      case _ => None
+    }
+
+    @inline def ixTypeBasic(tp: Type): ix.Type =
+      tp.widenDealias match {
+        case tpe if tpe.typeSymbol == defn.CharClass    => ix.CharType()
+        case tpe if tpe.typeSymbol == defn.ByteClass    => ix.Int8Type()
+        case tpe if tpe.typeSymbol == defn.ShortClass   => ix.Int16Type()
+        case tpe if tpe.typeSymbol == defn.IntClass     => ix.Int32Type()
+        case tpe if tpe.typeSymbol == defn.LongClass    => ix.Int64Type()
+        case tpe if tpe.typeSymbol == defn.BooleanClass => ix.BooleanType()
+        case tpe if tpe.typeSymbol == defn.UnitClass    => ix.UnitType()
+
+        case tpe => xctx.extractionError(s"Cannot extract ixType of ${tpe.show} ($tpe)")
+      }
+
+    ixTypeBasic(findIteResultType(tp).getOrElse(tp))
+  }
+}
+
+
+trait ExprExtractor { this: Extractor =>
   import ExtractorUtils.{ixNotEquals, MethodCall, isPredicateMethod, PreExtractedType}
 
   protected lazy val AnyType: Type = defn.AnyType
@@ -98,41 +181,6 @@ trait TypeExtractor { this: Extractor =>
     defn.ScalaValueClasses() + ptDefn.PTyperPackageClass
 
 
-  final def binding(refTp: RefType): Cnstr = trace(i"Extractor#binding $refTp", ptyper)
-  {
-    ensureRefTypeRegistered(refTp)
-    val expr = typ(refTp.underlying)(ExtractionContext.empty)
-    Cnstr(refTp, expr, usedBindings(expr))
-  }
-
-  final def topLevelPredicate(predRefinedType: PredicateRefinedType, subject: RefType): (Expr, Set[RefType]) = {
-    ensureRefTypeRegistered(subject)
-//    predRefinedType match {
-//      case PredicateRefinedType(_, predTp) =>
-//        forceSubstitutions(predTp) match {
-//          case predTp: PredicateType =>
-//            val xctx1 = ExtractionContext.empty.withPredicateBinding(predTp.predicateThis, subject.variable)
-//            val predExpr = typ(predTp.info)(xctx1)
-//            (predExpr, usedBindings(predExpr))
-//        }
-//    }
-    val predExpr = predicate(predRefinedType.predicate, subject)(ExtractionContext.empty)
-    (predExpr, usedBindings(predExpr))
-  }
-
-  protected def ensureRefTypeRegistered(refTp: RefType): Unit =
-    xst.getOrCreateRefVar(refTp)  // force creation of RefType -> Var binding
-
-  protected def usedBindings(expr: Expr): Set[RefType] =
-    ix.exprOps.variablesOf(expr).map(xst.getRefType)
-
-//  protected def forceSubstitutions(tp: Type): Type =
-//    tp match {
-//      case ds: DeferredSubstitutions => ds.substituted
-//      case _ => tp
-//    }
-
-
   /** Extracts the Cnstr corresponding to a Dotty Type.
     *  Precondition: Any recursive self-references to `tp` have already been fixed, e.g., via TypeComparer.fixRecs.
     */
@@ -140,7 +188,7 @@ trait TypeExtractor { this: Extractor =>
   {
     // RefType as translated under the assumption that it is stable.
     def refType(refTp: RefType) =
-      xst.getOrCreateRefVar(refTp)  // force creation of RefType -> Var binding
+      getOrCreateRefVar(refTp)  // force creation of RefType -> Var binding
 
     tp.widenExpr.dealias match {
       case tp: ConstantType           => constantType(tp)
@@ -154,20 +202,23 @@ trait TypeExtractor { this: Extractor =>
 
       case tp: PreExtractedType => tp.variable
 
-      case _ =>
-        throw new IllegalArgumentException(i"Unhandled type $tp which widens to ${tp.widenDealias}")
+      case _ => xctx.extractionError(i"Cannot extract type $tp which widens to ${tp.widenDealias}", ctx.tree.pos)
     }
   }
 
-  final def anyValueOfType(tp: Type): Expr =
+  final def anyValueOfType(tp: Type)(implicit xctx: ExtractionContext): Expr =
     ix.Choose(freshSubject(tp).toVal, TrueExpr)
 
   final def constantType(tp: ConstantType): Expr = {
     tp.value.value match {
-      case v: Boolean => ix.BooleanLiteral(v)
+      case v: Char    => ix.CharLiteral(v)
+      case v: Byte    => ix.Int8Literal(v)
+      case v: Short   => ix.Int16Literal(v)
       case v: Int     => ix.Int32Literal(v)
+      case v: Long    => ix.Int64Literal(v)
+      case v: Boolean => ix.BooleanLiteral(v)
       case v: Unit    => ix.UnitLiteral()
-      case _          => throw new IllegalArgumentException()
+      case _          => throw new NotImplementedError(i"Extraction of constant $tp not yet implemented!")
     }
   }
 
@@ -207,10 +258,9 @@ trait TypeExtractor { this: Extractor =>
     def unaryPrim(exprBuilder: Expr => Expr): Expr = exprBuilder(arg0Expr)
     def binaryPrim(exprBuilder: (Expr, Expr) => Expr): Expr = exprBuilder(arg0Expr, arg1Expr)
 
-    def warnApprox(): Expr = {
-      ctx.warning(s"Emitted conservative approximation for operation $opName")
-      anyValueOfType(tp.resType)
-    }
+    def warnApprox(): Expr =
+      xctx.recoverableExtractionError(s"Emitted conservative approximation for operation $opName", ctx.tree.pos)(
+        anyValueOfType(tp.resType))
 
     (clazz, fnTp.name, fnTp.widen) match {
       case (_, nme.EQ, opTp @ MethodTpe(_, List(argTp), BooleanType)) if argTp != AnyType => binaryPrim(ix.Equals)
@@ -265,7 +315,7 @@ trait TypeExtractor { this: Extractor =>
   }
 
   // TODO(gsps): Implement inlining
-  final protected def methodCall(fn: TermRef, argss: List[List[Type]], inline: Boolean = false)(
+  final protected def methodCall(fn: TermRef, argss: List[List[Type]], inlined: Boolean = false)(
     implicit xctx: ExtractionContext): Expr =
   {
     assert(fn.symbol.is(Stable))
@@ -290,33 +340,35 @@ trait TypeExtractor { this: Extractor =>
     if (!isPredicateMethod(fn.symbol))
       throw new NotImplementedError(i"Currently cannot extract composed predicate: $tp")
 
-    methodCall(fn, List(subject :: args1), inline = true)
+    methodCall(fn, List(subject :: args1), inlined = true)
   }
 }
 
 
 trait MethodExtractor { this: Extractor =>
   import ast.tpd._
-  import ExtractorUtils.ixType
 
-  private def checkNoFreeVars(fd: ix.FunDef): ix.FunDef = {
+  private def checkNoFreeVars(fd: ix.FunDef, pos: SourcePosition)(implicit xctx: ExtractionContext): ix.FunDef = {
     val fvs = ix.exprOps.variablesOf(fd.fullBody) diff fd.params.map(_.toVariable).toSet
-    assert(fvs.isEmpty, s"Expected $fd to have no free variables, but the following are: ${fvs.mkString(", ")}")
-    fd
+//    assert(fvs.isEmpty, s"Expected $fd to have no free variables, but the following are: ${fvs.mkString(", ")}")
+    if (fvs.nonEmpty) xctx.extractionError(s"Cannot extract method with outside references: $fd", pos)
+    else fd
   }
 
   final def extractMethod(ddef: DefDef): Id = {
+    implicit val xctx = ExtractionContext(ApproxMode.Throw)
     val sym = ddef.symbol
     val methodicTpe = sym.info.stripMethodPrefix
     assert(sym.is(Stable))
 
     xst.addMethod(sym) { id =>
-      val paramRefVars = ddef.vparamss.flatMap(_.map(vd => xst.getOrCreateRefVar(vd.symbol.termRef)))
+      val paramRefVars = ddef.vparamss.flatMap(_.map(vd => getOrCreateRefVar(vd.symbol.termRef)))
       val params = paramRefVars.map(_.freshen)
-      val body0 = typ(ddef.rhs.tpe)(ExtractionContext.empty)  // TODO(gsps): "Approximation: *None* | Warn | Silent"
+      val body0 = typ(ddef.rhs.tpe)
       val body1 = ix.exprOps.replaceFromSymbols((paramRefVars zip params).toMap, body0)
       val retType = ixType(methodicTpe.finalResultType)
-      checkNoFreeVars(new ix.FunDef(id, Nil, params.map(_.toVal), retType, body1, Set.empty))
+      val fd = new ix.FunDef(id, Nil, params.map(_.toVal), retType, body1, Set.empty)
+      checkNoFreeVars(fd, sym.pos)
     }
   }
 }
@@ -328,14 +380,6 @@ trait ExtractorBase {
   implicit val ctx: Context
 
   lazy val ptDefn: PreciseTyper.Definitions = ctx.property(PreciseTyping.PTyperDefinitions).get
-  lazy val extractableMethods: PreciseTyping.MethodMap = ctx.property(PreciseTyping.ExtractableMethods).get
-
-  // TODO: Simpler way to get to a ClassSymbol's type?  Maybe `tp.classSymbol.typeRef`?
-  def freshSubject(tp: Type, name: Name = ExtractorUtils.nme.VAR_AUX): Var =
-    tp.classSymbol.info.asInstanceOf[ClassInfo].selfType match { case tp: TypeRef =>
-      val itp = ExtractorUtils.ixType(tp)
-      ExtractorUtils.freshVar(itp, name.toString)
-    }
 }
 
 
@@ -376,29 +420,6 @@ object ExtractorUtils {
 
   def freshVar(itp: ix.Type, name: String): Var =
     ix.Variable.fresh(name, itp, alwaysShowUniqueID = true)
-
-  def ixType(tp: Type)(implicit ctx: Context): ix.Type = {
-    import PreciseTyper.Definitions.ptDefn
-
-    @tailrec def findIteResultType(tp: Type): Option[Type] = tp match {
-      case AppliedTermRef(fnTp, List(_, thenTp, _)) if fnTp.termSymbol == ptDefn.iteMethod => Some(thenTp)  // TODO: LUB
-      case tp: TypeProxy => findIteResultType(tp.underlying)
-      case _ => None
-    }
-
-    @inline def ixTypeBasic(tp: Type): ix.Type =
-      tp.widenDealias match {
-        case tpe if tpe.typeSymbol == defn.CharClass    => ix.CharType()
-        case tpe if tpe.typeSymbol == defn.IntClass     => ix.Int32Type()
-        case tpe if tpe.typeSymbol == defn.LongClass    => ix.Int64Type()
-        case tpe if tpe.typeSymbol == defn.BooleanClass => ix.BooleanType()
-        case tpe if tpe.typeSymbol == defn.UnitClass    => ix.UnitType()
-
-        case tpe => throw new IllegalArgumentException(s"Cannot extract ixType of ${tpe.show} ($tpe)")
-      }
-
-    ixTypeBasic(findIteResultType(tp).getOrElse(tp))
-  }
 
   lazy val ixNotEquals: (Expr, Expr) => Expr = (x: Expr, y: Expr) => ix.Not(ix.Equals(x, y))
 }

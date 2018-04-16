@@ -46,15 +46,7 @@ class PreciseTyping1 extends MacroTransform with IdentityDenotTransformer { this
   override def run(implicit ctx: Context): Unit = {
     super.run
 
-    // Register new predicate methods as extractable
-    for (ddef <- predicateMethods.predicateMethods.valuesIterator.flatten)
-      extractableMethods(ddef.symbol) = ddef
 
-    if (ptyper ne config.Printers.noPrinter) {
-      ptyper.println(s"[[ PTyper Extractable Methods: ]]")
-      for (sym <- extractableMethods.keys)
-        ptyper.println(s"* ${sym.fullName}")
-    }
   }
 
   /* Components */
@@ -87,12 +79,6 @@ class PreciseTyping1 extends MacroTransform with IdentityDenotTransformer { this
       case tree: Template =>
         val tree1 = super.transform(tree).asInstanceOf[Template]
         predicateMethods.addPredicateMethods(tree1)
-
-      case tree: DefDef =>
-        val sym = tree.symbol
-        if (sym.is(Stable) && sym.isEffectivelyFinal)
-          extractableMethods(sym) = tree
-        super.transform(tree)
 
       case _ =>
         super.transform(tree)
@@ -162,8 +148,17 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
     val extractingTyper = new ExtractingTyper()
     val checkingTyper = new CheckingTyper()
 
+    ptyper.println(printing.Highlighting.Cyan(s"\n === EXTRACTING TYPER === \n"))
     val unit = ctx.compilationUnit
     val tree1 = extractingTyper.typedExpr(unit.tpdTree)
+
+    if ((ptyper ne config.Printers.noPrinter) && extractingTyper.extractedMethods.nonEmpty) {
+      ptyper.println(s"[[ PTyper extractable methods: ]]")
+      for (sym <- extractingTyper.extractedMethods)
+        ptyper.println(s"* ${sym.fullName}")
+    }
+
+    ptyper.println(printing.Highlighting.Cyan(s"\n === CHECKING TYPER === \n"))
     val ctx1 = ctx.fresh.setTypeComparerFn(ctx => new PreciseTypeComparer(ctx, checkingTyper, solver))
     val tree2 = checkingTyper.typedExpr(tree1)(ctx1)
 
@@ -175,10 +170,14 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
   /* Components */
 
   class ExtractingTyper extends PreciseTyper with NoChecking {
+    val extractedMethods: ListBuffer[Symbol] = ListBuffer.empty
+
     override def typedDefDef(tree: untpd.DefDef, sym: Symbol)(implicit ctx: Context): DefDef = {
       val tree1 = super.typedDefDef(tree, sym)
-      if (sym.is(Stable))
-        solver.extractor.extractMethod(tree1)
+      if (sym.is(Stable) && sym.isEffectivelyFinal) {
+        try { solver.extractor.extractMethod(tree1); extractedMethods.append(tree1.symbol) }
+        catch { case ex: ExtractionException => }
+      }
       tree1
     }
 
@@ -187,6 +186,7 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
   }
 
   /** A version of PreciseTyper that restores the denotations previously refined by the PreciseTyping1 phase. */
+  // TODO(gsps): Once we're done, should we erase special precise types such as IteType?
   class CheckingTyper extends PreciseTyper {
     /** Restore infos of those symbols that had temporarily received precise types */
     private def restoreImpreciseSymDenot(sym: Symbol)(implicit ctx: Context): Unit = {
@@ -331,17 +331,29 @@ object PreciseTyper {
     class IteType(fn: TermRef, condTp: Type, thenTp: Type, elseTp: Type)
       extends AppliedTermRef(fn, List(condTp, thenTp, elseTp)) {
       override def resType(implicit ctx: Context): Type = {
-        if (myResType == null) myResType = thenTp | elseTp
+        def approximate(tp: Type): Type = tp match {
+          case tp: IteType => tp.resType
+          case tp => tp
+        }
+        if (myResType == null) myResType = approximate(thenTp) | approximate(elseTp)
         myResType
       }
 
       def upperBound(implicit ctx: Context): Type = resType
-      def lowerBound(implicit ctx: Context): Type = thenTp & elseTp
+
+      def lowerBound(implicit ctx: Context): Type = {
+        def approximate(tp: Type): Type = tp match {
+          case tp: IteType => tp.lowerBound
+          case tp => tp
+        }
+        approximate(thenTp) & approximate(elseTp)
+      }
 
       override def derivedAppliedTerm(fn: Type, args: List[Type])(implicit ctx: Context): Type =
         if (this.fn ne fn) throw new UnsupportedOperationException(i"Cannot change function of IteType: $fn")
         else if (this.args eq args) this
         else {
+          // TODO(gsps): Optimize by widening to resType when !condTp.isStable
           val condTp :: thenTp :: elseTp :: Nil = args
           new IteType(this.fn, condTp, thenTp, elseTp)
         }
