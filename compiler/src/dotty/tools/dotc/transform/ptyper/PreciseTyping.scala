@@ -291,6 +291,9 @@ class PreciseTyper extends typer.ReTyper {
     tree.withType(tpe)
   }
 
+  override def ensureNoLocalRefs(tree: Tree, pt: Type, localSyms: => List[Symbol])(implicit ctx: Context): Tree =
+    tree
+
   /** Disabled checks */
   override def checkInlineConformant(tree: Tree, what: => String)(implicit ctx: Context) = ()
   override def checkDerivedValueClass(clazz: Symbol, stats: List[Tree])(implicit ctx: Context) = ()
