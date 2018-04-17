@@ -7,6 +7,7 @@ import core.Phases._
 import core.DenotTransformers._
 import core.Flags._
 import core.Names.Name
+import core.NameKinds.PredicateName
 import core.Symbols._
 import core.Contexts._
 import core.Types._
@@ -172,12 +173,24 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
   class ExtractingTyper extends PreciseTyper with NoChecking {
     val extractedMethods: ListBuffer[Symbol] = ListBuffer.empty
 
+    private def extractMethod(tree: DefDef)(implicit ctx: Context): Unit = {
+      val sym = tree.symbol
+      try {
+        solver.extractor.extractMethod(tree)
+        extractedMethods.append(sym)
+      } catch {
+        case ex: ExtractionException => sym.name match {
+          case PredicateName(_, _) =>
+            throw new AssertionError(s"Failed to extract predicate method: ${sym.fullName}", ex)
+          case _ =>
+        }
+      }
+    }
+
     override def typedDefDef(tree: untpd.DefDef, sym: Symbol)(implicit ctx: Context): DefDef = {
       val tree1 = super.typedDefDef(tree, sym)
-      if (sym.is(Stable) && sym.isEffectivelyFinal) {
-        try { solver.extractor.extractMethod(tree1); extractedMethods.append(tree1.symbol) }
-        catch { case ex: ExtractionException => }
-      }
+      if (sym.is(Stable) && sym.isEffectivelyFinal)
+        extractMethod(tree1)
       tree1
     }
 

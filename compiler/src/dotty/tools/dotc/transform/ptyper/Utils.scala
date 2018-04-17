@@ -33,9 +33,19 @@ object Utils {
     sb.toString
   }
 
-  def ensureStableRef(tp: Type, name: Name = nme.VAR_SUBJECT)(implicit ctx: Context): RefType = tp.stripTypeVar match {
-    case tp: RefType if tp.isStable => tp
-    case tp: ValueType => SkolemType(tp).withName(name)
-    case tp: TypeProxy => ensureStableRef(tp.underlying)
+  def normalizedApplication(tp: Type)(implicit ctx: Context): Type = tp match {
+    case tp: TermRef if tp.isStable && tp.underlying.isInstanceOf[ExprType] => AppliedTermRef(tp, Nil)
+    case _ => tp
   }
+
+  /**
+    * Wraps `tp` in a SkolemType, if it isn't a stable RefType itself.
+    * Also normalizes parameter-less method invocations expressed as TermRefs by turning them into AppliedTermRefs.
+    */
+  def ensureStableRef(tp: Type, name: Name = nme.VAR_SUBJECT)(implicit ctx: Context): RefType =
+    normalizedApplication(tp.stripTypeVar) match {
+      case tp: RefType if tp.isStable => tp
+      case tp: ValueType => SkolemType(tp).withName(name)
+      case tp: TypeProxy => ensureStableRef(tp.underlying, name = name)
+    }
 }

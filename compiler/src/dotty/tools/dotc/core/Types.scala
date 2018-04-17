@@ -2194,11 +2194,13 @@ object Types {
     protected[this] var myResType: Type = _
     def resType(implicit ctx: Context): Type = {
       if (myResType == null)
-        fn.widen match {
+        fn.widenSingleton match {
+          case exprTpe: ExprType => myResType = exprTpe.resType
           case methTpe: MethodType => myResType = ctx.typer.applicationResultType(methTpe, args)
           case NoType => throw new AssertionError("Unexpected NoType as function of AppliedTermRef (probably " +
             "touched resType before enclosing type was fully initialized).")
-          case tp => assert(tp isRef defn.NothingClass); tp  // Only occurs in PredicateRefinedType.SubjectSentinel
+          case tp =>  // Only occurs in PredicateRefinedType.SubjectSentinel but should never force resType
+            throw new AssertionError(i"Unexpected type $tp as underlying function")
         }
       myResType
     }

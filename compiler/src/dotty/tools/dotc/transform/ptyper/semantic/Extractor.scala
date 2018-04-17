@@ -2,13 +2,15 @@ package dotty.tools.dotc
 package transform.ptyper
 package semantic
 
+import Utils.normalizedApplication
+
 import core.Contexts.Context
 import core.Decorators._
 import core.Flags.Stable
 import core.Names.{Name, TermName}
 import core.NameKinds
 import core.StdNames.nme
-import core.Symbols.{defn, ClassSymbol, Symbol}
+import core.Symbols.{defn, ClassSymbol, Symbol, NoSymbol}
 import core.Types._
 import reporting.diagnostic.Message
 import util.{NoSourcePosition, SourcePosition}
@@ -37,6 +39,7 @@ class Extractor(_xst: ExtractionState, _ctx: Context)
   {
     implicit val xctx = ExtractionContext.default
     ensureRefTypeRegistered(refTp)
+    assert(!refTp.underlying.isInstanceOf[ExprType], i"Unexpected ExprType in binding: $refTp")
     val expr = typ(refTp.underlying)
     Cnstr(refTp, expr, usedBindings(expr))
   }
@@ -190,13 +193,18 @@ trait ExprExtractor { this: Extractor =>
     def refType(refTp: RefType) =
       getOrCreateRefVar(refTp)  // force creation of RefType -> Var binding
 
-    tp.widenExpr.dealias match {
-      case tp: ConstantType           => constantType(tp)
-      case tp: RefType if tp.isStable => refType(tp)
-      case _: TermRef | _: TypeRef    => anyValueOfType(tp)  // TODO(gsps): Use underlying of TermRef
-      case tp: AppliedTermRef         => appliedTermRef(tp)
-      case _: RecType                 => throw new AssertionError(s"Unexpected RecType during Extraction: $tp")
-      case _: RecThis                 => throw new AssertionError(s"Unexpected RecThis during Extraction: $tp")
+    def termRef(tp: TermRef): Expr =
+      if (tp.isStable) refType(tp)
+      else { val tp1 = tp.underlying; assert(tp1.isValueType); typ(tp1) }
+
+    normalizedApplication(tp.widenExpr.dealias) match {
+      case tp: ConstantType   => constantType(tp)
+      case tp: TermRef        => termRef(tp)
+      case tp: RefType        => assert(tp.isStable); refType(tp)
+      case _: TypeRef         => anyValueOfType(tp)
+      case tp: AppliedTermRef => appliedTermRef(tp)
+      case _: RecType         => throw new AssertionError(s"Unexpected RecType during Extraction: $tp")
+      case _: RecThis         => throw new AssertionError(s"Unexpected RecThis during Extraction: $tp")
 
       case tp: PredicateRefinedType => predRefinedType(tp)
 
@@ -239,30 +247,31 @@ trait ExprExtractor { this: Extractor =>
     val MethodCall(fn, argss) = tp
     val clazz = fn.prefix.widenDealias.classSymbol
 
-    if (PrimitiveClasses.contains(clazz) && tp.isStable) primitiveOp(tp, clazz.asClass)
+    def warnApprox: Expr = xctx.recoverableExtractionError(
+      s"Emitted conservative approximation for operation ${fn.name}", ctx.tree.pos)(anyValueOfType(tp.resType))
+
+    if (PrimitiveClasses.contains(clazz) && tp.isStable) primitiveOp(fn, argss, clazz)(warnApprox)
     else if (fn.symbol.is(Stable)) methodCall(fn, argss)
     else typ(tp.resType)
   }
 
-  final protected def primitiveOp(tp: AppliedTermRef, clazz: ClassSymbol)(implicit xctx: ExtractionContext): Expr =
+  final protected def primitiveOp(fn: TermRef, argss: List[List[Type]], _clazz: Symbol = NoSymbol)(
+                                  fallback: => Expr)(implicit xctx: ExtractionContext): Expr =
   {
-    // Precond: `clazz` is class symbol of tp.fn
-    val fnTp: TermRef = tp.fn.asInstanceOf[TermRef]
-    val opName: TermName = fnTp.name
+    // Precond: `clazz` is class symbol of `fn`
+    val opName: TermName = fn.name
+    val clazz: Symbol = _clazz.orElse(fn.prefix.widenDealias.classSymbol)
 
-    lazy val arg0Expr: Expr = typ(fnTp.prefix)
-    lazy val arg1Expr: Expr = typ(tp.args.head)
-    lazy val arg2Expr: Expr = typ(tp.args.tail.head)
-    lazy val arg3Expr: Expr = typ(tp.args.tail.tail.head)
+    val args :: Nil = argss
+    lazy val arg0Expr: Expr = typ(fn.prefix)
+    lazy val arg1Expr: Expr = typ(args.head)
+    lazy val arg2Expr: Expr = typ(args.tail.head)
+    lazy val arg3Expr: Expr = typ(args.tail.tail.head)
 
     def unaryPrim(exprBuilder: Expr => Expr): Expr = exprBuilder(arg0Expr)
     def binaryPrim(exprBuilder: (Expr, Expr) => Expr): Expr = exprBuilder(arg0Expr, arg1Expr)
 
-    def warnApprox(): Expr =
-      xctx.recoverableExtractionError(s"Emitted conservative approximation for operation $opName", ctx.tree.pos)(
-        anyValueOfType(tp.resType))
-
-    (clazz, fnTp.name, fnTp.widen) match {
+    (clazz, opName, fn.widenSingleton) match {
       case (_, nme.EQ, opTp @ MethodTpe(_, List(argTp), BooleanType)) if argTp != AnyType => binaryPrim(ix.Equals)
       case (_, nme.NE, opTp @ MethodTpe(_, List(argTp), BooleanType)) if argTp != AnyType => binaryPrim(ixNotEquals)
 
@@ -271,7 +280,7 @@ trait ExprExtractor { this: Extractor =>
           case nme.UNARY_~ => ix.BVNot
           case nme.UNARY_- => ix.UMinus
           case nme.UNARY_! => ix.Not
-          case _           => return warnApprox()
+          case _           => return fallback
         }
         unaryPrim(builder)
 
@@ -280,7 +289,7 @@ trait ExprExtractor { this: Extractor =>
           case nme.AND | nme.ZAND => ix.And.apply
           case nme.OR | nme.ZOR   => ix.Or.apply
           case nme.XOR            => ixNotEquals
-          case _                  => return warnApprox()
+          case _                  => return fallback
         }
         binaryPrim(builder)
 
@@ -301,16 +310,16 @@ trait ExprExtractor { this: Extractor =>
           case nme.GT   => ix.GreaterThan
           case nme.LE   => ix.LessEquals
           case nme.GE   => ix.GreaterEquals
-          case _        => return warnApprox()
+          case _        => return fallback
         }
         binaryPrim(builder)
 
-      case _ if fnTp.symbol eq ptDefn.iteMethod =>
+      case _ if fn.symbol eq ptDefn.iteMethod =>
         ix.IfExpr(arg1Expr, arg2Expr, arg3Expr)
 
       case _ =>
         // TODO(gsps): Conversions, etc.
-        return warnApprox()
+        return fallback
     }
   }
 
@@ -321,7 +330,9 @@ trait ExprExtractor { this: Extractor =>
     assert(fn.symbol.is(Stable))
     xst.getMethodId(fn.symbol) match {
       case Some(id) => ix.FunctionInvocation(id, Nil, argss.flatten.map(typ))
-      case None => ctx.warning(i"Method ${fn.symbol} is stable but has not been extracted."); typ(fn.finalResultType)
+      case None =>
+        ctx.warning(i"Method ${fn.symbol} is stable but has not been extracted.")
+        typ(fn.widenTermRefExpr.finalResultType)
     }
   }
 
