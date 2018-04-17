@@ -367,7 +367,10 @@ trait MethodExtractor { this: Extractor =>
       val body0 = typ(ddef.rhs.tpe)
       val body1 = ix.exprOps.replaceFromSymbols((paramRefVars zip params).toMap, body0)
       val retType = ixType(methodicTpe.finalResultType)
-      val fd = new ix.FunDef(id, Nil, params.map(_.toVal), retType, body1, Set.empty)
+//      val fd = new ix.FunDef(id, Nil, params.map(_.toVal), retType, body1, Set.empty)  // DOTTY BUG @ BOOTSTRAPPED?
+      val fd = ix.dsl.mkFunDef(id)() { _ =>
+        (params.map(_.toVal), retType, _ => body1)
+      }
       checkNoFreeVars(fd, sym.pos)
     }
   }

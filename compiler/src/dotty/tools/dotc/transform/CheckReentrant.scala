@@ -53,10 +53,13 @@ class CheckReentrant extends MiniPhase {
     ctx.requiredClass("dotty.tools.sharable"))
   private val unsharedAnnot = new CtxLazy(implicit ctx =>
     ctx.requiredClass("dotty.tools.unshared"))
+  private val inoxUtilsUniqueCounterClass = new CtxLazy(implicit ctx =>
+    ctx.requiredClass("inox.utils.UniqueCounter"))
 
   def isIgnored(sym: Symbol)(implicit ctx: Context) =
     sym.hasAnnotation(sharableAnnot()) ||
-    sym.hasAnnotation(unsharedAnnot())
+    sym.hasAnnotation(unsharedAnnot()) ||
+    sym == inoxUtilsUniqueCounterClass()
 
   def scanning(sym: Symbol)(op: => Unit)(implicit ctx: Context): Unit = {
     ctx.log(i"${"  " * indent}scanning $sym")
