@@ -56,19 +56,24 @@ class Extractor(_xst: ExtractionState, _ctx: Context)
     getOrCreateRefVar(refTp)  // force creation of RefType -> Var binding
 
   protected def usedBindings(expr: Expr): Set[RefType] =
-    ix.exprOps.variablesOf(expr).map(xst.getRefType)
+    ix.exprOps.variablesOf(expr).map(xst.getRefType) ++
+      ix.exprOps.functionCallsOf(expr).flatMap(fi => xst.funIdToStaticBindings(fi.id))
 }
 
 
 /* "Persistent" state between calls to the public interface of Extractor. */
 protected class ExtractionState {
-  private val refType2Var = new inox.utils.Bijection[RefType, Var]
-  private val method2Id = new inox.utils.Bijection[Symbol, Id]
-  private val id2FunDef = new inox.utils.Bijection[Id, ix.FunDef]
+  import inox.utils.Bijection
+  import scala.collection.mutable.{Map => MutableMap}
+
+  private val refType2Var = new Bijection[RefType, Var]
+  private val method2FunId = new Bijection[Symbol, Id]
+  private val funId2FunDef = new Bijection[Id, ix.FunDef]
+  private val funId2StaticBindings = MutableMap.empty[Id, Set[RefType]]
 
   private var _inoxProgram: InoxProgram = _
   def inoxProgram: InoxProgram = {
-    if (_inoxProgram == null) _inoxProgram = InoxProgram(id2FunDef.bSet.toSeq, Seq.empty)
+    if (_inoxProgram == null) _inoxProgram = InoxProgram(funId2FunDef.bSet.toSeq, Seq.empty)
     _inoxProgram
   }
 
@@ -84,18 +89,20 @@ protected class ExtractionState {
 
 
   def getMethodId(sym: Symbol): Option[Id] =
-    method2Id.getB(sym)
+    method2FunId.getB(sym)
 
-  def addMethod(sym: Symbol)(fdBuilder: Id => ix.FunDef)(implicit ctx: Context): Id =
-    method2Id.cachedB(sym) {
+  def addMethod(sym: Symbol)(fdBuilder: Id => (ix.FunDef, Set[RefType]))(implicit ctx: Context): Id =
+    method2FunId.cachedB(sym) {
       val id = FreshIdentifier(sym.fullName.toString)
-      id2FunDef.cachedB(id)(fdBuilder(id))
+      val (fd, staticBindings) = fdBuilder(id)
+      funId2FunDef.cachedB(id)(fd)
+      funId2StaticBindings.put(id, staticBindings)
       _inoxProgram = null
       id
     }
 
-  def idToMethod(id: Id): Symbol =
-    method2Id.toA(id)
+  def funIdToStaticBindings(id: Id): Set[RefType] =
+    funId2StaticBindings(id)
 }
 
 /* Configuration and ephemeral state built up as we recursively extract a type. */
@@ -359,18 +366,24 @@ trait ExprExtractor { this: Extractor =>
 trait MethodExtractor { this: Extractor =>
   import ast.tpd._
 
-  private def checkNoFreeVars(fd: ix.FunDef, pos: SourcePosition)(implicit xctx: ExtractionContext): ix.FunDef = {
-    val fvs = ix.exprOps.variablesOf(fd.fullBody) diff fd.params.map(_.toVariable).toSet
-//    assert(fvs.isEmpty, s"Expected $fd to have no free variables, but the following are: ${fvs.mkString(", ")}")
-    if (fvs.nonEmpty) xctx.extractionError(s"Cannot extract method with outside references: $fd", pos)
-    else fd
-  }
-
   final def extractMethod(ddef: DefDef): Id = {
     implicit val xctx = ExtractionContext(ApproxMode.Throw)
     val sym = ddef.symbol
     val methodicTpe = sym.info.stripMethodPrefix
     assert(sym.is(Stable))
+
+    def checkBindingsAndCollectStatic(fd: ix.FunDef): (ix.FunDef, Set[RefType]) = {
+      val fvs = ix.exprOps.variablesOf(fd.fullBody) diff fd.params.map(_.toVariable).toSet
+      val (staticBs, nonStaticBs) = fvs.partition { variable =>
+        xst.getRefType(variable) match {
+          case tp: TermRef => tp.symbol.isStatic
+          case _ => false
+        }
+      }
+      if (nonStaticBs.nonEmpty)
+        xctx.extractionError(s"Cannot extract method with non-static outside references: $fd", sym.pos)
+      else (fd, staticBs.map(xst.getRefType))
+    }
 
     xst.addMethod(sym) { id =>
       val paramRefVars = ddef.vparamss.flatMap(_.map(vd => getOrCreateRefVar(vd.symbol.termRef)))
@@ -382,7 +395,7 @@ trait MethodExtractor { this: Extractor =>
       val fd = ix.dsl.mkFunDef(id)() { _ =>
         (params.map(_.toVal), retType, _ => body1)
       }
-      checkNoFreeVars(fd, sym.pos)
+      checkBindingsAndCollectStatic(fd)
     }
   }
 }
