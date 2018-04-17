@@ -487,6 +487,7 @@ object StdNames {
     val productElement: N       = "productElement"
     val productIterator: N      = "productIterator"
     val productPrefix: N        = "productPrefix"
+    val prop_ : N               = "prop"
     val readResolve: N          = "readResolve"
     val reflect : N             = "reflect"
     val reify : N               = "reify"

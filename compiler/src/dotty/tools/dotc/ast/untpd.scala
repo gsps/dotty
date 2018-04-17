@@ -362,6 +362,9 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
     case _ => Tuple(ts)
   }
 
+  def makeAnonymousPredicateTypeTree(parent: Tree, pred: Tree)(implicit ctx: Context): Tree =
+    PredicateTypeTree(makeParameter(nme.NO_NAME, parent, Modifiers(Synthetic | TermParam)), pred)
+
   def completePredicateTypeTreeSubject(t: Tree, bindingName: TermName)(implicit ctx: Context): Tree = t match {
     case PredicateTypeTree(vd, pred) if vd.name eq nme.NO_NAME =>
       cpy.PredicateTypeTree(t)(cpy.ValDef(vd)(name = bindingName), pred)

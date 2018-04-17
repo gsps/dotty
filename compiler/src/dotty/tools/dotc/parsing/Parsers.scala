@@ -863,7 +863,7 @@ object Parsers {
           makeTupleOrParens(inParens(argTypes(namedOK = false, wildOK = true)))
         }
       else if (in.token == LBRACE)
-        atPos(in.offset) { inBraces(emptyRefinementOrSingletonExpr()) }
+        atPos(in.offset) { extendSingletonToProp(inBraces(emptyRefinementOrSingletonExpr())) }
       else if (isSimpleLiteral) { SingletonTypeTree(literal()) }
       else if (in.token == USCORE) {
         val start = in.skipToken()
@@ -888,6 +888,17 @@ object Parsers {
           case t => SingletonTypeTree(t)
         }
       else RefinedTypeTree(EmptyTree, refineStatSeq())
+    }
+
+    def extendSingletonToProp(tree: Tree): Tree = tree match {
+      case tree: SingletonTypeTree if in.token == DOT =>
+        in.nextToken()
+        val tree1 =
+          if (isIdent(nme.prop_)) atPos(tree.pos.start - 1) { makeAnonymousPredicateTypeTree(scalaUnit, tree.ref) }
+          else { syntaxError("Unexpected selection on singleton type."); tree }
+        in.nextToken()
+        tree1
+      case _ => tree
     }
 
     val handleSingletonType: Tree => Tree = t =>
@@ -976,7 +987,7 @@ object Parsers {
     /** RefineStatSeq | Predicate */
     def refineStatSeqOrPredicate(parent: Tree): Tree =
       if (isDclIntro || isStatSeqEnd) RefinedTypeTree(parent, refineStatSeq())
-      else PredicateTypeTree(makeParameter(nme.NO_NAME, parent, Modifiers(Synthetic | TermParam)), expr())
+      else makeAnonymousPredicateTypeTree(parent, expr())
 
     /** TypeBounds ::= [`>:' Type] [`<:' Type]
      */

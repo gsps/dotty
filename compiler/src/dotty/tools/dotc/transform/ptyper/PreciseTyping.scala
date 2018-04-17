@@ -262,9 +262,48 @@ class PreciseTyper extends typer.ReTyper {
       super.typedUnadapted(tree, pt)
   }
 
+  // TODO(gsps): Exchange scala.Unit for a dedicated singleton type in the phantom type hierarchy
+  protected def collectPathConditions(tree: untpd.DefDef, sym: Symbol)(implicit ctx: Context): List[Solver.PathCond] = {
+    // Quasi-inverse of MethodType.fromSymbols: eliminates ParamRefs and replaces by TermRefs to tree's vparamss
+    def disintegrateParams(args0: List[Type]): List[Type] = {
+      val args = args0.toBuffer
+      def rec(methTpe: Type, vparamss: List[List[untpd.ValDef]]): Unit = methTpe match {
+        case methTpe: MethodType =>
+          val termRefs = vparamss.head.map(_.symbol.termRef)
+          args.indices.foreach(i => args(i) = args(i).substParams(methTpe, termRefs))
+          rec(methTpe.resultType, vparamss.tail)
+        case _ =>
+      }
+      rec(sym.info.stripMethodPrefix, tree.vparamss)
+      args.toList
+    }
+    // Replaces SubjectSentinel by NoType and eliminates ParamRefs so we can extract the predicate as a normal call.
+    def toPathCondition(tp: PredicateRefinedType): RefType =
+      (tp.predicate: @unchecked) match {
+        case pred @ AppliedTermRef(fn, sentinel :: args1) =>
+          val args2 = disintegrateParams(args1)
+          val unitLit = ConstantType(core.Constants.Constant(()))
+          Utils.ensureStableRef(pred.derivedAppliedTerm(fn, unitLit :: args2))
+      }
+
+    sym.info.stripMethodPrefix match {
+      case methTpe: MethodType =>
+        val pcs: ListBuffer[Solver.PathCond] = ListBuffer.empty
+        for (tp <- methTpe.paramInfoss.flatten)
+          tp.widen match {
+            case tp: PredicateRefinedType if tp.parent isRef defn.UnitClass => pcs.append((true, toPathCondition (tp)))
+            case _ =>
+          }
+        pcs.toList
+      case _ =>
+        List.empty
+    }
+  }
+
   override def typedDefDef(tree: untpd.DefDef, sym: Symbol)(implicit ctx: Context): DefDef = {
+    // Drop existing path conditions and add those coming from special evidence parameters
     val saved = _pathConditions
-    _pathConditions = List.empty
+    _pathConditions = collectPathConditions(tree, sym)
     try { super.typedDefDef(tree, sym) } finally { _pathConditions = saved }
   }
 
