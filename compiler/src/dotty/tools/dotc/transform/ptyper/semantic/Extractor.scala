@@ -138,12 +138,8 @@ trait TypeExtractor { this: ExtractorBase =>
 
   import ExtractorUtils.freshVar
 
-  // TODO: Simpler way to get to a ClassSymbol's type?  Maybe `tp.classSymbol.typeRef`?
   protected def freshSubject(tp: Type, name: Name = ExtractorUtils.nme.VAR_AUX)(implicit xctx: ExtractionContext): Var =
-    tp.classSymbol.info.asInstanceOf[ClassInfo].selfType match { case tp: TypeRef =>
-      val itp = ixType(tp)
-      freshVar(itp, name.toString)
-    }
+    freshVar(ixType(tp.classSymbol.typeRef), name.toString)
 
   protected def getOrCreateRefVar(refTp: RefType)(implicit xctx: ExtractionContext): Var =
     xst.getOrCreateRefVar(refTp) {
