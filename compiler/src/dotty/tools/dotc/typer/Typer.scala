@@ -1285,7 +1285,7 @@ class Typer extends Namer
     val vdCtx = index(tree.subjectVd)(ctx.fresh.setNewScope)
     val subjectVd1 = typed(tree.subjectVd).asInstanceOf[ValDef]
     val exprCtx = vdCtx.fresh.setOwner(subjectVd1.symbol).retractMode(Mode.ImplicitsEnabled)
-    val pred1 = typedExpr(tree.predTpt, defn.BooleanType)(exprCtx)
+    val pred1 = typedExpr(tree.pred, defn.BooleanType)(exprCtx)
     assignType(cpy.PredicateTypeTree(tree)(subjectVd1, pred1), subjectVd1, pred1)
   }
 

@@ -1086,7 +1086,7 @@ class TreeUnpickler(reader: TastyReader,
               val tpe = readType()
               val sym = ctx.newSymbol(ctx.owner, readName(), EmptyFlags, tpe)
               registerSym(start, sym)
-              PredicateTypeTree(ValDef(sym), readTpt())
+              PredicateTypeTree(ValDef(sym), readTerm())
             case TYPEBOUNDStpt =>
               val lo = readTpt()
               val hi = if (currentAddr == end) lo else readTpt()

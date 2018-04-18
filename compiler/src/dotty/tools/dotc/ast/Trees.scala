@@ -603,8 +603,8 @@ object Trees {
     def forwardTo = tpt
   }
 
-  /** { subjectVd => predTpt } */
-  case class PredicateTypeTree[-T >: Untyped] private[ast] (subjectVd: ValDef[T], predTpt: Tree[T])
+  /** { subjectVd => pred } */
+  case class PredicateTypeTree[-T >: Untyped] private[ast] (subjectVd: ValDef[T], pred: Tree[T])
     extends ProxyTree[T] with TypTree[T] {
     type ThisTree[-T >: Untyped] = PredicateTypeTree[T]
     def forwardTo = subjectVd.tpt
@@ -1049,7 +1049,7 @@ object Trees {
         case _ => finalize(tree, untpd.ByNameTypeTree(result))
       }
       def PredicateTypeTree(tree: Tree)(subjectVd: ValDef, pred: Tree): PredicateTypeTree = tree match {
-        case tree: PredicateTypeTree if (subjectVd eq tree.subjectVd) && (pred eq tree.predTpt) => tree
+        case tree: PredicateTypeTree if (subjectVd eq tree.subjectVd) && (pred eq tree.pred) => tree
         case _ => finalize(tree, untpd.PredicateTypeTree(subjectVd, pred))
       }
       def TypeBoundsTree(tree: Tree)(lo: Tree, hi: Tree): TypeBoundsTree = tree match {
@@ -1200,8 +1200,8 @@ object Trees {
             cpy.LambdaTypeTree(tree)(transformSub(tparams), transform(body))
           case ByNameTypeTree(result) =>
             cpy.ByNameTypeTree(tree)(transform(result))
-          case PredicateTypeTree(subjectVd, predTpt) =>
-            cpy.PredicateTypeTree(tree)(transformSub(subjectVd), transform(predTpt))
+          case PredicateTypeTree(subjectVd, pred) =>
+            cpy.PredicateTypeTree(tree)(transformSub(subjectVd), transform(pred))
           case TypeBoundsTree(lo, hi) =>
             cpy.TypeBoundsTree(tree)(transform(lo), transform(hi))
           case Bind(name, body) =>

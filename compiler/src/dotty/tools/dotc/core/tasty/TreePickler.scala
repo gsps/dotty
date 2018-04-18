@@ -541,11 +541,11 @@ class TreePickler(pickler: TastyPickler) {
         case ByNameTypeTree(tp) =>
           writeByte(BYNAMEtpt)
           pickleTree(tp)
-        case PredicateTypeTree(subjectVd, predTpt) =>
+        case PredicateTypeTree(subjectVd, pred) =>
           val sym = subjectVd.symbol
           registerDef(sym)
           writeByte(PREDICATEtpt)
-          withLength { pickleType(sym.info); pickleName(sym.name); pickleTree(predTpt) }
+          withLength { pickleType(sym.info); pickleName(sym.name); pickleTree(pred) }
         case Annotated(tree, annot) =>
           writeByte(ANNOTATEDtpt)
           withLength { pickleTree(tree); pickleTree(annot.tree) }

@@ -96,7 +96,7 @@ class PreciseTyping1 extends MacroTransform with IdentityDenotTransformer { this
       val predMethSym = tree.tpe.asInstanceOf[PredicateRefinedType].predicateSymbol
 
       def syntheticBody(implicit ctx: Context): List[List[Tree]] => Tree = vrefss => {
-        val origFreeSyms = PredicateRefinedType.typeTreeFreeSyms(tree.subjectVd, tree.predTpt)
+        val origFreeSyms = PredicateRefinedType.typeTreeFreeSyms(tree.subjectVd, tree.pred)
         val origSubjectSym = tree.subjectVd.symbol
         val subjectRef :: argRefs = vrefss.flatten
 
@@ -108,7 +108,7 @@ class PreciseTyping1 extends MacroTransform with IdentityDenotTransformer { this
           typeMap = _.subst(origSubjectSym :: origFreeSyms, subjectRef.tpe :: argRefs.map(_.tpe)),
           oldOwners = oldOwners,
           newOwners = newOwners
-        ).transform(tree.predTpt)
+        ).transform(tree.pred)
       }
 
       val ddef = DefDef(predMethSym, syntheticBody(ctx.withOwner(predMethSym))).withPos(ctx.owner.pos.focus)
