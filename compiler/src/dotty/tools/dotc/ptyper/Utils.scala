@@ -1,5 +1,5 @@
 package dotty.tools.dotc
-package transform.ptyper
+package ptyper
 
 import core.Contexts.Context
 import core.Decorators._

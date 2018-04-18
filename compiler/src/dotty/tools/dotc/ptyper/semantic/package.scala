@@ -1,5 +1,5 @@
 package dotty.tools.dotc
-package transform.ptyper
+package ptyper
 
 import core.Types.RefType
 import inox.{trees => ix}

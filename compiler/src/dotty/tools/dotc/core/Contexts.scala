@@ -581,6 +581,15 @@ object Contexts {
     /** The standard definitions */
     val definitions = new Definitions
 
+    /** PreciseTyper state and core operations */
+    private[this] var _ptyperCtx: ptyper.PreciseTyperContext = _
+
+    final def ptyperCtx(implicit ctx: Context) = {
+      if (_ptyperCtx == null)
+        _ptyperCtx = ptyper.PreciseTyperContext()
+      _ptyperCtx
+    }
+
     /** Initializes the `ContextBase` with a starting context.
      *  This initializes the `platform` and the `definitions`.
      */

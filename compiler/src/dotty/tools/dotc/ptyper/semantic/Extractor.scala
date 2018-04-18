@@ -1,7 +1,8 @@
 package dotty.tools.dotc
-package transform.ptyper
+package ptyper
 package semantic
 
+import PreciseTyperContext.ptDefn
 import Utils.normalizedApplication
 
 import core.Contexts.Context
@@ -104,6 +105,7 @@ protected class ExtractionState {
   def funIdToStaticBindings(id: Id): Set[RefType] =
     funId2StaticBindings(id)
 }
+
 
 /* Configuration and ephemeral state built up as we recursively extract a type. */
 protected case class ExtractionContext(approxMode: ApproxMode) {
@@ -401,8 +403,6 @@ trait MethodExtractor { this: Extractor =>
 
 trait ExtractorBase {
   implicit val ctx: Context
-
-  lazy val ptDefn: PreciseTyper.Definitions = ctx.property(PreciseTyping.PTyperDefinitions).get
 }
 
 

@@ -1,9 +1,10 @@
 package dotty.tools.dotc
-package transform.ptyper.semantic
+package ptyper.semantic
 
-import transform.{ptyper => pt}
-import pt.SolverResult
+import dotty.tools.dotc.{ptyper => pt}
+import pt.{PathCond, CheckResult}
 
+import ast.tpd.DefDef
 import core.Contexts.Context
 import core.Decorators.sourcePos
 import core.StdNames.nme
@@ -18,12 +19,10 @@ import inox.{trees => ix}
 import inox.InoxProgram
 
 
-class Solver extends pt.Solver
+class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperContext(ptyperDefn)
 {
-  import pt.Solver.PathCond
-
   private[this] var _extractor: Extractor = _
-  def extractor(implicit ctx: Context): Extractor = {
+  final protected def extractor(implicit ctx: Context): Extractor = {
     if (_extractor == null)         _extractor = new Extractor(new ExtractionState, ctx)
     else if (_extractor.ctx ne ctx) _extractor = _extractor.copyInto(ctx)
     _extractor
@@ -32,13 +31,17 @@ class Solver extends pt.Solver
   private[this] var queryCount: Int = 0
 
 
+  def extractMethod(ddef: DefDef)(implicit ctx: Context): Unit =
+    extractor.extractMethod(ddef)
+
+
   /* Precond: tp1 and tp2 have already been fixed wrt. RecTypes, e.g., via TypeComparer#fixRecs */
-  def apply(pcs: List[PathCond], tp1: Type, tp2: PredicateRefinedType,
-            pos: SourcePosition = NoSourcePosition)(implicit ctx: Context): SolverResult =
+  def checkSubtype(pcs: List[PathCond], tp1: Type, tp2: PredicateRefinedType,
+                   pos: SourcePosition = NoSourcePosition)(implicit ctx: Context): CheckResult =
   {
     // TODO(gsps): Handle Any and Nothing in the extraction itself.
     if (tp1.derivesFrom(defn.NothingClass))
-      return SolverResult.Valid
+      return CheckResult.Valid
 
     val tp1Ref = pt.Utils.ensureStableRef(tp1)
 
@@ -75,6 +78,10 @@ class Solver extends pt.Solver
     if (printQueryInfo) ptyper.println(s"\t=> $result")
     result
   }
+
+
+  def prettyPrint(tp: PredicateRefinedType)(implicit ctx: Context): String =
+    ???
 
 
   final protected def extractPathConditions(pcs: List[PathCond])(implicit ctx: Context): (Expr, Set[RefType]) = {
@@ -115,7 +122,7 @@ class Solver extends pt.Solver
   }
 
 
-  private def defaultInoxCtx = {
+  protected def defaultInoxCtx = {
     val reporter = new inox.Reporter(Set.empty) { override def emit(msg: Message): Unit = {} }
 //    val reporter = new inox.DefaultReporter(Set.empty)
 //    val debugSections = Set(inox.ast.DebugSectionTrees, inox.utils.DebugSectionTimers, inox.solvers.DebugSectionSolver)
@@ -123,7 +130,7 @@ class Solver extends pt.Solver
     inox.Context(reporter, new inox.utils.InterruptManager(reporter))
   }
 
-  final protected def runQuery(query: Expr)(implicit ctx: Context): SolverResult = {
+  protected def runQuery(query: Expr)(implicit ctx: Context): CheckResult = {
     val ixCtx = defaultInoxCtx
 
     val program: InoxProgram = extractor.xst.inoxProgram
@@ -154,23 +161,23 @@ class Solver extends pt.Solver
 
         res match {
           case _ if ixCtx.interruptManager.isInterrupted =>
-            SolverResult.Cancelled
+            CheckResult.Cancelled
 
           case Unknown =>
             s match {
               case ts: inox.solvers.combinators.TimeoutSolver =>
                 ts.optTimeout match {
-                  case Some(t) if t < time => SolverResult.Timeout
-                  case _ => SolverResult.Unknown
+                  case Some(t) if t < time => CheckResult.Timeout
+                  case _ => CheckResult.Unknown
                 }
-              case _ => SolverResult.Unknown
+              case _ => CheckResult.Unknown
             }
 
           case Unsat =>
-            SolverResult.Valid
+            CheckResult.Valid
 
           case SatWithModel(model) =>
-            SolverResult.NotValid
+            CheckResult.NotValid
         }
       } finally {
         if (timer.isRunning) timer.stop()
@@ -178,9 +185,9 @@ class Solver extends pt.Solver
 
       ixCtx.reporter.synchronized {
         result match {
-          case SolverResult.Valid =>
+          case CheckResult.Valid =>
             ixCtx.reporter.info(" => VALID")
-          case SolverResult.NotValid =>
+          case CheckResult.NotValid =>
             ixCtx.reporter.warning(" => NOT VALID")
           case status =>
             ixCtx.reporter.warning(" => " + status.productPrefix.toUpperCase)
