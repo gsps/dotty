@@ -8,7 +8,7 @@ import util.SourcePosition
 
 
 /**
-  * Essential mutable state and core operations related to PreciseTyping bundled together.
+  * Mutable state and core operations related to PreciseTyping bundled together.
   * Unlike Context it is changed in place and thus more akin to ContextState.
   */
 abstract class PreciseTyperContext(val ptyperDefinitions: Definitions)
@@ -29,7 +29,7 @@ abstract class PreciseTyperContext(val ptyperDefinitions: Definitions)
   /**
     * Returns a pretty-printed representation of the predicate in `tp`.
     */
-  def prettyPrint(tp: PredicateRefinedType)(implicit ctx: Context): String
+  def prettyPrintPredicate(tp: PredicateRefinedType)(implicit ctx: Context): String
 }
 
 object PreciseTyperContext {

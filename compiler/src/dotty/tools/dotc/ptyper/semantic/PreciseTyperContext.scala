@@ -3,6 +3,7 @@ package ptyper.semantic
 
 import dotty.tools.dotc.{ptyper => pt}
 import pt.{PathCond, CheckResult}
+import pt.Utils.ensureStableRef
 
 import ast.tpd.DefDef
 import core.Contexts.Context
@@ -43,7 +44,7 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
     if (tp1.derivesFrom(defn.NothingClass))
       return CheckResult.Valid
 
-    val tp1Ref = pt.Utils.ensureStableRef(tp1)
+    val tp1Ref = ensureStableRef(tp1)
 
     val (tp2PredExpr, tp2Bindings) = extractor.topLevelPredicate(tp2, tp1Ref)
 
@@ -70,7 +71,7 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
       val bindingsStr = bindingCnstrs.map(c => s"${xst.getRefVar(c.subject)}:  $c").mkString("\t\t", "\n\t\t", "\n")
       ptyper.println(s"\t${pcs.size} path condition(s)")
       ptyper.println(s"\t${bindingCnstrs.size} bindings extracted:\n$bindingsStr")
-      ptyper.println(s"\tQuery:\n\t\t$query")
+      ptyper.println(s"\tQuery:\n\t\t${query.asString(printerOptions.QueryDebugging)}")
     }
 
     val result = runQuery(query)
@@ -80,8 +81,27 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
   }
 
 
-  def prettyPrint(tp: PredicateRefinedType)(implicit ctx: Context): String =
-    ???
+  // TODO(gsps): Clean this up; Fix the dotty code-gen issue that forces us to do inox workarounds
+  def prettyPrintPredicate(tp: PredicateRefinedType)(implicit ctx: Context): String = {
+    val (predExpr, _) = extractor.topLevelPredicate(tp, ensureStableRef(tp, tp.subjectName))
+    val predExpr1 = if (predExpr.isInstanceOf[ix.FunctionInvocation]) {
+      val fi = predExpr.asInstanceOf[ix.FunctionInvocation]
+      // fi.inlined(extractor.xst.inoxProgram.symbols)  // DOTTY BUG again
+      val s = extractor.xst.inoxProgram.symbols
+      val tfd = s.getFunction(fi.id, Nil)
+      val substs = (tfd.params zip fi.args).foldRight(Map.empty: Map[ix.ValDef, ix.Expr]) {
+        case ((vd, e), m) => m + (vd -> e)
+      }
+      ix.exprOps.replaceFromSymbols(substs, tfd.fullBody)
+    } else predExpr
+    predExpr1.asString(printerOptions.Pretty)
+  }
+
+
+  object printerOptions {
+    val QueryDebugging = ix.PrinterOptions(baseIndent = 4, printUniqueIds = true)
+    val Pretty = ix.PrinterOptions(baseIndent = 0, printUniqueIds = false)
+  }
 
 
   final protected def extractPathConditions(pcs: List[PathCond])(implicit ctx: Context): (Expr, Set[RefType]) = {

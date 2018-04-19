@@ -151,7 +151,7 @@ class PlainPrinter(_ctx: Context) extends Printer {
         (toTextLocal(tycon) ~ "[" ~ Text(args map argText, ", ") ~ "]").close
       case tp: PredicateRefinedType =>
         ("{" ~ nameString(tp.subjectName) ~ ":" ~ toTextLocal(tp.parent) ~ " => " ~
-          toTextLocal(tp.predicate) ~ "}").close
+          ctx.ptyperCtx.prettyPrintPredicate(tp) ~ "}").close
       case tp: RefinedType =>
         val parent :: (refined: List[RefinedType @unchecked]) =
           refinementChain(tp).reverse
