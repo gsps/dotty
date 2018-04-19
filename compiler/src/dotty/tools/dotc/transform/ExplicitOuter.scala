@@ -141,6 +141,17 @@ object ExplicitOuter {
   private def newOuterAccessors(cls: ClassSymbol)(implicit ctx: Context) =
     newOuterAccessor(cls, cls) :: (if (cls is Trait) Nil else newOuterParamAccessor(cls) :: Nil)
 
+  private def outerClass(cls: ClassSymbol)(implicit ctx: Context): Symbol = {
+    val encl = cls.owner.enclosingClass
+    if (cls.is(Scala2x))
+      encl.asClass.classInfo.selfInfo match {
+        case tp: TypeRef => tp.classSymbol
+        case self: Symbol => self
+        case _ => encl
+      }
+    else encl
+  }
+
   /** A new outer accessor or param accessor.
    *  @param  owner  The class where the outer accessor is located
    *  @param  cls    The class relative to which the outer is computed (can be a base class of owner)
@@ -156,7 +167,7 @@ object ExplicitOuter {
    */
   private def newOuterSym(owner: ClassSymbol, cls: ClassSymbol, name: TermName, flags: FlagSet)(implicit ctx: Context) = {
     val outerThis = owner.owner.enclosingClass.thisType
-    val outerCls = cls.owner.enclosingClass
+    val outerCls = outerClass(cls)
     val target =
       if (owner == cls)
         outerCls.appliedRef
@@ -341,7 +352,7 @@ object ExplicitOuter {
       if (hasOuterParam(cls)) {
         val mt @ MethodTpe(pnames, ptypes, restpe) = tp
         mt.derivedLambdaType(
-          nme.OUTER :: pnames, cls.owner.enclosingClass.typeRef :: ptypes, restpe)
+          nme.OUTER :: pnames, outerClass(cls).typeRef :: ptypes, restpe)
       } else tp
 
     /** If function in an apply node is a constructor that needs to be passed an
