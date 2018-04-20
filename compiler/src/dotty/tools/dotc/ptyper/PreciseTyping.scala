@@ -16,7 +16,7 @@ import core.Decorators._
 import transform.MacroTransform
 import typer.ErrorReporting.err
 import typer.NoChecking
-import typer.ProtoTypes.FunProto
+import typer.ProtoTypes.{FunProto, PolyProto}
 
 import config.Printers.ptyper
 import reporting.trace
@@ -182,7 +182,7 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
       tree1
     }
 
-    override def adapt(tree: Tree, pt: Type)(implicit ctx: Context) =
+    override def adapt(tree: Tree, pt: Type, locked: TypeVars)(implicit ctx: Context) =
       tree
   }
 
@@ -213,13 +213,14 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
     }
 
     // TODO(gsps): Factor out logic in adapt that is shared with TreeChecker
-    override def adapt(tree: Tree, pt: Type)(implicit ctx: Context) = {
+    override def adapt(tree: Tree, pt: Type, locked: TypeVars)(implicit ctx: Context) = {
       def isPrimaryConstructorReturn =
         ctx.owner.isPrimaryConstructor && pt.isRef(ctx.owner.owner) && tree.tpe.isRef(defn.UnitClass)
       if (ctx.mode.isExpr &&
         !tree.isEmpty &&
         !isPrimaryConstructorReturn &&
-        !pt.isInstanceOf[FunProto])
+        !pt.isInstanceOf[FunProto] &&
+        !pt.isInstanceOf[PolyProto])
       {
         val saved = _currentTree
         _currentTree = tree

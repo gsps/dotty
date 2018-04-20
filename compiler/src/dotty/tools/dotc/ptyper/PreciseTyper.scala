@@ -122,14 +122,11 @@ class PreciseTyper extends typer.ReTyper {
     tree.withType(promoted)
   }
 
-  override def typedUnadapted(tree: untpd.Tree, pt: Type)(implicit ctx: Context): Tree = tree match {
-    case _: untpd.UnApply =>
-      // can't recheck patterns
-      tree.asInstanceOf[Tree]
+  override def typedUnadapted(tree: untpd.Tree, pt: Type, locked: TypeVars)(implicit ctx: Context): Tree = tree match {
     case _ if tree.isType =>
       promote(tree)
     case _ =>
-      super.typedUnadapted(tree, pt)
+      super.typedUnadapted(tree, pt, locked)
   }
 
   // TODO(gsps): Exchange scala.Unit for a dedicated singleton type in the phantom type hierarchy
@@ -215,6 +212,8 @@ class PreciseTyper extends typer.ReTyper {
 
   override def ensureNoLocalRefs(tree: Tree, pt: Type, localSyms: => List[Symbol])(implicit ctx: Context): Tree =
     tree
+
+  override def simplify(tree: Tree, pt: Type, locked: TypeVars)(implicit ctx: Context): tree.type = tree
 
   /** Disabled checks */
   override def checkInlineConformant(tree: Tree, isFinal: Boolean, what: => String)(implicit ctx: Context) = ()
