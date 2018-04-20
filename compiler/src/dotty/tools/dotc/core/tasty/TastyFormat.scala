@@ -417,7 +417,7 @@ object TastyFormat {
   }
 
   final val APPLIEDTERMREF = 180
-  final val PREDICATEtpt = 177  // TODO(gsps): Rename to PREDICATEREFINEDtpt?
+  final val PREDICATEtpt = 181  // TODO(gsps): Rename to PREDICATEREFINEDtpt?
   final val HOLE = 255
 
   final val firstNatTreeTag = SHAREDterm
@@ -619,8 +619,9 @@ object TastyFormat {
     case ANNOTATION => "ANNOTATION"
     case PRIVATEqualified => "PRIVATEqualified"
     case PROTECTEDqualified => "PROTECTEDqualified"
-    case HOLE => "HOLE"
+    case APPLIEDTERMREF => "APPLIEDTERMREF"
     case PREDICATEtpt => "PREDICATEtpt"
+    case HOLE => "HOLE"
   }
 
   /** @return If non-negative, the number of leading references (represented as nats) of a length/trees entry.

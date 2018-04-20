@@ -217,7 +217,7 @@ class PreciseTyper extends typer.ReTyper {
     tree
 
   /** Disabled checks */
-  override def checkInlineConformant(tree: Tree, what: => String)(implicit ctx: Context) = ()
+  override def checkInlineConformant(tree: Tree, isFinal: Boolean, what: => String)(implicit ctx: Context) = ()
   override def checkDerivedValueClass(clazz: Symbol, stats: List[Tree])(implicit ctx: Context) = ()
 }
 

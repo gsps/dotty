@@ -126,7 +126,7 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
   override def phaseName: String = "precisetyping2"
 
   /** List of names of phases that should precede this phase */
-  override def runsAfter: Set[Class[_ <: Phase]] = Set(classOf[PreciseTyping1])
+  override def runsAfter: Set[String] = Set("precisetyping1")
 
   //  override def changesMembers: Boolean = true
   //  override def changesParents: Boolean = true
