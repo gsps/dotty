@@ -469,14 +469,14 @@ trait TypeAssigner {
     tree.withType(body.tpe)
 
   def assignType(tree: untpd.Match, cases: List[CaseDef])(implicit ctx: Context) =
-    tree.withType(ctx.typeComparer.lub(cases.tpes))
+    tree.withType(ctx.typeComparer.topLevelLub(cases.tpes))
 
   def assignType(tree: untpd.Return)(implicit ctx: Context) =
     tree.withType(defn.NothingType)
 
   def assignType(tree: untpd.Try, expr: Tree, cases: List[CaseDef])(implicit ctx: Context) =
     if (cases.isEmpty) tree.withType(expr.tpe)
-    else tree.withType(ctx.typeComparer.lub(expr.tpe :: cases.tpes))
+    else tree.withType(ctx.typeComparer.topLevelLub(expr.tpe :: cases.tpes))
 
   def assignType(tree: untpd.SeqLiteral, elems: List[Tree], elemtpt: Tree)(implicit ctx: Context) = {
     val ownType = tree match {

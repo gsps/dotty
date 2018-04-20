@@ -188,7 +188,7 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
                   case Some(t) if t < time => CheckResult.Timeout
                   case _ => CheckResult.Unknown
                 }
-              case _ => CheckResult.Unknown
+              case null => CheckResult.Unknown
             }
 
           case Unsat =>

@@ -459,15 +459,13 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
         }
         compareRefined
       case tp2: RecType =>
-        def tryPredicateSubType(parent1: Type, parent2: Type): Boolean =
-          isPredicateSubType(parent1, parent2) || recur(parent1, parent2)
         def compareRec = tp1.safeDealias match {
           case tp1: RecType =>
             val rthis1 = tp1.recThis
-            tryPredicateSubType(tp1.parent, tp2.parent.substRecThis(tp2, rthis1))
+            recur(tp1.parent, tp2.parent.substRecThis(tp2, rthis1))
           case _ =>
             val tp1stable = ensureStableSingleton(tp1)
-            tryPredicateSubType(fixRecs(tp1stable, tp1stable.widenExpr), tp2.parent.substRecThis(tp2, tp1stable))
+            recur(fixRecs(tp1stable, tp1stable.widenExpr), tp2.parent.substRecThis(tp2, tp1stable))
         }
         compareRec
       case tp2: HKTypeLambda =>
