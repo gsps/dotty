@@ -84,16 +84,14 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
   // TODO(gsps): Clean this up; Fix the dotty code-gen issue that forces us to do inox workarounds
   def prettyPrintPredicate(tp: PredicateRefinedType)(implicit ctx: Context): String = {
     val (predExpr, _) = extractor.topLevelPredicate(tp, ensureStableRef(tp, tp.subjectName))
-    val predExpr1 = if (predExpr.isInstanceOf[ix.FunctionInvocation]) {
-      val fi = predExpr.asInstanceOf[ix.FunctionInvocation]
-      // fi.inlined(extractor.xst.inoxProgram.symbols)  // DOTTY BUG again
-      val s = extractor.xst.inoxProgram.symbols
-      val tfd = s.getFunction(fi.id, Nil)
-      val substs = (tfd.params zip fi.args).foldRight(Map.empty: Map[ix.ValDef, ix.Expr]) {
-        case ((vd, e), m) => m + (vd -> e)
-      }
-      ix.exprOps.replaceFromSymbols(substs, tfd.fullBody)
-    } else predExpr
+    val predExpr1 = predExpr match {
+      case ix.FunctionInvocation(id, _, args) =>
+        val s = extractor.xst.inoxProgram.symbols
+        val tfd = s.getFunction(id, Nil)
+        val substs = Map[ix.ValDef, ix.Expr]((tfd.params zip args): _*)
+        ix.exprOps.replaceFromSymbols(substs, tfd.fullBody)
+      case _ => predExpr
+    }
     predExpr1.asString(printerOptions.Pretty)
   }
 
