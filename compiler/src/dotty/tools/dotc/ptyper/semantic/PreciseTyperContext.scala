@@ -2,8 +2,8 @@ package dotty.tools.dotc
 package ptyper.semantic
 
 import dotty.tools.dotc.{ptyper => pt}
-import pt.{PathCond, CheckResult}
-import pt.Utils.ensureStableRef
+import pt.{PathCond, CheckResult, ErrorTypeException}
+import pt.Utils.{checkErrorType, ensureStableRef}
 
 import ast.tpd.DefDef
 import core.Contexts.Context
@@ -44,40 +44,44 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
     if (tp1.derivesFrom(defn.NothingClass))
       return CheckResult.Valid
 
-    val tp1Ref = ensureStableRef(tp1)
+    try {
+      val tp1Ref = ensureStableRef(checkErrorType(tp1))
 
-    val (tp2PredExpr, tp2Bindings) = extractor.topLevelPredicate(tp2, tp1Ref)
+      val (tp2PredExpr, tp2Bindings) = extractor.topLevelPredicate(tp2, tp1Ref)
 
-    val (pcExpr, pcBindings) = extractPathConditions(pcs)
+      val (pcExpr, pcBindings) = extractPathConditions(pcs)
 
-    val bindings = tp2Bindings + tp1Ref
-    val bindingCnstrs = extractBindings(bindings)
+      val bindings = tp2Bindings + tp1Ref
+      val bindingCnstrs = extractBindings(bindings)
 
-    val query = {
-      // TODO(gsps): Report dotty bug? Triggers cyclic reference error when not providing declared type
-      implicit val xst: ExtractionState = extractor.xst
-      val bindingExprs = bindingCnstrs.map(c => ix.Equals(c.subject.variable, c.expr))
-      ix.Implies(ix.andJoin(pcExpr :: bindingExprs), tp2PredExpr)
+      val query = {
+        // TODO(gsps): Report dotty bug? Triggers cyclic reference error when not providing declared type
+        implicit val xst: ExtractionState = extractor.xst
+        val bindingExprs = bindingCnstrs.map(c => ix.Equals(c.subject.variable, c.expr))
+        ix.Implies(ix.andJoin(pcExpr :: bindingExprs), tp2PredExpr)
+      }
+
+      /* Query debug printing */
+      queryCount += 1
+      val printQueryInfo = ctx.settings.YptyperQueryTrace.value < 0 || ctx.settings.YptyperQueryTrace.value == queryCount
+
+      def posString(sp: util.SourcePosition): String =
+        White(if (sp.exists) s"${sp.source.name} @ ${sp.line + 1}:${sp.column + 1}" else "???").show
+      ptyper.println(Magenta(s"[[ PTyper query #$queryCount ]]  ${posString(pos)}").show)
+      if (printQueryInfo) {
+        val xst = extractor.xst
+        val bindingsStr = bindingCnstrs.map(c => s"${xst.getRefVar(c.subject)}:  $c").mkString("\t\t", "\n\t\t", "\n")
+        ptyper.println(s"\t${pcs.size} path condition(s)")
+        ptyper.println(s"\t${bindingCnstrs.size} bindings extracted:\n$bindingsStr")
+        ptyper.println(s"\tQuery:\n\t\t${query.asString(printerOptions.QueryDebugging)}")
+      }
+
+      val result = runQuery(query)
+      if (printQueryInfo) ptyper.println(s"\t=> $result")
+      result
+    } catch {
+      case ex: ErrorTypeException => CheckResult.Valid
     }
-
-    /* Query debug printing */
-    queryCount += 1
-    val printQueryInfo = ctx.settings.YptyperQueryTrace.value < 0 || ctx.settings.YptyperQueryTrace.value == queryCount
-    def posString(sp: util.SourcePosition): String =
-      White(if (sp.exists) s"${sp.source.name} @ ${sp.line + 1}:${sp.column + 1}" else "???").show
-    ptyper.println(Magenta(s"[[ PTyper query #$queryCount ]]  ${posString(pos)}").show)
-    if (printQueryInfo) {
-      val xst = extractor.xst
-      val bindingsStr = bindingCnstrs.map(c => s"${xst.getRefVar(c.subject)}:  $c").mkString("\t\t", "\n\t\t", "\n")
-      ptyper.println(s"\t${pcs.size} path condition(s)")
-      ptyper.println(s"\t${bindingCnstrs.size} bindings extracted:\n$bindingsStr")
-      ptyper.println(s"\tQuery:\n\t\t${query.asString(printerOptions.QueryDebugging)}")
-    }
-
-    val result = runQuery(query)
-
-    if (printQueryInfo) ptyper.println(s"\t=> $result")
-    result
   }
 
 

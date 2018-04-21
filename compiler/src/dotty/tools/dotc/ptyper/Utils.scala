@@ -33,6 +33,12 @@ object Utils {
     sb.toString
   }
 
+  def checkErrorType[T <: Type](tp: T): tp.type = {
+    if (tp.isInstanceOf[ErrorType])
+      throw ErrorTypeException()
+    tp
+  }
+
   def normalizedApplication(tp: Type)(implicit ctx: Context): Type = tp match {
     case tp: TermRef if tp.isStable && tp.underlying.isInstanceOf[ExprType] => AppliedTermRef(tp, Nil)
     case _ => tp

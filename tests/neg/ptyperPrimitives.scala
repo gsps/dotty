@@ -6,4 +6,7 @@ object Ints {
   f2(1,1) // error: Second argument must be greater than first
 
   val foo: Int {foo > 0} = 0  // error: foo is not greater zero
+
+  val bad = f1(-1)  // error: not a non-negative argument
+  f1(bad)  // no message, because `bad` isn't well-typed
 }

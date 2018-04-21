@@ -2,7 +2,7 @@ package dotty.tools.dotc
 
 import core.Types.RefType
 import reporting.diagnostic.Message
-import util.SourcePosition
+import util.{NoSourcePosition, SourcePosition}
 
 
 package object ptyper
@@ -23,7 +23,10 @@ package object ptyper
 
   /* Exception hierarchy used by backends */
 
-  case class ExtractionException(msg: Message, pos: SourcePosition) extends Exception() {
+  sealed class ExtractionException(val msg: Message, val pos: SourcePosition) extends Exception() {
     override def getMessage(): String = msg.toString
   }
+
+  case class ErrorTypeException(override val pos: SourcePosition = NoSourcePosition)
+    extends ExtractionException("Error type encountered", pos)
 }

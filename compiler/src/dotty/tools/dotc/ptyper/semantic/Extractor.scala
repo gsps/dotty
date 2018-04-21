@@ -3,7 +3,7 @@ package ptyper
 package semantic
 
 import PreciseTyperContext.ptDefn
-import Utils.normalizedApplication
+import Utils.{checkErrorType, normalizedApplication}
 
 import core.Contexts.Context
 import core.Decorators._
@@ -54,7 +54,7 @@ class Extractor(_xst: ExtractionState, _ctx: Context)
   }
 
   protected def ensureRefTypeRegistered(refTp: RefType)(implicit xctx: ExtractionContext): Unit =
-    getOrCreateRefVar(refTp)  // force creation of RefType -> Var binding
+    getOrCreateRefVar(checkErrorType(refTp))  // force creation of RefType -> Var binding
 
   protected def usedBindings(expr: Expr): Set[RefType] =
     ix.exprOps.variablesOf(expr).map(xst.getRefType) ++
@@ -112,12 +112,12 @@ protected case class ExtractionContext(approxMode: ApproxMode) {
   import ApproxMode._
 
   def extractionError(msg: Message, pos: SourcePosition = NoSourcePosition)(implicit ctx: Context) =
-    throw ExtractionException(msg, pos)
+    throw new ExtractionException(msg, pos)
 
   def recoverableExtractionError[T](msg: Message, pos: SourcePosition = NoSourcePosition)(
       fallback: => T)(implicit ctx: Context) =
     approxMode match {
-      case Throw => throw ExtractionException(msg, pos)
+      case Throw => throw new ExtractionException(msg, pos)
       case Warn => ctx.warning(msg, pos); fallback
       case Silent => fallback
     }
@@ -202,7 +202,7 @@ trait ExprExtractor { this: Extractor =>
       if (tp.isStable) refType(tp)
       else { val tp1 = tp.underlying; assert(tp1.isValueType); typ(tp1) }
 
-    normalizedApplication(tp.widenExpr.dealias) match {
+    normalizedApplication(checkErrorType(tp.widenExpr.dealias)) match {
       case tp: ConstantType   => constantType(tp)
       case tp: TermRef        => termRef(tp)
       case tp: RefType        => assert(tp.isStable); refType(tp)
