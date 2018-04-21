@@ -2357,8 +2357,7 @@ object Types {
    *  @param infoFn: A function that produces the info of the refinement declaration,
    *                 given the refined type itself.
    */
-  abstract case class RefinedType(val parent: Type, val refinedName: Name, val refinedInfo: Type)
-    extends RefinedOrRecType {
+  abstract case class RefinedType(parent: Type, refinedName: Name, refinedInfo: Type) extends RefinedOrRecType {
     if (refinedName.isTermName) assert(refinedInfo.isInstanceOf[TermType], s"Expected TermType, got $refinedInfo")
     else assert(refinedInfo.isInstanceOf[TypeType], this)
     assert(!refinedName.is(NameKinds.ExpandedName), this)
