@@ -60,58 +60,58 @@ abstract class SimplifyTests(val optimise: Boolean) extends DottyBytecodeTest {
           |println(anotherone)
        """)
 
-  @Test def inlineCaseIntrinsicsDottyApply =
-    check(
-      source   = "CC.apply(1, 2)",
-      expected = "new CC(1, 2)",
-      shared   = "case class CC(i: Int, j: Int)")
+//  @Test def inlineCaseIntrinsicsDottyApply =
+//    check(
+//      source   = "CC.apply(1, 2)",
+//      expected = "new CC(1, 2)",
+//      shared   = "case class CC(i: Int, j: Int)")
 
   @Test def inlineCaseIntrinsicsScalacApply =
     check("::.apply(1, Nil)", "new ::(1, Nil)")
 
-  @Test def inlineCaseIntrinsicsScalacUnapply =
-    check(
-      """
-         |val t = Tuple2(1, "s")
-         |print(Tuple2.unapply(t))
-      """,
-      """
-         |print(new Some(new Tuple2(1, "s")))
-      """)
+//  @Test def inlineCaseIntrinsicsScalacUnapply =
+//    check(
+//      """
+//         |val t = Tuple2(1, "s")
+//         |print(Tuple2.unapply(t))
+//      """,
+//      """
+//         |print(new Some(new Tuple2(1, "s")))
+//      """)
 
-  @Test def dropNoEffects =
-    check(
-      """
-         |val a = "wow"
-         |print(1)
-      """,
-      """
-         |print(1)
-      """)
+//  @Test def dropNoEffects =
+//    check(
+//      """
+//         |val a = "wow"
+//         |print(1)
+//      """,
+//      """
+//         |print(1)
+//      """)
+//
+//  @Test def dropNoEffectsTuple =
+//    check("new Tuple2(1, 3)", "")
 
-  @Test def dropNoEffectsTuple =
-    check("new Tuple2(1, 3)", "")
+//  @Test def inlineLocalObjects =
+//    check(
+//      """
+//         |val t = new Tuple2(1, 3)
+//         |print(t._1 + t._2)
+//      """,
+//      """
+//         |val i = 3
+//         |print(1 + i) // Prevents typer from constant folding 1 + 3 to 4
+//      """)
 
-  @Test def inlineLocalObjects =
-    check(
-      """
-         |val t = new Tuple2(1, 3)
-         |print(t._1 + t._2)
-      """,
-      """
-         |val i = 3
-         |print(1 + i) // Prevents typer from constant folding 1 + 3 to 4
-      """)
-
-  @Test def inlineOptions =
-    check(
-      """
-         |val sum = Some("s")
-         |println(sum.isDefined)
-      """,
-      """
-         |println(true)
-      """)
+//  @Test def inlineOptions =
+//    check(
+//      """
+//         |val sum = Some("s")
+//         |println(sum.isDefined)
+//      """,
+//      """
+//         |println(true)
+//      """)
 
 
   /*
@@ -164,33 +164,33 @@ abstract class SimplifyTests(val optimise: Boolean) extends DottyBytecodeTest {
         |print(8)
       """)
 
-  @Test def localDefinitionElimination =
-    check(
-      """
-        |lazy val foo = 1
-        |def bar = 2
-        |val baz = 3
-      """,
-      """
-      """)
+//  @Test def localDefinitionElimination =
+//    check(
+//      """
+//        |lazy val foo = 1
+//        |def bar = 2
+//        |val baz = 3
+//      """,
+//      """
+//      """)
 
-  @Test def localDefinitionNoElimination =
-    check(
-      """
-        |val j = 0 // dummy
-        |class Foo {
-        |  lazy val foo = 1
-        |  def bar = 2
-        |  val baz = 3
-        |}
-      """,
-      """
-        |class Foo {
-        |  lazy val foo = 1
-        |  def bar = 2
-        |  val baz = 3
-        |}
-      """)
+//  @Test def localDefinitionNoElimination =
+//    check(
+//      """
+//        |val j = 0 // dummy
+//        |class Foo {
+//        |  lazy val foo = 1
+//        |  def bar = 2
+//        |  val baz = 3
+//        |}
+//      """,
+//      """
+//        |class Foo {
+//        |  lazy val foo = 1
+//        |  def bar = 2
+//        |  val baz = 3
+//        |}
+//      """)
 
 
   // @Test def listPatmapExample =
