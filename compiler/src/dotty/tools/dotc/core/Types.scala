@@ -484,10 +484,14 @@ object Types {
     }
 
     final def memberExcluding(name: Name, excluding: FlagSet)(implicit ctx: Context): Denotation = {
+      def skolemizeIfUnstable(tp: Type): Type = tp.stripTypeVar match {
+        case tp: ExprType => skolemizeIfUnstable(tp.resultType)
+        case tp => if (tp.isStable) tp else SkolemType(tp)
+      }
       // We need a valid prefix for `asSeenFrom`
       val pre = this match {
         case tp: ClassInfo => tp.appliedRef
-        case _ => widenIfUnstable
+        case tp => skolemizeIfUnstable(tp)  // FIXME(gsps): Does this introduce a significant slowdown?
       }
       findMember(name, pre, excluding)
     }
@@ -2209,6 +2213,7 @@ object Types {
 
     def derivedAppliedTerm(fn: Type, args: List[Type])(implicit ctx: Context): Type =
       if ((this.fn eq fn) && (this.args eq args)) this
+      else if (fn.isBottomType) fn
       else AppliedTermRef(fn, args)
 
     final def functionRef: TermRef = fn match {
@@ -2524,7 +2529,9 @@ object Types {
       else if ((parent eq this.parent) && (refinedInfo eq this.refinedInfo))
         this
       else if (!refinedInfo.isInstanceOf[AppliedTermRef])
-        throw new UnsupportedOperationException("PredicateRefinedType only takes an AppliedTermRef as refinedInfo.")
+        if (refinedInfo.isBottomType) refinedInfo
+        else throw new UnsupportedOperationException(
+          i"PredicateRefinedType only takes an AppliedTermRef as refinedInfo, got: $refinedInfo")
       else
         new PredicateRefinedType(subjectName, parent, refinedInfo.asInstanceOf[AppliedTermRef])
     }
@@ -2560,7 +2567,7 @@ object Types {
         val predMeth = ctx.newSymbol(ctx.owner.enclosingClass, predMethName,
           Final | Stable | Synthetic | Method,  // TODO: Mark Unused
           MethodType(paramNames, paramTpes, defn.BooleanType),
-          coord = predTree.pos)
+          coord = predTree.pos).entered
 
         AppliedTermRef(predMeth.termRef, argTpes).asInstanceOf[AppliedTermRef]
       }
@@ -2585,6 +2592,11 @@ object Types {
         case _ => false
       }
     }
+
+//    object SubjectSentinel extends FlexType {
+//      def apply(): SubjectSentinel.type = this
+//      def unapply(tp: Type): Boolean = tp eq this
+//    }
 
     /** Compute the free symbols of a predicate tree. */
 
