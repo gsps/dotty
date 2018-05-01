@@ -70,7 +70,7 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
       ptyper.println(Magenta(s"[[ PTyper query #$queryCount ]]  ${posString(pos)}").show)
       if (printQueryInfo) {
         val xst = extractor.xst
-        val bindingsStr = bindingCnstrs.map(c => s"${xst.getRefVar(c.subject)}:  $c").mkString("\t\t", "\n\t\t", "\n")
+        val bindingsStr = bindingCnstrs.map(c => s"${xst.refTypeToVar(c.subject)}:  $c").mkString("\t\t", "\n\t\t", "\n")
         ptyper.println(s"\t${pcs.size} path condition(s)")
         ptyper.println(s"\t${bindingCnstrs.size} bindings extracted:\n$bindingsStr")
         ptyper.println(s"\tQuery:\n\t\t${query.asString(printerOptions.QueryDebugging)}")

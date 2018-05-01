@@ -57,7 +57,7 @@ class Extractor(_xst: ExtractionState, _ctx: Context)
     getOrCreateRefVar(checkErrorType(refTp))  // force creation of RefType -> Var binding
 
   protected def usedBindings(expr: Expr): Set[RefType] =
-    ix.exprOps.variablesOf(expr).map(xst.getRefType) ++
+    ix.exprOps.variablesOf(expr).map(xst.refVarToType) ++
       ix.exprOps.functionCallsOf(expr).flatMap(fi => xst.funIdToStaticBindings(fi.id))
 }
 
@@ -79,17 +79,17 @@ protected class ExtractionState {
   }
 
 
-  def getRefVar(refTp: RefType): Var =
+  def refTypeToVar(refTp: RefType): Var =
     refType2Var.toB(refTp)
 
   def getOrCreateRefVar(refTp: RefType)(computeRefVar: => Var): Var =
     refType2Var.cachedB(refTp)(computeRefVar)
 
-  def getRefType(refVar: Var): RefType =
+  def refVarToType(refVar: Var): RefType =
     refType2Var.toA(refVar)
 
 
-  def getMethodId(sym: Symbol): Option[Id] =
+  def getFunId(sym: Symbol): Option[Id] =
     method2FunId.getB(sym)
 
   def addMethod(sym: Symbol)(fdBuilder: Id => (ix.FunDef, Set[RefType]))(implicit ctx: Context): Id =
@@ -333,7 +333,7 @@ trait ExprExtractor { this: Extractor =>
     implicit xctx: ExtractionContext): Expr =
   {
     assert(fn.symbol.is(Stable))
-    xst.getMethodId(fn.symbol) match {
+    xst.getFunId(fn.symbol) match {
       case Some(id) => ix.FunctionInvocation(id, Nil, argss.flatten.map(typ))
       case None =>
         ctx.warning(i"Method ${fn.symbol} is stable but has not been extracted.")
@@ -373,14 +373,14 @@ trait MethodExtractor { this: Extractor =>
     def checkBindingsAndCollectStatic(fd: ix.FunDef): (ix.FunDef, Set[RefType]) = {
       val fvs = ix.exprOps.variablesOf(fd.fullBody) diff fd.params.map(_.toVariable).toSet
       val (staticBs, nonStaticBs) = fvs.partition { variable =>
-        xst.getRefType(variable) match {
+        xst.refVarToType(variable) match {
           case tp: TermRef => tp.symbol.isStatic
           case _ => false
         }
       }
       if (nonStaticBs.nonEmpty)
         xctx.extractionError(s"Cannot extract method with non-static outside references: $fd", sym.pos)
-      else (fd, staticBs.map(xst.getRefType))
+      else (fd, staticBs.map(xst.refVarToType))
     }
 
     xst.addMethod(sym) { id =>

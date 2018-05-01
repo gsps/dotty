@@ -3,6 +3,7 @@ package ptyper
 
 import core.Types.RefType
 import inox.{trees => ix}
+import inox.ast
 
 
 package object semantic {
@@ -15,7 +16,7 @@ package object semantic {
   val TrueExpr = ix.BooleanLiteral(true)
 
   implicit class RefTypeOps(val refTp: RefType) extends AnyVal {
-    def variable(implicit exst: ExtractionState): Var = exst.getRefVar(refTp)
+    def variable(implicit exst: ExtractionState): Var = exst.refTypeToVar(refTp)
   }
 
   /* Cnstr ("constraint") is the extracted, i.e., logical, counterpart to a dotty type. */
