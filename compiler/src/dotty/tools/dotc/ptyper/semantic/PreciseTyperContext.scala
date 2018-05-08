@@ -2,8 +2,9 @@ package dotty.tools.dotc
 package ptyper.semantic
 
 import dotty.tools.dotc.{ptyper => pt}
-import pt.{PathCond, CheckResult, ErrorTypeException}
+import pt.{PathCond, CheckResult}
 import pt.Utils.{checkErrorType, ensureStableRef}
+import pt.PreciseTyperContext.ptCtx
 
 import ast.tpd.DefDef
 import core.Contexts.Context
@@ -16,7 +17,6 @@ import util.{NoSourcePosition, SourcePosition}
 import config.Printers.ptyper
 import printing.Highlighting._
 
-import inox.{trees => ix}
 import inox.InoxProgram
 
 
@@ -32,115 +32,90 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
   private[this] var queryCount: Int = 0
 
 
-  def extractMethod(ddef: DefDef)(implicit ctx: Context): Unit =
-    extractor.extractMethod(ddef)
-
-
   /* Precond: tp1 and tp2 have already been fixed wrt. RecTypes, e.g., via TypeComparer#fixRecs */
   def checkSubtype(pcs: List[PathCond], tp1: Type, tp2: PredicateRefinedType,
                    pos: SourcePosition = NoSourcePosition)(implicit ctx: Context): CheckResult =
   {
+    import pt.{ApproximationException, ErrorTypeException, ExtractionException}
+    import CheckResult._
+
+    /* Query debug printing */
+
+    def posString(sp: util.SourcePosition): String =
+      White(if (sp.exists) s"${sp.source.name} @ ${sp.line + 1}:${sp.column + 1}" else "???").show
+
+    def printRes(result: CheckResult, suffix: String, prefix: String = "\t=> "): CheckResult = {
+      ptyper.println(s"$prefix$result $suffix")
+      result
+    }
+
+    def debugPrintQuery(query: Expr)(op: Expr => CheckResult): CheckResult = {
+      implicit val opts = printerOptions.Pretty.copy(baseIndent = 4)
+
+      if (ctx.settings.YptyperQueryStacktrace.value < 0 || ctx.settings.YptyperQueryStacktrace.value == queryCount) {
+        ptyper.println(Magenta(s" -->"))
+        new Throwable().printStackTrace()
+        ptyper.println(Magenta(s" <-- Stack trace leading up to query #$queryCount"))
+      }
+
+      val showResult =
+        if (ctx.settings.YptyperQueryTrace.value < 0 || ctx.settings.YptyperQueryTrace.value == queryCount) {
+          ptyper.println(s"\t${pcs.size} path condition(s)\n")
+          for {m <- trees.exprOps.methodCallsOf(query).map(_.method)
+               fd = extractor.xst.program.symbols.getFunction(m)}
+            ptyper.println(s"\t${fd.asString}\n")
+          ptyper.println(s"\t${query.asString}")
+          true
+        } else {
+          false
+        }
+
+      val result = op(query)
+      if (showResult) printRes(result, "", "\n\t=> ") else result
+    }
+
+    /* Query generation and execution */
+
     // TODO(gsps): Handle Any and Nothing in the extraction itself.
     if (tp1.derivesFrom(defn.NothingClass))
       return CheckResult.Valid
 
     try {
-      val tp1Ref = ensureStableRef(checkErrorType(tp1))
-
-      val (tp2PredExpr, tp2Bindings) = extractor.topLevelPredicate(tp2, tp1Ref)
-
-      val (pcExpr, pcBindings) = extractPathConditions(pcs)
-
-      val bindings = tp2Bindings + tp1Ref
-      val bindingCnstrs = extractBindings(bindings)
-
-      val query = {
-        // TODO(gsps): Report dotty bug? Triggers cyclic reference error when not providing declared type
-        implicit val xst: ExtractionState = extractor.xst
-        val bindingExprs = bindingCnstrs.map(c => ix.Equals(c.subject.variable, c.expr))
-        ix.Implies(ix.andJoin(pcExpr :: bindingExprs), tp2PredExpr)
-      }
-
-      /* Query debug printing */
       queryCount += 1
-      val printQueryInfo = ctx.settings.YptyperQueryTrace.value < 0 || ctx.settings.YptyperQueryTrace.value == queryCount
-
-      def posString(sp: util.SourcePosition): String =
-        White(if (sp.exists) s"${sp.source.name} @ ${sp.line + 1}:${sp.column + 1}" else "???").show
       ptyper.println(Magenta(s"[[ PTyper query #$queryCount ]]  ${posString(pos)}").show)
-      if (printQueryInfo) {
-        val xst = extractor.xst
-        val bindingsStr = bindingCnstrs.map(c => s"${xst.refTypeToVar(c.subject)}:  $c").mkString("\t\t", "\n\t\t", "\n")
-        ptyper.println(s"\t${pcs.size} path condition(s)")
-        ptyper.println(s"\t${bindingCnstrs.size} bindings extracted:\n$bindingsStr")
-        ptyper.println(s"\tQuery:\n\t\t${query.asString(printerOptions.QueryDebugging)}")
-      }
 
-      val result = runQuery(query)
-      if (printQueryInfo) ptyper.println(s"\t=> $result")
-      result
+      assert(ptCtx.isReadyToExtract)
+      val tp1Ref = ensureStableRef(checkErrorType(tp1))
+      val query  = extractor.query(pcs, tp2, tp1Ref)
+      debugPrintQuery(query)(runQuery)
     } catch {
-      case ex: ErrorTypeException => CheckResult.Valid
+      case ex: ErrorTypeException     => printRes(Valid, s"\t=> Valid (due to ErrorType)")
+      case ex: ApproximationException => printRes(NotValid, s"\t=> NotValid (due to illegal approximation)")
+      case ex: ExtractionException    => ptyper.println(RedB(s"\t=> ExtractionException: ${ex.getMessage()}")); throw ex
     }
   }
 
 
-  // TODO(gsps): Clean this up; Fix the dotty code-gen issue that forces us to do inox workarounds
-  def prettyPrintPredicate(tp: PredicateRefinedType)(implicit ctx: Context): String = {
-    val (predExpr, _) = extractor.topLevelPredicate(tp, ensureStableRef(tp, tp.subjectName))
-    val predExpr1 = predExpr match {
-      case ix.FunctionInvocation(id, _, args) =>
-        val s = extractor.xst.inoxProgram.symbols
-        val tfd = s.getFunction(id, Nil)
-        val substs = Map[ix.ValDef, ix.Expr]((tfd.params zip args): _*)
-        ix.exprOps.replaceFromSymbols(substs, tfd.fullBody)
-      case _ => predExpr
+  def prettyPrintPredicate(tp: PredicateRefinedType)(implicit ctx: Context): String =
+    if (ptCtx.isReadyToExtract) {
+      val predExpr = extractor.topLevelPredicate(tp, ensureStableRef(tp, tp.subjectName))
+      val predExpr1 = predExpr match {
+        case trees.FunctionInvocation(id, _, args) =>
+          val s = extractor.xst.program.symbols
+          val tfd = s.getFunction(id, Nil)
+          val substs = Map[trees.ValDef, trees.Expr]((tfd.params zip args): _*)
+          trees.exprOps.replaceFromSymbols(substs, tfd.fullBody)
+        case _ => predExpr
+      }
+      predExpr1.asString(printerOptions.Pretty)
+    } else {
+      tp.predicate.show
     }
-    predExpr1.asString(printerOptions.Pretty)
-  }
 
 
   object printerOptions {
-    val QueryDebugging = ix.PrinterOptions(baseIndent = 4, printUniqueIds = true)
-    val Pretty = ix.PrinterOptions(baseIndent = 0, printUniqueIds = false)
-  }
-
-
-  final protected def extractPathConditions(pcs: List[PathCond])(implicit ctx: Context): (Expr, Set[RefType]) = {
-    var expr: Expr = TrueExpr
-    var bindings: Set[RefType] = Set.empty
-
-    for ((notNegated, condTp) <- pcs) {
-      val cnstr = extractor.binding(condTp)
-      expr = ix.and(expr, if (notNegated) cnstr.expr else ix.Not(cnstr.expr))
-      bindings ++= cnstr.bindings
-    }
-
-    (expr, bindings)
-  }
-
-  final protected def extractBindings(tps0: Set[RefType])(implicit cxt: Context): List[Cnstr] =
-  {
-    import scala.collection.mutable.ListBuffer
-    var worklist = tps0.toList
-    var cnstrs = ListBuffer.empty[Cnstr]
-    var seen = Set.empty[RefType]
-
-    @inline def handle(refTp: RefType): Unit = {
-      seen = seen + refTp
-      val cnstr = extractor.binding(refTp)
-      cnstrs.append(cnstr)
-      for (binding <- cnstr.bindings if !seen.contains(binding))
-        worklist = binding :: worklist
-    }
-
-    while (worklist.nonEmpty) {
-      val refTp = worklist.head
-      worklist = worklist.tail
-      handle(refTp)
-    }
-
-    cnstrs.toList
+    val QueryDebugging = trees.PrinterOptions(baseIndent = 4, printUniqueIds = true)
+    val Pretty = trees.PrinterOptions(baseIndent = 0, printUniqueIds = false)
   }
 
 
@@ -152,10 +127,26 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
     inox.Context(reporter, new inox.utils.InterruptManager(reporter))
   }
 
+  protected def lowerToInox(program: Program, query: Expr): (InoxProgram, inox.trees.Expr) = {
+    val ex = program.trees.extractor
+//    println(s"[[ ORIGINAL PROGRAM: ]]\n\n$program\n\n")
+
+    val program1 = InoxProgram(ex.transform(program.symbols))
+//    println(s"[[ LOWERED PROGRAM: ]]\n>>>\n$program1\n<<<\n")
+
+    val query1 = ex.transformQuery(program.symbols, query)
+//    println(s"[[ LOWERED QUERY: ]]\n$query1\n-----")
+
+//    val opts = inox.trees.PrinterOptions(baseIndent = 4, printUniqueIds = true)
+//    println(s"\nTYPED QUERY:\n${program1.symbols.explainTyping(query1)(opts)}\n-----\n\n")
+
+    (program1, query1)
+  }
+
   protected def runQuery(query: Expr)(implicit ctx: Context): CheckResult = {
     val ixCtx = defaultInoxCtx
 
-    val program: InoxProgram = extractor.xst.inoxProgram
+    val (program, cond) = lowerToInox(extractor.xst.program, query)
     val s = inox.solvers.SolverFactory(program, ixCtx).getNewSolver
 
     import inox.solvers.SolverResponses._
@@ -165,7 +156,6 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
     try {
       // TODO: [Dotty hack] Dotty can't infer equivalence of program.trees and program.symbols.trees
 //      val cond = simplifyLets(query)
-      val cond = query
 
       ixCtx.reporter.synchronized {
         ixCtx.reporter.info(s" - Now considering VC $query @${query.getPos}...")

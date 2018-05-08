@@ -147,13 +147,25 @@ object Types {
 
     /** Does this type denote a stable reference (i.e. singleton type)? */
     final def isStable(implicit ctx: Context): Boolean = stripTypeVar match {
-      case tp: TermRef => tp.termSymbol.isStable && tp.prefix.isStable || tp.info.isStable
+      case tp: TermRef => tp.termSymbol.isStable && tp.prefix.isStable || tp.info.isStable || isFunAppAssumedPure(tp)
       case tp: AppliedTermRef => tp.fn.isStable && tp.args.forall(_.isStable)
       case _: SingletonType | NoPrefix => true
       case tp: RefinedOrRecType => tp.parent.isStable
       case tp: ExprType => tp.resultType.isStable
       case tp: AnnotatedType => tp.tpe.isStable
       case _ => false
+    }
+
+    /** Is this type are reference to a function-typed symbol that has been assumed pure by the user? */
+    // TODO(gsps): Should really have a dedicated PureFunctionType to carry this information.
+    @inline final def isFunAppAssumedPure(tp: TermRef)(implicit ctx: Context): Boolean = {
+      import transform.SymUtils._
+      (tp.name eq nme.apply) && (tp.prefix match {
+        case pre: TermRef =>
+          val preSym = pre.symbol
+          preSym.is(Param) && preSym.enclosure.flagsUNSAFE.is(Stable) && defn.isFunctionType(pre.underlying)
+        case _ => false
+      })
     }
 
     /** Is this type a (possibly refined or applied or aliased) type reference
@@ -2529,7 +2541,7 @@ object Types {
       else if ((parent eq this.parent) && (refinedInfo eq this.refinedInfo))
         this
       else if (!refinedInfo.isInstanceOf[AppliedTermRef])
-        if (refinedInfo.isBottomType) refinedInfo
+        if (refinedInfo.isBottomType || (!refinedInfo.isStable && refinedInfo.isRef(defn.BooleanClass))) refinedInfo
         else throw new UnsupportedOperationException(
           i"PredicateRefinedType only takes an AppliedTermRef as refinedInfo, got: $refinedInfo")
       else
@@ -2556,6 +2568,7 @@ object Types {
 
 
   object PredicateRefinedType {
+    // TODO(gsps): Move predicate methods of constructor parameters outside the enclosing class
     def apply(subjectVd: ValDef, predTree: Tree)(implicit ctx: Context): Type = {
       def registerPredicate(): AppliedTermRef = {
         val freeSyms   = PredicateRefinedType.typeTreeFreeSyms(subjectVd, predTree)
@@ -2568,6 +2581,7 @@ object Types {
           Final | Stable | Synthetic | Method,  // TODO: Mark Unused
           MethodType(paramNames, paramTpes, defn.BooleanType),
           coord = predTree.pos).entered
+        predMeth.addAnnotation(Annotation(defn.ExtractAnnot))
 
         AppliedTermRef(predMeth.termRef, argTpes).asInstanceOf[AppliedTermRef]
       }

@@ -11,14 +11,34 @@ package object semantic {
   type Id = inox.Identifier
   val FreshIdentifier = inox.FreshIdentifier
 
-  type Var = ix.Variable
-  type Expr = ix.Expr
-  val TrueExpr = ix.BooleanLiteral(true)
-
-  implicit class RefTypeOps(val refTp: RefType) extends AnyVal {
-    def variable(implicit exst: ExtractionState): Var = exst.refTypeToVar(refTp)
-  }
+  type Var = trees.Variable
+  type Expr = trees.Expr
+  val TrueExpr = trees.BooleanLiteral(true)
 
   /* Cnstr ("constraint") is the extracted, i.e., logical, counterpart to a dotty type. */
-  case class Cnstr(subject: RefType, expr: Expr, bindings: Set[RefType])
+  case class Cnstr(subject: RefType, expr: Expr)
+
+
+  /** Our own trees and programs **/
+
+  object trees extends Trees with SimpleSymbols {
+    case class Symbols(
+                        functions: Map[Id, FunDef],
+                        sorts: Map[Id, ADTSort],
+                        classes: Map[Id, ClassDef]
+                      ) extends SimpleSymbols
+
+    object printer extends Printer { val trees: semantic.trees.type = semantic.trees }
+
+    val classEncoding = new ClassEncoding
+
+    val extractor = classEncoding
+  }
+
+  type Program = inox.Program { val trees: semantic.trees.type }
+
+  object Program {
+    def apply(symbols: trees.Symbols): Program = inox.Program(trees)(symbols)
+      .asInstanceOf[Program]  // DOTTY BUG (extra by-name type on trees)
+  }
 }

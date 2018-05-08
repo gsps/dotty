@@ -1,10 +1,11 @@
 package dotty.tools.dotc
 package ptyper
 
-import PreciseTyperContext.ptCtx
+import PreciseTyperContext.{ptCtx, ptDefn}
 
 import ast.{TreeTypeMap, untpd}
 import ast.tpd._
+import core.Annotations.Annotation
 import core.Phases._
 import core.DenotTransformers._
 import core.Flags._
@@ -17,6 +18,8 @@ import transform.MacroTransform
 import typer.ErrorReporting.err
 import typer.NoChecking
 import typer.ProtoTypes.{FunProto, PolyProto}
+import util.Positions.{NoPosition, Position}
+import util.Stats.track
 
 import config.Printers.ptyper
 import reporting.trace
@@ -106,7 +109,7 @@ class PreciseTyping1 extends MacroTransform with IdentityDenotTransformer { this
         ).transform(tree.pred)
       }
 
-      val ddef = DefDef(predMethSym, syntheticBody(ctx.withOwner(predMethSym))).withPos(ctx.owner.pos.focus)
+      val ddef = DefDef(predMethSym, syntheticBody(ctx.withOwner(predMethSym))).withPos(tree.pos)
       predicateMethods.getOrElseUpdate(clazz, ListBuffer.empty).append(ddef)
     }
 
@@ -141,11 +144,9 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
     val unit = ctx.compilationUnit
     val tree1 = extractingTyper.typedExpr(unit.tpdTree)
 
-    if ((ptyper ne config.Printers.noPrinter) && extractingTyper.extractedMethods.nonEmpty) {
-      ptyper.println(s"[[ PTyper extractable methods: ]]")
-      for (sym <- extractingTyper.extractedMethods)
-        ptyper.println(s"* ${sym.fullName}")
-    }
+    if (ctx.reporter.hasErrors)
+      return
+    ptCtx.setReadyToExtract()
 
     ptyper.println(printing.Highlighting.Cyan(s"\n === CHECKING TYPER === \n"))
     val ctx1 = checkingTyper.preciseTypingContext(ctx.fresh)
@@ -159,26 +160,22 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
   /* Components */
 
   class ExtractingTyper extends PreciseTyper with NoChecking {
-    val extractedMethods: ListBuffer[Symbol] = ListBuffer.empty
-
-    private def extractMethod(tree: DefDef)(implicit ctx: Context): Unit = {
-      val sym = tree.symbol
-      try {
-        ptCtx.extractMethod(tree)
-        extractedMethods.append(sym)
-      } catch {
-        case ex: ExtractionException => sym.name match {
-          case PredicateName(_, _) =>
-            throw new AssertionError(s"Failed to extract predicate method: ${sym.fullName}", ex)
-          case _ =>
-        }
+    def addExtractionAnnot(tree: DefDef, sym: Symbol)(implicit ctx: Context): Unit = {
+      if (!sym.is(Stable)) {
+        ctx.error(i"Cannot extract impure method (you may use @assumePure to skip this check).", tree.pos)
+      } else if (!sym.isEffectivelyFinal) {
+        ctx.error(i"Can only extract a method if it is effectively final.", tree.pos)
+      } else if (!tree.rhs.tpe.isStable) {
+        ctx.error(i"Cannot extract method whose body type is unstable: ${tree.rhs.tpe}", tree.pos)
+      } else {
+        sym.addAnnotation(Annotation(ptDefn.ExtractableAnnot, tree.rhs))
       }
     }
 
     override def typedDefDef(tree: untpd.DefDef, sym: Symbol)(implicit ctx: Context): DefDef = {
       val tree1 = super.typedDefDef(tree, sym)
-      if (sym.is(Stable) && sym.isEffectivelyFinal)
-        extractMethod(tree1)
+      if (sym.hasAnnotation(defn.ExtractAnnot))
+        addExtractionAnnot(tree1, sym)
       tree1
     }
 
@@ -197,7 +194,80 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
     def preciseTypingContext(ctx: FreshContext): FreshContext =
       ctx.setTypeComparerFn(ctx => new PreciseTypeComparer(ctx, this))
 
+    /** Additional state during typing **/
+
+    protected var _pathConditions: List[PathCond] = List.empty
+    final def pathConditions: List[PathCond] = _pathConditions
+
+    protected var _currentTree: Tree = _
+    final def currentTree: Tree = _currentTree
+    final def currentTreePos: Position = if (_currentTree != null) _currentTree.pos else NoPosition
+
+
+    /** Path conditions **/
+
+    // TODO(gsps): Exchange scala.Unit for a dedicated singleton type in the phantom type hierarchy
+    protected def collectPathConditions(tree: untpd.DefDef, sym: Symbol)(implicit ctx: Context): List[PathCond] = {
+      // Quasi-inverse of MethodType.fromSymbols: eliminates ParamRefs and replaces by TermRefs to tree's vparamss
+      def disintegrateParams(args0: List[Type]): List[Type] = {
+        val args = args0.toBuffer
+        def rec(methTpe: Type, vparamss: List[List[untpd.ValDef]]): Unit = methTpe match {
+          case methTpe: MethodType =>
+            val termRefs = vparamss.head.map(_.symbol.termRef)
+            args.indices.foreach(i => args(i) = args(i).substParams(methTpe, termRefs))
+            rec(methTpe.resultType, vparamss.tail)
+          case _ =>
+        }
+        rec(sym.info.stripMethodPrefix, tree.vparamss)
+        args.toList
+      }
+      // Replaces SubjectSentinel by NoType and eliminates ParamRefs so we can extract the predicate as a normal call.
+      def toPathCondition(tp: PredicateRefinedType): RefType =
+        (tp.predicate: @unchecked) match {
+          case pred @ AppliedTermRef(fn, sentinel :: args1) =>
+            val args2 = disintegrateParams(args1)
+            val unitLit = ConstantType(core.Constants.Constant(()))
+            Utils.ensureStableRef(pred.derivedAppliedTerm(fn, unitLit :: args2))
+        }
+
+      sym.info.stripMethodPrefix match {
+        case methTpe: MethodType =>
+          val pcs: ListBuffer[PathCond] = ListBuffer.empty
+          for (tp <- methTpe.paramInfoss.flatten)
+            tp.widen match {
+              case tp: PredicateRefinedType if tp.parent isRef defn.UnitClass => pcs.append((true, toPathCondition (tp)))
+              case _ =>
+            }
+          pcs.toList
+        case _ =>
+          List.empty
+      }
+    }
+
+    override def typedDefDef(tree: untpd.DefDef, sym: Symbol)(implicit ctx: Context): DefDef = {
+      // Drop existing path conditions and add those coming from special evidence parameters
+      val saved = _pathConditions
+      _pathConditions = collectPathConditions(tree, sym)
+      try { super.typedDefDef(tree, sym) } finally { _pathConditions = saved }
+    }
+
+    override def typedIf(tree: untpd.If, pt: Type)(implicit ctx: Context): Tree = track("typedIf") {
+      val cond1 = typed(tree.cond, defn.BooleanType)
+      val thenp2 :: elsep2 :: Nil = harmonic(harmonize) {
+        val condTp = Utils.ensureStableRef(cond1.tpe, Utils.nme.PC_SUBJECT)
+        _pathConditions = (true, condTp) :: _pathConditions
+        val thenp1 = typed(tree.thenp, pt.notApplied)
+        _pathConditions = (false, condTp) :: _pathConditions.tail
+        val elsep1 = typed(tree.elsep orElse (untpd.unitLiteral withPos tree.pos), pt.notApplied)
+        _pathConditions = _pathConditions.tail
+        thenp1 :: elsep1 :: Nil
+      }
+      assignType(untpd.cpy.If(tree)(cond1, thenp2, elsep2), thenp2, elsep2)
+    }
+
+
     /** Restore infos of those symbols that had temporarily received precise types */
+
     private def restoreImpreciseSymDenot(sym: Symbol)(implicit ctx: Context): Unit = {
       val oldDenot = sym.denot(ctx.withPhase(thisPhase.prev))
       if (sym.denot ne oldDenot) {
@@ -211,6 +281,7 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
       restoreImpreciseSymDenot(sym)
       super.typedValDef(vdef, sym)
     }
+
 
     // TODO(gsps): Factor out logic in adapt that is shared with TreeChecker
     override def adapt(tree: Tree, pt: Type, locked: TypeVars)(implicit ctx: Context) = {
@@ -229,6 +300,100 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
         _currentTree = saved
       }
       tree
+    }
+
+
+    /** PreciseTypeComparer **/
+
+    /**
+      * A TypeComparer for detecting (and indirectly discharging) predicate proof obligations.
+      *
+      * This TypeComparer should produce a sufficient set of proof obligations under the assumption that is is called
+      * with all the subtyping checks that must succeed for the original program to be type-safe. We effectively rely on
+      * two assumptions:
+      *   - ReTyper does the right thing and re-issues all such subtyping checks for a given compilation unit.
+      *   - isSubType(tp1, tp2) only depends positively on isPredicateSubType(tp1', tp2') where tp1' and tp2' are part
+      *       of tp1 and tp2, respectively.
+      *   - The precise re-typing of certain trees done in PreciseTyping phases does not change the set of necessary
+      *       checks. (See `PreciseTyping1` for an example involving the narrowing of ValDefs' underlying types.)
+      *
+      * */
+    class PreciseTypeComparer private[ptyper] (initctx: Context, ptyper: CheckingTyper) extends core.TypeComparer(initctx)
+    {
+      import Types.IteType
+
+      frozenConstraint = true
+
+      private[this] var conservative: Boolean = false
+
+      private def conservatively[T](op: => T): T = {
+        val saved = conservative
+        conservative = true
+        try { op }
+        finally { conservative = saved }
+      }
+
+      private[this] var lastCheckTp1: Type = _
+      private[this] var lastCheckTp2: PredicateRefinedType = _
+      private[this] var lastCheckResult: Boolean = false
+
+      @inline protected def cacheLastCheck(tp1: Type, tp2: PredicateRefinedType)(op: => Boolean): Boolean =
+        if ((tp1 eq lastCheckTp1) && (tp2 eq lastCheckTp2)) lastCheckResult
+        else {
+          lastCheckTp1 = tp1
+          lastCheckTp2 = tp2
+          lastCheckResult = op
+          lastCheckResult
+        }
+
+      override protected def isPredicateSubType(tp1: Type, tp2: PredicateRefinedType) =
+        trace(i"isPredicateSubType $tp1 vs $tp2", config.Printers.ptyper)
+        {
+          def checkTrivial(tp1: Type, tp2: PredicateRefinedType): Boolean =
+            tp1.widenTermRefExpr eq tp2
+
+          def checkSemantic(tp1: Type, tp2: PredicateRefinedType): Boolean =
+            ptCtx.checkSubtype(ptyper.pathConditions, tp1, tp2, pos = ptyper.currentTreePos) match {
+              case CheckResult.Valid => true
+              case CheckResult.NotValid => false
+              case _ => ctx.warning(i"Result of ptyper check $tp1 <:< $tp2 is unknown."); false
+            }
+
+          cacheLastCheck(tp1, tp2) {
+            if (checkTrivial(tp1, tp2)) true
+            else if (isInLubOrGlb || conservative) false
+            else (tp1 <:< tp2.parent) && checkSemantic(tp1, tp2)
+          }
+        }
+
+      override def isSubType(tp1: Type, tp2: Type): Boolean = {
+        (tp1.isInstanceOf[IteType] && conservatively { super.isSubType(tp1.asInstanceOf[IteType].upperBound, tp2) }) ||
+        (tp2.isInstanceOf[IteType] && conservatively { super.isSubType(tp1, tp2.asInstanceOf[IteType].lowerBound) }) ||
+          super.isSubType(tp1, tp2)
+      }
+
+      /* The various public methods of TypeComparer that we may or may not want to influence. */
+
+//      override def hasMatchingMember(name: Name, tp1: Type, tp2: RefinedType): Boolean =
+//        unsupported("hasMatchingMember")
+//
+//      override def matchingParams(lam1: MethodOrPoly, lam2: MethodOrPoly): Boolean =
+//        unsupported("matchingParams")
+//
+//      final def matchesType ???
+//      final def andType ???
+//      final def orType ???
+//
+//      override def lub(tp1: Type, tp2: Type, canConstrain: Boolean = false) =
+//        conservatively { super.lub(tp1, tp2, canConstrain) }
+//
+//      override def glb(tp1: Type, tp2: Type) =
+//        conservatively { super.glb(tp1, tp2) }
+
+      override def addConstraint(param: TypeParamRef, bound: Type, fromBelow: Boolean): Boolean =
+        unsupported("addConstraint")
+
+      override def copyIn(ctx: Context) = new PreciseTypeComparer(ctx, ptyper)
     }
   }
 }

@@ -4,6 +4,7 @@ package ptyper
 import core.Contexts.Context
 import core.Decorators._
 import core.Names.Name
+import core.Symbols.defn
 import core.Types._
 
 
@@ -19,6 +20,7 @@ object Utils {
     val sb = StringBuilder.newBuilder
     def doPrefix(tp: Type): Unit = tp match {
       case NoPrefix => //
+      case ThisType(tref) if tref.typeSymbol == defn.EmptyPackageClass =>
       case tp: SingletonType => doRef(tp); sb.append(".")
       case _ => sb.append("<???>.")
     }

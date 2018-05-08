@@ -7,11 +7,11 @@ import Utils.{checkErrorType, normalizedApplication}
 
 import core.Contexts.Context
 import core.Decorators._
-import core.Flags.Stable
+import core.Flags.{EmptyFlags, Method, Stable, TypeParam}
 import core.Names.{Name, TermName}
 import core.NameKinds
 import core.StdNames.nme
-import core.Symbols.{defn, ClassSymbol, Symbol, NoSymbol}
+import core.Symbols.{defn, ClassSymbol, Symbol}
 import core.Types._
 import reporting.diagnostic.Message
 import util.{NoSourcePosition, SourcePosition}
@@ -19,14 +19,12 @@ import util.{NoSourcePosition, SourcePosition}
 import config.Printers.ptyper
 import reporting.trace
 
-import inox.{trees => ix}
-import inox.InoxProgram
-
 import scala.annotation.tailrec
+import scala.collection.mutable.{Map => MutableMap}
 
 
 class Extractor(_xst: ExtractionState, _ctx: Context)
-  extends ExtractorBase with TypeExtractor with ExprExtractor with MethodExtractor
+  extends ExtractorBase with TypeExtractor with ClassExtractor with ExprExtractor
 {
   implicit val ctx: Context = _ctx
   implicit val xst: ExtractionState = _xst
@@ -34,143 +32,370 @@ class Extractor(_xst: ExtractionState, _ctx: Context)
   def copyInto(newCtx: Context): Extractor =
     new Extractor(xst, newCtx)
 
+
   /* Solver interface */
 
-  final def binding(refTp: RefType): Cnstr = trace(i"Extractor#binding $refTp", ptyper)
+  final def query(pcs: List[PathCond], rhsTp: PredicateRefinedType, subject: RefType): Expr = {
+    val predExpr = topLevelPredicate(rhsTp, subject)
+
+    implicit val xctx = initialExtractionContext(ApproxBehavior.Warn)
+    val pcExpr = pathConditions(pcs)
+    val query0 = trees.Implies(pcExpr, checkNoApproximatedMethodCalls(predExpr))
+    val query1 = closeOverEphemeralRefs(query0)
+    val query2 = closeOverThisRefs(query1)
+    query2
+  }
+
+  final protected def pathConditions(pcs: List[PathCond])(implicit xctx: ExtractionContext): Expr =
+    pcs.foldLeft(TrueExpr: Expr) { case (expr, (notNegated, condTp)) =>
+      val cnstr = binding(condTp)
+      trees.and(expr, if (notNegated) cnstr.expr else trees.Not(cnstr.expr))
+    }
+
+  final protected def binding(refTp: RefType)(implicit xctx: ExtractionContext): Cnstr =
+    trace(i"Extractor#binding $refTp", ptyper)
   {
-    implicit val xctx = ExtractionContext.default
     ensureRefTypeRegistered(refTp)
     assert(!refTp.underlying.isInstanceOf[ExprType], i"Unexpected ExprType in binding: $refTp")
     val expr = typ(refTp.underlying)
-    Cnstr(refTp, expr, usedBindings(expr))
+    Cnstr(refTp, expr)
   }
 
-  final def topLevelPredicate(predRefinedType: PredicateRefinedType, subject: RefType): (Expr, Set[RefType]) =
+  final def topLevelPredicate(predRefinedType: PredicateRefinedType, subject: RefType): Expr =
   {
-    implicit val xctx = ExtractionContext.default
+    implicit val xctx = initialExtractionContext(ApproxBehavior.Throw)
     ensureRefTypeRegistered(subject)
     val predExpr = predicate(predRefinedType.predicate, subject)
-    (predExpr, usedBindings(predExpr))
+    predExpr
   }
 
-  protected def ensureRefTypeRegistered(refTp: RefType)(implicit xctx: ExtractionContext): Unit =
-    getOrCreateRefVar(checkErrorType(refTp))  // force creation of RefType -> Var binding
+  private[this] val topLevelThisRefs = MutableMap.empty[Id, Var]
+  @inline final protected def topLevelThisRef(cls: Id): Var =
+    topLevelThisRefs.getOrElseUpdate(cls, trees.Variable.fresh(s"${cls}_this", trees.ClassType(cls)))
 
-  protected def usedBindings(expr: Expr): Set[RefType] =
-    ix.exprOps.variablesOf(expr).map(xst.refVarToType) ++
-      ix.exprOps.functionCallsOf(expr).flatMap(fi => xst.funIdToStaticBindings(fi.id))
+  final protected def closeOverThisRefs(body: Expr): Expr =
+    trees.exprOps.preMap {
+      case trees.ClassThis(cls) => Some(topLevelThisRef(cls))
+      case _ => None
+    } (body)
+
+  // NOTE: We can only check this once the symbols for our query are complete.
+  final protected def checkNoApproximatedMethodCalls(expr: Expr): Expr = {
+    val syms = xst.program.symbols
+    trees.exprOps.methodCallsOf(expr).foreach { mi =>
+      if (syms.getFunction(mi.method).flags contains trees.HasImpreciseBody)
+        throw ApproximationException(s"Rhs predicate may not be extracted with approximate method calls.", ctx.tree.pos)
+    }
+    expr
+  }
+
+  protected def initialExtractionContext(approxBehavior: ApproxBehavior): ExtractionContext =
+    ExtractionContext(approxBehavior, ctx.owner.enclosingMethod, allowOnlySimpleRefs = false)
+
+  protected def ensureRefTypeRegistered(refTp: RefType)(implicit xctx: ExtractionContext): Unit =
+    getOrCreateAdHocRef(checkErrorType(refTp), ephemeral = true)  // force creation of RefType binding
 }
 
+
+protected sealed case class EphemeralRef(toVariable: Var, body: Expr) {
+  def dependencies(xst: ExtractionState): Set[Var] = trees.exprOps.collect {
+    case v: trees.Variable => xst.getRefTypeFromVar(v).map(_ => v).toSet
+    case _ => Set.empty[Var]
+  } (body)
+}
 
 /* "Persistent" state between calls to the public interface of Extractor. */
 protected class ExtractionState {
   import inox.utils.Bijection
-  import scala.collection.mutable.{Map => MutableMap}
+  import scala.collection.mutable.{Map => MutableMap, Set => MutableSet}
 
+  private val refType2GlobalRef = new Bijection[RefType, Id]
   private val refType2Var = new Bijection[RefType, Var]
-  private val method2FunId = new Bijection[Symbol, Id]
-  private val funId2FunDef = new Bijection[Id, ix.FunDef]
-  private val funId2StaticBindings = MutableMap.empty[Id, Set[RefType]]
+  private val var2EphemeralRef = MutableMap.empty[Var, EphemeralRef]
+  private val symbol2Id = new Bijection[Symbol, Id]
 
-  private var _inoxProgram: InoxProgram = _
-  def inoxProgram: InoxProgram = {
-    if (_inoxProgram == null) _inoxProgram = InoxProgram(funId2FunDef.bSet.toSeq, Seq.empty)
-    _inoxProgram
+  private var symbols: trees.Symbols = trees.NoSymbols
+  private val idUnderExtraction: MutableSet[Id] = MutableSet.empty
+
+  @inline private def updateSymbols(newSymbols: trees.Symbols): Unit = {
+    symbols = newSymbols
+    _program = null
+  }
+
+  private var _program: Program = _
+  def program: Program = {
+    if (_program == null) _program = Program(symbols)
+    _program
   }
 
 
-  def refTypeToVar(refTp: RefType): Var =
-    refType2Var.toB(refTp)
+  def getOrCreateGlobalRef(refTp: RefType)(compute: => trees.FunDef): Expr = {
+    val fid = refType2GlobalRef.cachedB(refTp) {
+      val newFd = compute
+      updateSymbols(symbols.withFunctions(Seq(newFd)))
+      newFd.id
+    }
+    trees.FunctionInvocation(fid, Seq.empty, Seq.empty)
+  }
 
-  def getOrCreateRefVar(refTp: RefType)(computeRefVar: => Var): Var =
-    refType2Var.cachedB(refTp)(computeRefVar)
+  def getOrCreateEphemeralRef(refTp: RefType)(compute: => EphemeralRef): EphemeralRef = {
+    val v = refType2Var.cachedB(refTp) {
+      val eref = compute
+      var2EphemeralRef(eref.toVariable) = eref
+      eref.toVariable
+    }
+    var2EphemeralRef(v)
+  }
 
-  def refVarToType(refVar: Var): RefType =
-    refType2Var.toA(refVar)
+  def getRefTypeFromVar(v: Var): Option[RefType] =
+    refType2Var.getA(v)
+
+  def varToEphemeralRef(v: Var): EphemeralRef =
+    var2EphemeralRef(v)
 
 
-  def getFunId(sym: Symbol): Option[Id] =
-    method2FunId.getB(sym)
-
-  def addMethod(sym: Symbol)(fdBuilder: Id => (ix.FunDef, Set[RefType]))(implicit ctx: Context): Id =
-    method2FunId.cachedB(sym) {
-      val id = FreshIdentifier(sym.fullName.toString)
-      val (fd, staticBindings) = fdBuilder(id)
-      funId2FunDef.cachedB(id)(fd)
-      funId2StaticBindings.put(id, staticBindings)
-      _inoxProgram = null
-      id
+  // NOTE: From SymbolsContext.scala in the dotty frontend of stainless:
+  def symbolToId(sym: Symbol)(implicit ctx: Context): Id =
+    symbol2Id.cachedB(sym) {
+      val name: String =
+        if (sym is TypeParam) {
+          sym.showName
+        } else {
+          sym.fullName.toString.trim.split("\\.")
+            .filter(_ != "package$")
+            .map(name => if (name.endsWith("$")) name.init else name)
+            .mkString(".")
+        }
+      FreshIdentifier(name)
     }
 
-  def funIdToStaticBindings(id: Id): Set[RefType] =
-    funId2StaticBindings(id)
+  def idToSymbol(id: Id): Symbol =
+    symbol2Id.toA(id)
+
+
+  def addClassIfNew(id: Id)(compute: => (trees.ClassDef, Seq[trees.FunDef])): Unit =
+    if (!idUnderExtraction.contains(id)) {
+      idUnderExtraction.add(id)
+      val (cd, newFunctions) = compute
+      updateSymbols(symbols.withClasses(Seq(cd)).withFunctions(newFunctions))
+    }
 }
 
 
 /* Configuration and ephemeral state built up as we recursively extract a type. */
-protected case class ExtractionContext(approxMode: ApproxMode) {
-  import ApproxMode._
+protected case class ExtractionContext(approxBehavior: ApproxBehavior,
+                                       owner: Symbol, // The enclosing method's symbol
+                                       allowOnlySimpleRefs: Boolean,
+                                       termParams: Map[Symbol, Var] = Map.empty,
+                                       methodParams: Map[TermParamRef, Var] = Map.empty) {
+  def extractionError(msg: Message, pos: SourcePosition = NoSourcePosition,
+                      cause: Exception = null)(implicit ctx: Context) =
+    throw new ExtractionException(msg, pos, cause)
 
-  def extractionError(msg: Message, pos: SourcePosition = NoSourcePosition)(implicit ctx: Context) =
-    throw new ExtractionException(msg, pos)
+  def approximateOrFail(msg: Message, pos: SourcePosition = NoSourcePosition, isMethodCall: Boolean = false)(
+    fallback: => Expr)(implicit ctx: Context) = approxBehavior(msg, pos, fallback, isMethodCall)
 
-  def recoverableExtractionError[T](msg: Message, pos: SourcePosition = NoSourcePosition)(
-      fallback: => T)(implicit ctx: Context) =
-    approxMode match {
-      case Throw => throw new ExtractionException(msg, pos)
-      case Warn => ctx.warning(msg, pos); fallback
-      case Silent => fallback
+  def withTermParams(newTermParams: Iterable[(Symbol, Var)]) =
+    copy(termParams = termParams ++ newTermParams)
+  def withMethodParams(newMethodParams: Iterable[(TermParamRef, Var)]) =
+    copy(methodParams = methodParams ++ newMethodParams)
+}
+
+sealed trait ApproxBehavior {
+  def apply(msg: Message, pos: SourcePosition, apprx: => Expr, isMethodCall: Boolean)(implicit ctx: Context): Expr
+}
+
+object ApproxBehavior {
+  case object Throw extends ApproxBehavior {
+    def apply(msg: Message, pos: SourcePosition, apprx: => Expr, isMethodCall: Boolean)(implicit ctx: Context): Expr =
+      throw ApproximationException(msg, pos)
+  }
+
+  case object Warn extends ApproxBehavior {
+    def apply(msg: Message, pos: SourcePosition, apprx: => Expr, isMethodCall: Boolean)(implicit ctx: Context): Expr = {
+      val a = apprx
+      ctx.warning(i"$msg (approximated as $a)", pos)
+      a
     }
-}
+  }
 
-object ExtractionContext {
-  def default: ExtractionContext = ExtractionContext(ApproxMode.Warn)
-}
+  class WarnAndStore(ignoreMethodCalls: Boolean) extends ApproxBehavior {
+    private[this] var _didApproximate = false
+    def didApproximate = _didApproximate
 
-sealed trait ApproxMode
-object ApproxMode {
-  case object Throw extends ApproxMode
-  case object Warn extends ApproxMode
-  case object Silent extends ApproxMode
+    def apply(msg: Message, pos: SourcePosition, apprx: => Expr, isMethodCall: Boolean)(implicit ctx: Context): Expr =
+      if (!isMethodCall || !ignoreMethodCalls) {
+        _didApproximate = true
+//        Warn(msg, pos, apprx, isMethodCall)
+        val a = Warn(msg, pos, apprx, isMethodCall); println(s"APPROX! $msg  ->  $a"); a
+      } else {
+        apprx
+      }
+  }
 }
 
 
 trait TypeExtractor { this: ExtractorBase =>
   implicit val xst: ExtractionState
 
-  import ExtractorUtils.freshVar
+  protected def freshVar(tp: Type): Var =
+    ExtractorUtils.freshVar(ixType(tp), Utils.qualifiedNameString(tp))
 
-  protected def freshSubject(tp: Type, name: Name = ExtractorUtils.nme.VAR_AUX)(implicit xctx: ExtractionContext): Var =
-    freshVar(ixType(tp.classSymbol.typeRef), name.toString)
+  protected def freshSubject(tp: Type, name: Name): Var =
+    ExtractorUtils.freshVar(ixType(tp), name.toString)  // NOTE: Removed tp.classSymbol.typeRef / ixType should do that
 
-  protected def getOrCreateRefVar(refTp: RefType)(implicit xctx: ExtractionContext): Var =
-    xst.getOrCreateRefVar(refTp) {
-      val itp = ixType(refTp)
-      freshVar(itp, Utils.qualifiedNameString(refTp))
+  def ixType(tp: Type): trees.Type = {
+    @inline def ignoreInAnd(sym: Symbol): Boolean =
+      (sym == defn.SingletonClass) || (sym == defn.ProductClass)
+
+    def rec(tp: Type): trees.Type = tp match {
+      case tp if tp.typeSymbol == defn.CharClass    => trees.CharType()
+      case tp if tp.typeSymbol == defn.ByteClass    => trees.Int8Type()
+      case tp if tp.typeSymbol == defn.ShortClass   => trees.Int16Type()
+      case tp if tp.typeSymbol == defn.IntClass     => trees.Int32Type()
+      case tp if tp.typeSymbol == defn.LongClass    => trees.Int64Type()
+      case tp if tp.typeSymbol == defn.BooleanClass => trees.BooleanType()
+      case tp if tp.typeSymbol == defn.UnitClass    => trees.UnitType()
+
+      case AppliedTermRef(fnTp, List(_, thenTp, _)) if fnTp.termSymbol == ptDefn.iteMethod =>
+        rec(thenTp)  // TODO: LUB
+
+      case _: TermRef | _: AppliedTermRef | _: ExprType => rec(tp.widen)
+
+      case ThisType(tref) => rec(tref)
+
+      case defn.FunctionOf(from, to, _, _) => trees.FunctionType(from map rec, rec(to))
+
+      case tp: TypeRef if tp.symbol.isClass =>
+        assert(!defn.isFunctionClass(tp.classSymbol), s"Function classes should be extracted before: $tp")
+        trees.ClassType(xst.symbolToId(tp.classSymbol))
+
+      case tp: TypeRef => rec(tp.superType)
+
+      case AndType(tp1, otherTp) if ignoreInAnd(otherTp.typeSymbol) => rec(tp1)
+      case AndType(otherTp, tp2) if ignoreInAnd(otherTp.typeSymbol) => rec(tp2)
+
+      case TypeAlias(alias) => rec(alias)
+      case TypeBounds(_, hi) => rec(hi)
+
+      case tp: TypeProxy => rec(tp.underlying)
+
+      case tp => throw ExtractionException(s"Cannot extract ixType of ${tp.show} ($tp)", ctx.tree.pos)
     }
+    rec(tp)
+  }
+}
 
-  def ixType(tp: Type)(implicit xctx: ExtractionContext): ix.Type = {
-    @tailrec def findIteResultType(tp: Type): Option[Type] = tp match {
-      case AppliedTermRef(fnTp, List(_, thenTp, _)) if fnTp.termSymbol == ptDefn.iteMethod => Some(thenTp)  // TODO: LUB
-      case tp: TypeProxy => findIteResultType(tp.underlying)
-      case _ => None
-    }
 
-    @inline def ixTypeBasic(tp: Type): ix.Type =
-      tp.widenDealias match {
-        case tpe if tpe.typeSymbol == defn.CharClass    => ix.CharType()
-        case tpe if tpe.typeSymbol == defn.ByteClass    => ix.Int8Type()
-        case tpe if tpe.typeSymbol == defn.ShortClass   => ix.Int16Type()
-        case tpe if tpe.typeSymbol == defn.IntClass     => ix.Int32Type()
-        case tpe if tpe.typeSymbol == defn.LongClass    => ix.Int64Type()
-        case tpe if tpe.typeSymbol == defn.BooleanClass => ix.BooleanType()
-        case tpe if tpe.typeSymbol == defn.UnitClass    => ix.UnitType()
+trait ClassExtractor {this: Extractor =>
+  // A few simple checks to ensure that we only extract what we can currently support (without method lifting etc.)
+  private[semantic] def checkSimpleReferencesOnly(owner: Symbol, expr: Expr, assert: Boolean): Unit = {
+    def fail(msg: String) = if (assert) throw new AssertionError(msg) else throw ExtractionException(msg, owner.pos)
 
-        case tpe => xctx.extractionError(s"Cannot extract ixType of ${tpe.show} ($tpe)")
+    trees.exprOps.postTraversal {
+      case v: trees.Variable =>
+        xst.getRefTypeFromVar(v).foreach {
+          case refTp: NamedType if !isSimpleReference(owner, refTp.symbol) =>
+            fail(i"Extracted unsupported complex reference to ${refTp.symbol} in: $expr")
+          case _ =>
+        }
+      case trees.ClassThis(cls) if owner.enclosingClass != xst.idToSymbol(cls) =>
+        fail(i"Extracted unsupported this reference to ${xst.idToSymbol(cls)} in: $expr")
+      case _ =>
+    }(expr)
+  }
+
+  protected def ensureClassExtracted(csym: ClassSymbol): Unit = trace(i"Extractor#ensureClassExtracted $csym", ptyper)
+  {
+    val cid = xst.symbolToId(csym)
+    xst.addClassIfNew(cid) {
+      def allParamRefs(tp: Type): List[TermParamRef] = tp match {
+        case tp: MethodType => tp.paramRefs ::: allParamRefs(tp.resType)
+        case _ => Nil
       }
 
-    ixTypeBasic(findIteResultType(tp).getOrElse(tp))
+      def toParamValDefs(paramRefs: List[TermParamRef]): List[trees.ValDef] =
+        paramRefs.map(freshVar(_).toVal)
+
+      def funDefFromDenot(denot: core.Denotations.SingleDenotation): trees.FunDef = {
+        val msym = denot.symbol
+        val fid = xst.symbolToId(msym)
+        val isPredicateMethod = ExtractorUtils.isPredicateMethod(msym)
+
+        var flags: Seq[trees.Flag] = Seq(trees.IsMemberOf(cid))
+        if (msym is Stable) flags +:= trees.IsPure
+        if (msym is Method) flags +:= trees.IsMethod
+
+        val paramRefs = allParamRefs(msym.info.stripMethodPrefix)
+        val params = toParamValDefs(paramRefs)
+        val resType = msym.info.finalResultType
+
+        // NOTE(gsps): A hacky way of adding appropriate bindings to the extraction context:
+        //  As done in Inliner, we recover the symbols of parameters by finding the TermRefs of the same name.
+        def recoverTermParams(bodyTp: Type)(implicit xctx: ExtractionContext): ExtractionContext = {
+          val nameToParam = (paramRefs zip params).foldLeft(Map.empty[Name, trees.ValDef]) {
+            case (m, (paramRef, vd)) => m + (paramRef.paramName -> vd)
+          }
+          val bindings: Iterable[(Symbol, Var)] = bodyTp
+            // FIXME(gsps): Make sure these TermRefs are actually method parameters and are owned by msym!
+            .namedPartsWith(tp => tp.isInstanceOf[TermRef] && tp.prefix == NoPrefix && nameToParam.contains(tp.name))
+            .map(tp => tp.symbol -> nameToParam(tp.name).toVariable)
+          xctx.withTermParams(bindings)
+        }
+
+        @inline def finishBody(bodyTp: Type)(implicit xctx: ExtractionContext): Expr = {
+          val body = typ(bodyTp)
+          checkSimpleReferencesOnly(msym, body, assert = true)
+          closeOverEphemeralRefs(body)
+        }
+
+        // NOTE(gsps): We define the semantics of predicate methods to depend on the extraction status of called methods
+        val approxBehavior = new ApproxBehavior.WarnAndStore(ignoreMethodCalls = isPredicateMethod)
+        val xctx = ExtractionContext(approxBehavior, msym, allowOnlySimpleRefs = true)
+
+        val extractableOpt = msym.getAnnotation(ptDefn.ExtractableAnnot)
+        val body: Expr = extractableOpt match {
+          case Some(annot) =>
+            try {
+              val bodyTp = annot.argument(0).get.tpe
+              finishBody(bodyTp)(recoverTermParams(bodyTp)(xctx))
+            } catch {
+              case ex: ExtractionException =>
+                xctx.extractionError(s"Failed to extract $msym though it was annotated!", msym.pos, ex)
+            }
+
+          case None =>
+            finishBody(resType)(xctx.withMethodParams(paramRefs zip params.map(_.toVariable)))
+        }
+
+        if (approxBehavior.didApproximate || extractableOpt.isEmpty) {
+          assert(!isPredicateMethod, s"Predicate methods should never be approximated: $msym")
+          flags +:= trees.HasImpreciseBody
+        }
+
+        new trees.FunDef(fid, Seq.empty, params, ixType(resType), body, flags)
+      }
+
+      val cnstrParams: Seq[trees.ValDef] =
+        toParamValDefs(allParamRefs(csym.denot.primaryConstructor.info.stripMethodPrefix))
+
+      val methods: Seq[trees.FunDef] =
+        csym.classInfo.allMembers
+          .filter(d => d.isTerm && d.symbol.owner == csym)
+          .map(funDefFromDenot)
+
+      val flags: Seq[trees.Flag] =
+        if (csym.enclosingClass.exists) Seq(trees.IsMemberOf(xst.symbolToId(csym.enclosingClass))) else Seq.empty
+
+      val cd = trees.ClassDef(cid, cnstrParams, flags)
+      (cd, methods)
+    }
   }
+
+  // TODO(gsps): Do this at a finer granularity
+  // TODO(gsps): Make sure `msym.enclosingClass` is the class that actually defines the method
+  protected def ensureMethodExtracted(msym: Symbol): Unit =
+    ensureClassExtracted(msym.enclosingClass.asClass)
 }
 
 
@@ -192,80 +417,182 @@ trait ExprExtractor { this: Extractor =>
   /** Extracts the Cnstr corresponding to a Dotty Type.
     *  Precondition: Any recursive self-references to `tp` have already been fixed, e.g., via TypeComparer.fixRecs.
     */
-  final protected def typ(tp: Type)(implicit xctx: ExtractionContext): Expr = trace(i"Extractor#typ $tp", ptyper)
+  final protected def typ(tp: Type)(implicit xctx: ExtractionContext): Expr =
+    trace(i"Extractor#typ ${tp.toString}", ptyper)
   {
-    // RefType as translated under the assumption that it is stable.
-    def refType(refTp: RefType) =
-      getOrCreateRefVar(refTp)  // force creation of RefType -> Var binding
+    def termRef(tp: TermRef): Expr = {
+      def ephemeralSupported =
+        tp.prefix == NoPrefix && (!xctx.allowOnlySimpleRefs || isSimpleReference(xctx.owner, tp.symbol))
 
-    def termRef(tp: TermRef): Expr =
-      if (tp.isStable) refType(tp)
-      else { val tp1 = tp.underlying; assert(tp1.isValueType); typ(tp1) }
+      xctx.termParams.get(tp.symbol) match {
+        case Some(e) => e
+
+        case None if tp.isStable =>
+          if (tp.symbol.isStatic) getOrCreateAdHocRef(tp, ephemeral = false)
+          else if (tp.prefix == NoPrefix)
+            if (ephemeralSupported) getOrCreateAdHocRef(tp, ephemeral = true)
+            else xctx.extractionError(s"Referencing bindings in other methods is unsupported", ctx.tree.pos)
+          else trees.ClassSelector(typ(tp.prefix), getMethodId(tp.symbol))
+
+        case None =>
+          val tpUnderlying = tp.underlying
+          assert(tpUnderlying.isValueType)
+          typ(tpUnderlying)
+      }
+    }
+
+    def thisType(clazz: Symbol): Expr = {
+      // Try to replace ThisType by a static TermRef, if possible
+      val sourceModule = clazz.sourceModule
+      def classThisSupported = !xctx.allowOnlySimpleRefs || clazz == xctx.owner.enclosingClass
+
+      if (sourceModule.exists)     termRef(sourceModule.termRef)
+      else if (classThisSupported) trees.ClassThis(getClassId(clazz))
+      else
+        xctx.approximateOrFail(s"Referencing outer classes is unsupported.", ctx.tree.pos)(
+          anyValueOfType(clazz.typeRef))
+    }
+
+    def appliedType(tp: AppliedType): Expr =
+      if (defn.isFunctionType(tp)) anyValueOfType(tp)
+      else                         typ(tp.superType)  // FIXME(gsps): Unsound? (Should this be `tp.lowerBound` in the rhs extraction?)
 
     normalizedApplication(checkErrorType(tp.widenExpr.dealias)) match {
       case tp: ConstantType   => constantType(tp)
       case tp: TermRef        => termRef(tp)
-      case tp: RefType        => assert(tp.isStable); refType(tp)
-      case _: TypeRef         => anyValueOfType(tp)
+      case tp: TermParamRef   => xctx.methodParams(tp)
+      case tp: ThisType       => thisType(tp.cls)
+      case tp: SuperType      => ???
+      case tp: SkolemType     => getOrCreateAdHocRef(tp, ephemeral = true)
       case tp: AppliedTermRef => appliedTermRef(tp)
-      case _: RecType         => throw new AssertionError(s"Unexpected RecType during Extraction: $tp")
-      case _: RecThis         => throw new AssertionError(s"Unexpected RecThis during Extraction: $tp")
 
-      case tp: PredicateRefinedType => predRefinedType(tp)
+      case tp: TypeRef      => anyValueOfType(tp)  // FIXME(gsps): Unsound / Needlessly imprecise? (Should this be approximated by something like `typeComparer.bounds`?)
+      case tp: TypeParamRef => typ(ctx.typeComparer.bounds(tp).hi)  // FIXME(gsps): Unsound? (Should this be lo in the rhs extraction?)
+      case tp: AppliedType  => appliedType(tp)
 
       case tp: PreExtractedType => tp.variable
 
-      case _ => xctx.extractionError(i"Cannot extract type $tp which widens to ${tp.widenDealias}", ctx.tree.pos)
+      case _: RecType         => throw new AssertionError(s"Unexpected RecType during Extraction: $tp")
+      case _: RecThis         => throw new AssertionError(s"Unexpected RecThis during Extraction: $tp")
+      case _: SingletonType   => throw new AssertionError(s"Unhandled SingletonType: $tp")
+
+      case tp: PredicateRefinedType => predRefinedType(tp)
+
+      case _ => xctx.extractionError(i"Cannot extract type $tp (${tp.toString}) which widens to ${tp.widenDealias}",
+        ctx.tree.pos)
     }
   }
 
-  final def anyValueOfType(tp: Type)(implicit xctx: ExtractionContext): Expr =
-    ix.Choose(freshSubject(tp).toVal, TrueExpr)
 
-  final def constantType(tp: ConstantType): Expr = {
+  // A reference to a binding can be captured by our extraction if it is
+  //  - scope-local (binding is directly owned by the extracted method) or
+  //  - class-local (same enclosing class and enclosing class is the binding's owner) or
+  //  - global (binding has a static owner)
+  final protected def isSimpleReference(owner: Symbol, sym: Symbol): Boolean =
+    owner == sym.owner ||
+    owner.enclosingClass == sym.enclosingClass && sym.owner == sym.enclosingClass ||
+    sym.owner.isStaticOwner
+
+  final protected def getOrCreateAdHocRef(refTp: RefType, ephemeral: Boolean)(implicit xctx: ExtractionContext): Expr =
+  {
+    def id = FreshIdentifier(Utils.qualifiedNameString(refTp))
+    def body = typ(refTp.underlying)
+    if (ephemeral) {
+      xst.getOrCreateEphemeralRef(refTp)(EphemeralRef(trees.Variable(id, ixType(refTp), Seq.empty), body)).toVariable
+    } else
+      xst.getOrCreateGlobalRef(refTp)(
+        new trees.FunDef(id, Seq.empty, Seq.empty, ixType(refTp), body, Seq(trees.IsGlobalBinding)))
+  }
+
+  final protected def closeOverEphemeralRefs(body: Expr)(implicit xctx: ExtractionContext): Expr = {
+    import scala.collection.mutable.{Map => MutableMap}
+    var ephemerals = Set.empty[Var]
+    var worklist: List[Var] = EphemeralRef(null, body).dependencies(xst).toList
+    var dependencies = MutableMap.empty[Var, Set[Var]]
+
+    while (worklist.nonEmpty) {
+      val v = worklist.head
+      worklist = worklist.tail
+      ephemerals = ephemerals + v
+      val deps = xst.varToEphemeralRef(v).dependencies(xst)
+      dependencies(v) = dependencies.getOrElseUpdate(v, Set.empty) ++ deps
+      worklist ++= deps diff ephemerals
+    }
+
+    val ephemeralsOrdered = inox.utils.GraphOps.topologicalSorting(dependencies.toMap) match {
+      case Right(vs) =>
+        vs
+      case Left(missingDeps) =>
+        val toRefTp = xst.getRefTypeFromVar _
+        val missingDepsMap = missingDeps.map(v => v -> dependencies(v).map(toRefTp)).toMap
+        throw new AssertionError(s"Missing dependencies: $missingDepsMap  //  $dependencies")
+    }
+
+    ephemeralsOrdered.foldRight(body) { case (bindingVar, e) =>
+      trees.Let(bindingVar.toVal, xst.varToEphemeralRef(bindingVar).body, e)
+    }
+  }
+
+
+  final protected def getMethodId(msym: Symbol)(implicit xctx: ExtractionContext): Id = {
+    ensureMethodExtracted(msym)
+    xst.symbolToId(msym)
+  }
+
+  final protected def getClassId(csym: Symbol)(implicit xctx: ExtractionContext): Id = {
+    ensureClassExtracted(csym.asClass)
+    xst.symbolToId(csym)
+  }
+
+
+  final protected def anyValueOfType(tp: Type)(implicit xctx: ExtractionContext): Expr =
+    trees.Choose(freshSubject(tp, ExtractorUtils.nme.VAR_AUX).toVal, TrueExpr)
+
+  final protected def constantType(tp: ConstantType): Expr = {
     tp.value.value match {
-      case v: Char    => ix.CharLiteral(v)
-      case v: Byte    => ix.Int8Literal(v)
-      case v: Short   => ix.Int16Literal(v)
-      case v: Int     => ix.Int32Literal(v)
-      case v: Long    => ix.Int64Literal(v)
-      case v: Boolean => ix.BooleanLiteral(v)
-      case v: Unit    => ix.UnitLiteral()
+      case v: Char    => trees.CharLiteral(v)
+      case v: Byte    => trees.Int8Literal(v)
+      case v: Short   => trees.Int16Literal(v)
+      case v: Int     => trees.Int32Literal(v)
+      case v: Long    => trees.Int64Literal(v)
+      case v: Boolean => trees.BooleanLiteral(v)
+      case v: Unit    => trees.UnitLiteral()
       case _          => throw new NotImplementedError(i"Extraction of constant $tp not yet implemented!")
     }
   }
 
-  final def appliedTermRef(tp: AppliedTermRef)(implicit xctx: ExtractionContext): Expr = {
-//    def uninterpretedExpr: Expr =
-//      if (tp.isStable) {
-//        val sym = tp.fn.termSymbol
-//        assert(sym.exists)
-//        val funId = functionRef(sym.termRef)
-//        val argExprs = typ
-//        ix.FunctionInvocation(funId, Seq.empty, )
-//      }
-//      else TrueExpr
-
-//    val expr: Expr = ix.and(resTypeExpr, uninterpretedExpr)
-//    Cnstr(tp, freshSubject(tp), expr)
-
+  // TODO(gsps): Extract constructors
+  final protected def appliedTermRef(tp: AppliedTermRef)(implicit xctx: ExtractionContext): Expr = {
     val MethodCall(fn, argss) = tp
-    val clazz = fn.prefix.widenDealias.classSymbol
+    val primitiveClazzOpt = fn.prefix.widenDealias.classSymbols.find(PrimitiveClasses.contains)
+    val isStable = tp.isStable
 
-    def warnApprox: Expr = xctx.recoverableExtractionError(
-      s"Emitted conservative approximation for operation ${fn.name}", ctx.tree.pos)(anyValueOfType(tp.resType))
+    def isExtractable(sym: Symbol) = sym.hasAnnotation(ptDefn.ExtractableAnnot)
+    def isFunctionCall(fn: TermRef) =
+      defn.isFunctionType(fn.prefix.dealias.widenSingleton) && fn.name == nme.apply
 
-    if (PrimitiveClasses.contains(clazz) && tp.isStable) primitiveOp(fn, argss, clazz)(warnApprox)
-    else if (fn.symbol.is(Stable)) methodCall(fn, argss)
-    else typ(tp.resType)
+    // NOTE(gsps): We rely on the fact that for methods without @extract we extract the result type as a body
+    def approximatedMethodCall = xctx.approximateOrFail(s"Emitted conservative approximation for method call $tp",
+      ctx.tree.pos, isMethodCall = true)(methodCall(fn, argss))
+
+    if (isStable) {
+      if (primitiveClazzOpt.isDefined)   primitiveOp(fn, argss, primitiveClazzOpt.get)
+      else if (isFunctionCall(fn))       functionCall(fn.prefix, argss)
+      else if (isExtractable(fn.symbol)) methodCall(fn, argss)
+      else                               approximatedMethodCall
+    } else {
+      typ(fn.underlying.finalResultType)  // FIXME(gsps): Safe, since the precision of our extraction agrees with Dotty?
+    }
   }
 
-  final protected def primitiveOp(fn: TermRef, argss: List[List[Type]], _clazz: Symbol = NoSymbol)(
-                                  fallback: => Expr)(implicit xctx: ExtractionContext): Expr =
+  final protected def primitiveOp(fn: TermRef, argss: List[List[Type]],
+                                  clazz: Symbol)(implicit xctx: ExtractionContext): Expr =
   {
     // Precond: `clazz` is class symbol of `fn`
     val opName: TermName = fn.name
-    val clazz: Symbol = _clazz.orElse(fn.prefix.widenDealias.classSymbol)
+
+    def fallback: Expr = xctx.approximateOrFail(
+      s"Emitted conservative approximation for primitive $opName", ctx.tree.pos)(anyValueOfType(fn.resultType))
 
     val args :: Nil = argss
     lazy val arg0Expr: Expr = typ(fn.prefix)
@@ -277,22 +604,22 @@ trait ExprExtractor { this: Extractor =>
     def binaryPrim(exprBuilder: (Expr, Expr) => Expr): Expr = exprBuilder(arg0Expr, arg1Expr)
 
     (clazz, opName, fn.widenSingleton) match {
-      case (_, nme.EQ, opTp @ MethodTpe(_, List(argTp), BooleanType)) if argTp != AnyType => binaryPrim(ix.Equals)
+      case (_, nme.EQ, opTp @ MethodTpe(_, List(argTp), BooleanType)) if argTp != AnyType => binaryPrim(trees.Equals)
       case (_, nme.NE, opTp @ MethodTpe(_, List(argTp), BooleanType)) if argTp != AnyType => binaryPrim(ixNotEquals)
 
       case (_, _, opTp @ ExprType(resTp)) if nme.NumberOpNames.contains(opName) =>
         val builder: Expr => Expr = opName match {
-          case nme.UNARY_~ => ix.BVNot
-          case nme.UNARY_- => ix.UMinus
-          case nme.UNARY_! => ix.Not
+          case nme.UNARY_~ => trees.BVNot
+          case nme.UNARY_- => trees.UMinus
+          case nme.UNARY_! => trees.Not
           case _           => return fallback
         }
         unaryPrim(builder)
 
       case (BooleanClass, _, opTp @ MethodTpe(_, List(_), resTp)) =>
         val builder: (Expr, Expr) => Expr = opName match {
-          case nme.AND | nme.ZAND => ix.And.apply
-          case nme.OR | nme.ZOR   => ix.Or.apply
+          case nme.AND | nme.ZAND => trees.And.apply
+          case nme.OR | nme.ZOR   => trees.Or.apply
           case nme.XOR            => ixNotEquals
           case _                  => return fallback
         }
@@ -300,27 +627,27 @@ trait ExprExtractor { this: Extractor =>
 
       case (IntClass, _, opTp @ MethodTpe(_, List(paramTp), resTp)) if paramTp.widenSingleton == IntType =>
         val builder: (Expr, Expr) => Expr = opName match {
-          case nme.AND  => ix.BVAnd
-          case nme.OR   => ix.BVOr
-          case nme.XOR  => ix.BVXor
-          case nme.ADD  => ix.Plus
-          case nme.SUB  => ix.Minus
-          case nme.MUL  => ix.Times
-          case nme.DIV  => ix.Division
-          case nme.MOD  => ix.Remainder
-          case nme.LSL  => ix.BVShiftLeft
-          case nme.ASR  => ix.BVAShiftRight
-          case nme.LSR  => ix.BVLShiftRight
-          case nme.LT   => ix.LessThan
-          case nme.GT   => ix.GreaterThan
-          case nme.LE   => ix.LessEquals
-          case nme.GE   => ix.GreaterEquals
+          case nme.AND  => trees.BVAnd
+          case nme.OR   => trees.BVOr
+          case nme.XOR  => trees.BVXor
+          case nme.ADD  => trees.Plus
+          case nme.SUB  => trees.Minus
+          case nme.MUL  => trees.Times
+          case nme.DIV  => trees.Division
+          case nme.MOD  => trees.Remainder
+          case nme.LSL  => trees.BVShiftLeft
+          case nme.ASR  => trees.BVAShiftRight
+          case nme.LSR  => trees.BVLShiftRight
+          case nme.LT   => trees.LessThan
+          case nme.GT   => trees.GreaterThan
+          case nme.LE   => trees.LessEquals
+          case nme.GE   => trees.GreaterEquals
           case _        => return fallback
         }
         binaryPrim(builder)
 
       case _ if fn.symbol eq ptDefn.iteMethod =>
-        ix.IfExpr(arg1Expr, arg2Expr, arg3Expr)
+        trees.IfExpr(arg1Expr, arg2Expr, arg3Expr)
 
       case _ =>
         // TODO(gsps): Conversions, etc.
@@ -328,25 +655,22 @@ trait ExprExtractor { this: Extractor =>
     }
   }
 
-  // TODO(gsps): Implement inlining
-  final protected def methodCall(fn: TermRef, argss: List[List[Type]], inlined: Boolean = false)(
-    implicit xctx: ExtractionContext): Expr =
-  {
-    assert(fn.symbol.is(Stable))
-    xst.getFunId(fn.symbol) match {
-      case Some(id) => ix.FunctionInvocation(id, Nil, argss.flatten.map(typ))
-      case None =>
-        ctx.warning(i"Method ${fn.symbol} is stable but has not been extracted.")
-        typ(fn.widenTermRefExpr.finalResultType)
-    }
-  }
+  final protected def functionCall(fun: Type, argss: List[List[Type]])(implicit xctx: ExtractionContext): Expr =
+    argss.foldLeft(typ(fun): Expr) { case (app, args) => trees.Application(app, args.map(typ)) }
+
+  final protected def methodCall(fn: TermRef, argss: List[List[Type]])(implicit xctx: ExtractionContext): Expr =
+    trees.MethodInvocation(typ(fn.prefix), getMethodId(fn.symbol), argss.flatten.map(typ))
 
   final protected def predRefinedType(tp: PredicateRefinedType)(implicit xctx: ExtractionContext): Expr =
   {
     val subjectExpr = typ(tp.parent)
     val subjectVar  = freshSubject(tp.parent, tp.subjectName)
     val predExpr    = predicate(tp.predicate, PreExtractedType(subjectVar, tp.parent))  // FIXME: Murky PreExtractedType
-    ix.Choose(subjectVar.toVal, ix.and(ix.Equals(subjectVar, subjectExpr), predExpr))
+    val choosePred = subjectExpr match {
+      case trees.Choose(_, TrueExpr) => predExpr
+      case _                         => trees.and(trees.Equals(subjectVar, subjectExpr), predExpr)
+    }
+    trees.Choose(subjectVar.toVal, choosePred)
   }
 
   final protected def predicate(tp: AppliedTermRef, subject: Type)(implicit xctx: ExtractionContext): Expr = {
@@ -356,42 +680,7 @@ trait ExprExtractor { this: Extractor =>
     if (!isPredicateMethod(fn.symbol))
       throw new NotImplementedError(i"Currently cannot extract composed predicate: $tp")
 
-    methodCall(fn, List(subject :: args1), inlined = true)
-  }
-}
-
-
-trait MethodExtractor { this: Extractor =>
-  import ast.tpd._
-
-  final def extractMethod(ddef: DefDef): Id = {
-    implicit val xctx = ExtractionContext(ApproxMode.Throw)
-    val sym = ddef.symbol
-    val methodicTpe = sym.info.stripMethodPrefix
-    assert(sym.is(Stable))
-
-    def checkBindingsAndCollectStatic(fd: ix.FunDef): (ix.FunDef, Set[RefType]) = {
-      val fvs = ix.exprOps.variablesOf(fd.fullBody) diff fd.params.map(_.toVariable).toSet
-      val (staticBs, nonStaticBs) = fvs.partition { variable =>
-        xst.refVarToType(variable) match {
-          case tp: TermRef => tp.symbol.isStatic
-          case _ => false
-        }
-      }
-      if (nonStaticBs.nonEmpty)
-        xctx.extractionError(s"Cannot extract method with non-static outside references: $fd", sym.pos)
-      else (fd, staticBs.map(xst.refVarToType))
-    }
-
-    xst.addMethod(sym) { id =>
-      val paramRefVars = ddef.vparamss.flatMap(_.map(vd => getOrCreateRefVar(vd.symbol.termRef)))
-      val params = paramRefVars.map(_.freshen)
-      val body0 = typ(ddef.rhs.tpe)
-      val body1 = ix.exprOps.replaceFromSymbols((paramRefVars zip params).toMap, body0)
-      val retType = ixType(methodicTpe.finalResultType)
-      val fd = new ix.FunDef(id, Nil, params.map(_.toVal), retType, body1, Set.empty)
-      checkBindingsAndCollectStatic(fd)
-    }
+    methodCall(fn, List(subject :: args1))
   }
 }
 
@@ -438,8 +727,8 @@ object ExtractorUtils {
 
   /* Inox-related helpers */
 
-  def freshVar(itp: ix.Type, name: String): Var =
-    ix.Variable.fresh(name, itp, alwaysShowUniqueID = true)
+  @inline def freshVar(itp: trees.Type, name: String): Var =
+    trees.Variable.fresh(name, itp, alwaysShowUniqueID = true)
 
-  lazy val ixNotEquals: (Expr, Expr) => Expr = (x: Expr, y: Expr) => ix.Not(ix.Equals(x, y))
+  lazy val ixNotEquals: (Expr, Expr) => Expr = (x: Expr, y: Expr) => trees.Not(trees.Equals(x, y))
 }

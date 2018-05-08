@@ -13,12 +13,9 @@ import util.SourcePosition
   */
 abstract class PreciseTyperContext(val ptyperDefinitions: Definitions)
 {
-  /**
-    * Extracts a given method so that it can be used in predicates during subtype-checking.
-    * @param ddef  the precisely-typed method to be extracted
-    * @throws ExtractionException  if an error occured during extraction
-    */
-  def extractMethod(ddef: DefDef)(implicit ctx: Context): Unit
+  private[this] var _isReadyToExtract = false
+  private[ptyper] def setReadyToExtract(): Unit = _isReadyToExtract = true
+  def isReadyToExtract: Boolean = _isReadyToExtract
 
   /**
     * Checks `tp1` <:< `tp2` under premise that the path conditions `pcs` hold.
