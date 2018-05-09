@@ -1034,7 +1034,8 @@ class Typer extends Namer
     def caseRest(pat: Tree)(implicit ctx: Context) = {
       val pat1 = indexPattern.transform(pat)
       val guard1 = typedExpr(tree.guard, defn.BooleanType)
-      var body1 = ensureNoLocalRefs(typedExpr(tree.body, pt), pt, ctx.scope.toList)
+      val caseCtx = caseContext(pat1, guard1)
+      var body1 = ensureNoLocalRefs(typedExpr(tree.body, pt)(caseCtx), pt, ctx.scope.toList)
       if (pt.isValueType) // insert a cast if body does not conform to expected type if we disregard gadt bounds
         body1 = body1.ensureConforms(pt)(originalCtx)
       assignType(cpy.CaseDef(tree)(pat1, guard1, body1), body1)
@@ -1043,6 +1044,9 @@ class Typer extends Namer
     val pat1 = typedPattern(tree.pat, selType)(gadtCtx)
     caseRest(pat1)(gadtCtx.fresh.setNewScope)
   }
+
+  def caseContext(pat: Tree, guard: Tree)(implicit ctx: Context): Context =
+    ctx
 
   def typedReturn(tree: untpd.Return)(implicit ctx: Context): Return = track("typedReturn") {
     def returnProto(owner: Symbol, locals: Scope): Type =

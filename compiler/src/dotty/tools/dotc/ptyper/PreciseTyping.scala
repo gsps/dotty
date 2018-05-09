@@ -203,10 +203,16 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
     def preciseTypingContext(ctx: FreshContext): FreshContext =
       ctx.setTypeComparerFn(ctx => new PreciseTypeComparer(ctx, this))
 
+    def typeComparer(implicit ctx: Context): PreciseTypeComparer =
+      ctx.typeComparer.asInstanceOf[PreciseTypeComparer]
+
     /** Additional state during typing **/
 
     protected var _pathConditions: List[PathCond] = List.empty
     final def pathConditions: List[PathCond] = _pathConditions
+
+    // _caseStack: List[List[(pat.tpe, guard.tpe, number-of-path-conditions-added)]]
+    protected var _caseStack: List[List[(Type, RefType, Int)]] = List.empty
 
     protected var _currentTree: Tree = _
     final def currentTree: Tree = _currentTree
@@ -260,6 +266,7 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
       try { super.typedDefDef(tree, sym) } finally { _pathConditions = saved }
     }
 
+    // FIXME(gsps): Bail if we try to extract an impure condition
     override def typedIf(tree: untpd.If, pt: Type)(implicit ctx: Context): Tree = track("typedIf") {
       val cond1 = typed(tree.cond, defn.BooleanType)
       val thenp2 :: elsep2 :: Nil = harmonic(harmonize) {
@@ -272,6 +279,42 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
         thenp1 :: elsep1 :: Nil
       }
       assignType(untpd.cpy.If(tree)(cond1, thenp2, elsep2), thenp2, elsep2)
+    }
+
+
+    // FIXME(gsps): Bail if we try to extract an impure condition or test against a user-defined (maybe impure) unapply
+    override def typedCases(cases: List[untpd.CaseDef], selType: Type, pt: Type)(implicit ctx: Context) = {
+      _caseStack = Nil :: _caseStack
+
+      val trees1 = super.typedCases(cases, selType, pt)
+
+      _pathConditions = _pathConditions.drop(_caseStack.head.length)
+      _caseStack = _caseStack.tail
+
+      trees1
+    }
+
+    override def caseContext(pat: Tree, guard: Tree)(implicit ctx: Context): Context = {
+      val pathCondsOutsideMatch = _caseStack match {
+        case ((_, _, n) :: _) :: _ => _pathConditions.drop(n)
+        case _                     => _pathConditions
+      }
+
+      val prevGuardsNegated: List[PathCond] = _caseStack.headOption.map {
+        _ collect {
+          case (prevPatTp, prevGuardTp, _) if typeComparer.conservative_<:<(pat.tpe, prevPatTp) =>
+            (false, prevGuardTp)
+        }
+      } getOrElse List.empty
+
+      _pathConditions = prevGuardsNegated ::: pathCondsOutsideMatch
+      if (!guard.isEmpty) {
+        val guardTp     = Utils.ensureStableRef(guard.tpe, Utils.nme.PC_SUBJECT)
+        _caseStack      = ((pat.tpe, guardTp, 1 + prevGuardsNegated.length) :: _caseStack.head) :: _caseStack.tail
+        _pathConditions = (true, guardTp) :: _pathConditions
+      }
+
+      ctx
     }
 
 
@@ -394,6 +437,9 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
         (tp2.isInstanceOf[IteType] && conservatively { super.isSubType(tp1, tp2.asInstanceOf[IteType].lowerBound) }) ||
           super.isSubType(tp1, tp2)
       }
+
+      def conservative_<:<(tp1: Type, tp2: Type): Boolean =
+        conservatively { tp1 <:< tp2 }
 
       /* The various public methods of TypeComparer that we may or may not want to influence. */
 
