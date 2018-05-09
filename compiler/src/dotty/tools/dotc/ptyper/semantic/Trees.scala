@@ -126,8 +126,8 @@ abstract class Trees extends inox.ast.Trees { self: Trees =>
 
   /** EXPR OPS **/
 
-  trait ExprOps extends inox.ast.ExprOps {
-    protected val trees: self.type
+  /*trait ExprOps extends inox.ast.ExprOps {
+    protected val trees: self.type = self
 
     def methodCallsOf(expr: Expr): Set[MethodInvocation] = {
       collect[MethodInvocation] {
@@ -139,7 +139,17 @@ abstract class Trees extends inox.ast.Trees { self: Trees =>
 
   override val exprOps: ExprOps { val trees: self.type } = new {
     protected val trees: self.type = self
-  } with ExprOps
+  } with ExprOps*/
+
+  // FIXME(gsps): Workaround for the lack of early initializers in Scala 3
+  object extraExprOps {
+    def methodCallsOf(expr: Expr): Set[MethodInvocation] = {
+      exprOps.collect[MethodInvocation] {
+        case m: MethodInvocation => Set(m)
+        case _ => Set()
+      }(expr)
+    }
+  }
 }
 
 

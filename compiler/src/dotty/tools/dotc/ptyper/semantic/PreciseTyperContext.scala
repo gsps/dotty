@@ -61,7 +61,7 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
       val showResult =
         if (ctx.settings.YptyperQueryTrace.value < 0 || ctx.settings.YptyperQueryTrace.value == queryCount) {
           ptyper.println(s"\t${pcs.size} path condition(s)\n")
-          for {m <- trees.exprOps.methodCallsOf(query).map(_.method)
+          for {m <- trees.extraExprOps.methodCallsOf(query).map(_.method)
                fd = extractor.xst.program.symbols.getFunction(m)}
             ptyper.println(s"\t${fd.asString}\n")
           ptyper.println(s"\t${query.asString}")

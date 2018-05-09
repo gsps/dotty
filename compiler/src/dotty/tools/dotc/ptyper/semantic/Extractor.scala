@@ -82,7 +82,7 @@ class Extractor(_xst: ExtractionState, _ctx: Context)
   // NOTE: We can only check this once the symbols for our query are complete.
   final protected def checkNoApproximatedMethodCalls(expr: Expr): Expr = {
     val syms = xst.program.symbols
-    trees.exprOps.methodCallsOf(expr).foreach { mi =>
+    trees.extraExprOps.methodCallsOf(expr).foreach { mi =>
       if (syms.getFunction(mi.method).flags contains trees.HasImpreciseBody)
         throw ApproximationException(s"Rhs predicate may not be extracted with approximate method calls.", ctx.tree.pos)
     }
