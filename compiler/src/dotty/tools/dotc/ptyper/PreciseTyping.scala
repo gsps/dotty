@@ -159,6 +159,7 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
 
   /* Components */
 
+  /** Add Extractable annotation to methods for which the user requested precise extractions. */
   class ExtractingTyper extends PreciseTyper with NoChecking {
     def addExtractionAnnot(tree: DefDef, sym: Symbol)(implicit ctx: Context): Unit = {
       if (!sym.is(Stable)) {
@@ -174,8 +175,16 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
 
     override def typedDefDef(tree: untpd.DefDef, sym: Symbol)(implicit ctx: Context): DefDef = {
       val tree1 = super.typedDefDef(tree, sym)
+
+      sym.name match {
+        case PredicateName(_, _) if !tree1.rhs.tpe.isStable =>
+          ctx.error(s"Predicate must be stable.", tree1.rhs.pos)
+        case _ =>
+      }
+
       if (sym.hasAnnotation(defn.ExtractAnnot))
         addExtractionAnnot(tree1, sym)
+
       tree1
     }
 

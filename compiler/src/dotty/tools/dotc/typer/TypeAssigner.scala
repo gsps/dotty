@@ -525,12 +525,8 @@ trait TypeAssigner {
   def assignType(tree: untpd.ByNameTypeTree, result: Tree)(implicit ctx: Context) =
     tree.withType(ExprType(result.tpe))
 
-  def assignType(tree: untpd.PredicateTypeTree, subjectVd: ValDef, pred: Tree)(implicit ctx: Context) = {
-    val tp =
-      if (pred.tpe.isStable) PredicateRefinedType(subjectVd, pred)
-      else errorType(s"Predicate must be stable.", pred.pos)
-    tree.withType(tp)
-  }
+  def assignType(tree: untpd.PredicateTypeTree, subjectVd: ValDef, pred: Tree)(implicit ctx: Context) =
+    tree.withType(PredicateRefinedType(subjectVd, pred))
 
   def assignType(tree: untpd.TypeBoundsTree, lo: Tree, hi: Tree)(implicit ctx: Context) =
     tree.withType(if (lo eq hi) TypeAlias(lo.tpe) else TypeBounds(lo.tpe, hi.tpe))
