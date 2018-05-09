@@ -83,6 +83,7 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
     try {
       queryCount += 1
       ptyper.println(Magenta(s"[[ PTyper query #$queryCount ]]  ${posString(pos)}").show)
+      ptyper.println(s"\t${tp1.show}  ?<:<?  ${tp2.show}")
 
       assert(ptCtx.isReadyToExtract)
       val tp1Ref = ensureStableRef(checkErrorType(tp1))

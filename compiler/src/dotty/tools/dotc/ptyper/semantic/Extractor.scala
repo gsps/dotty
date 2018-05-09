@@ -244,10 +244,10 @@ trait TypeExtractor { this: ExtractorBase =>
   protected def freshSubject(tp: Type, name: Name): Var =
     ExtractorUtils.freshVar(ixType(tp), name.toString)  // NOTE: Removed tp.classSymbol.typeRef / ixType should do that
 
-  def ixType(tp: Type): trees.Type = {
-    @inline def ignoreInAnd(sym: Symbol): Boolean =
-      (sym == defn.SingletonClass) || (sym == defn.ProductClass)
+  @inline protected def ignoreInAnd(sym: Symbol): Boolean =
+    (sym == defn.SingletonClass) || (sym == defn.ProductClass)
 
+  def ixType(tp: Type): trees.Type = {
     def rec(tp: Type): trees.Type = tp match {
       case tp if tp.typeSymbol == defn.CharClass    => trees.CharType()
       case tp if tp.typeSymbol == defn.ByteClass    => trees.Int8Type()
@@ -457,7 +457,7 @@ trait ExprExtractor { this: Extractor =>
       if (defn.isFunctionType(tp)) anyValueOfType(tp)
       else                         typ(tp.superType)  // FIXME(gsps): Unsound? (Should this be `tp.lowerBound` in the rhs extraction?)
 
-    normalizedApplication(checkErrorType(tp.widenExpr.dealias)) match {
+    normalizedApplication(checkErrorType(tp.widenExpr.dealias.stripTypeVar)) match {
       case tp: ConstantType   => constantType(tp)
       case tp: TermRef        => termRef(tp)
       case tp: TermParamRef   => xctx.methodParams(tp)
@@ -477,6 +477,9 @@ trait ExprExtractor { this: Extractor =>
       case _: SingletonType   => throw new AssertionError(s"Unhandled SingletonType: $tp")
 
       case tp: PredicateRefinedType => predRefinedType(tp)
+
+      case AndType(tp1, otherTp) if ignoreInAnd(otherTp.typeSymbol) => typ(tp1)
+      case AndType(otherTp, tp2) if ignoreInAnd(otherTp.typeSymbol) => typ(tp2)
 
       case _ => xctx.extractionError(i"Cannot extract type $tp (${tp.toString}) which widens to ${tp.widenDealias}",
         ctx.tree.pos)

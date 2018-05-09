@@ -292,6 +292,18 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
     }
 
 
+    /** Force some additional subtyping checks */
+
+    override def typedTyped(tree: untpd.Typed, pt: Type)(implicit ctx: Context): Tree = {
+      val tree1 = super.typedTyped(tree, pt)
+      // FIXME(gsps): This might be brittle (ReTyper for some reason chooses not to re-check Typed-s)
+      tree1 match {
+        case tree1: Typed => checkType(tree1.expr, tree1.tpt.tpe)
+        case _ =>
+      }
+      tree1
+    }
+
     // TODO(gsps): Factor out logic in adapt that is shared with TreeChecker
     override def adapt(tree: Tree, pt: Type, locked: TypeVars)(implicit ctx: Context) = {
       def isPrimaryConstructorReturn =
@@ -301,14 +313,16 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
         !isPrimaryConstructorReturn &&
         !pt.isInstanceOf[FunProto] &&
         !pt.isInstanceOf[PolyProto])
-      {
-        val saved = _currentTree
-        _currentTree = tree
-        if (!(tree.tpe <:< pt))
-          ctx.error(err.typeMismatchMsg(tree.tpe, pt), tree.pos)
-        _currentTree = saved
-      }
+        checkType(tree, pt)
       tree
+    }
+
+    protected def checkType(tree: Tree, expectedTp: Type)(implicit ctx: Context): Unit = {
+      val saved = _currentTree
+      _currentTree = tree
+      if (!(tree.tpe <:< expectedTp))
+        ctx.error(err.typeMismatchMsg(tree.tpe, expectedTp), tree.pos)
+      _currentTree = saved
     }
 
 
