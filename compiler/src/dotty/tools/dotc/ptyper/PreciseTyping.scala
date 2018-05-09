@@ -15,6 +15,7 @@ import core.Contexts._
 import core.Types._
 import core.Decorators._
 import transform.MacroTransform
+import transform.SymUtils._
 import typer.ErrorReporting.err
 import typer.NoChecking
 import typer.ProtoTypes.{FunProto, PolyProto}
@@ -24,7 +25,7 @@ import util.Stats.track
 import config.Printers.ptyper
 import reporting.trace
 
-import scala.collection.mutable.{Map => MutableMap, ListBuffer}
+import scala.collection.mutable.{ListBuffer, Map => MutableMap}
 
 
 /**
@@ -159,9 +160,13 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
 
   /* Components */
 
-  /** Add Extractable annotation to methods for which the user requested precise extractions. */
+  /** Add an Extractable annotation to various symbols that can be extracted precisely.
+    * We do this for:
+    *  - methods, when the user requested a precise extraction using @extract, and for
+    *  - bindings in unapplys, if the unapply is synthetic and we therefore know its semantics.
+    */
   class ExtractingTyper extends PreciseTyper with NoChecking {
-    def addExtractionAnnot(tree: DefDef, sym: Symbol)(implicit ctx: Context): Unit = {
+    protected def addExtractionAnnotToMethod(tree: DefDef, sym: Symbol)(implicit ctx: Context): Unit = {
       if (!sym.is(Stable)) {
         ctx.error(i"Cannot extract impure method (you may use @assumePure to skip this check).", tree.pos)
       } else if (!sym.isEffectivelyFinal) {
@@ -183,8 +188,57 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
       }
 
       if (sym.hasAnnotation(defn.ExtractAnnot))
-        addExtractionAnnot(tree1, sym)
+        addExtractionAnnotToMethod(tree1, sym)
 
+      tree1
+    }
+
+
+    // FIXME(gsps): Bail if scrutTp is impure?
+    protected def addExtractionAnnotsToBinds(tree: Match)(implicit ctx: Context) = {
+      object traverser extends TreeTraverser {
+        var curRef: Type = _
+
+        override def traverse(tree: Tree)(implicit ctx: Context): Unit = tree match {
+          case tree: Bind =>
+            val refTree = singleton(curRef)
+            tree.symbol.addAnnotation(Annotation(ptDefn.ExtractableAnnot, refTree))
+            traverse(tree.body)
+
+          case tree: UnApply =>
+            tree.fun.tpe.widen match {
+              case mt: MethodType if mt.paramInfos.length == 1 =>
+                val unapplyArgClass = mt.paramInfos.head.classSymbol
+                if (unapplyArgClass.flags is CaseClass) {
+                  val accessors = unapplyArgClass.asClass.caseAccessors
+                  for ((pat, accessor) <- tree.patterns zip accessors) {
+                    val prefix = curRef
+                    curRef = prefix.select(accessor)
+                    traverse(pat)
+                    curRef = prefix
+                  }
+                }
+              case _ =>
+            }
+
+          case tree: Typed => traverse(tree.expr)
+          case _ =>
+        }
+      }
+
+      val scrutTp = tree.selector.tpe.ensureStableSingleton
+      tree.cases.foreach { cse =>
+        traverser.curRef = scrutTp
+        traverser.traverse(cse.pat)
+      }
+    }
+
+    override def typedMatch(tree: untpd.Match, pt: Type)(implicit ctx: Context) = {
+      val tree1 = super.typedMatch(tree, pt)
+      tree1 match {
+        case tree1: Match => addExtractionAnnotsToBinds(tree1)
+        case _ =>
+      }
       tree1
     }
 

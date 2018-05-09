@@ -464,7 +464,7 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
             val rthis1 = tp1.recThis
             isSubType(tp1.parent, tp2.parent.substRecThis(tp2, rthis1))
           case _ =>
-            val tp1stable = ensureStableSingleton(tp1)
+            val tp1stable = tp1.ensureStableSingleton
             isSubType(fixRecs(tp1stable, tp1stable.widenExpr), tp2.parent.substRecThis(tp2, tp1stable))
         }
         compareRec
@@ -1053,12 +1053,6 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
         case mbr => mbr hasAltWith qualifies
       }
     }
-
-  private final def ensureStableSingleton(tp: Type): SingletonType = tp.stripTypeVar match {
-    case tp: SingletonType if tp.isStable => tp
-    case tp: ValueType => SkolemType(tp)
-    case tp: TypeProxy => ensureStableSingleton(tp.underlying)
-  }
 
   /** Skip refinements in `tp2` which match corresponding refinements in `tp1`.
    *  "Match" means:

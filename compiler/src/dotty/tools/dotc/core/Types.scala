@@ -1128,6 +1128,13 @@ object Types {
     /** If this is a FunProto or PolyProto, WildcardType, otherwise this. */
     def notApplied: Type = this
 
+    /** If this is a stable singleton, return this, otherwise skolemize. */
+    final def ensureStableSingleton(implicit ctx: Context): SingletonType = stripTypeVar match {
+      case tp: SingletonType if tp.isStable => tp
+      case tp: ValueType => SkolemType(tp)
+      case tp: TypeProxy => tp.underlying.ensureStableSingleton
+    }
+
     // ----- Normalizing typerefs over refined types ----------------------------
 
     /** If this normalizes* to a refinement type that has a refinement for `name` (which might be followed

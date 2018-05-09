@@ -457,6 +457,7 @@ trait ExprExtractor { this: Extractor =>
       if (defn.isFunctionType(tp)) anyValueOfType(tp)
       else                         typ(tp.superType)  // FIXME(gsps): Unsound? (Should this be `tp.lowerBound` in the rhs extraction?)
 
+    assert(tp.isValueType)
     normalizedApplication(checkErrorType(tp.widenExpr.dealias.stripTypeVar)) match {
       case tp: ConstantType   => constantType(tp)
       case tp: TermRef        => termRef(tp)
@@ -499,10 +500,15 @@ trait ExprExtractor { this: Extractor =>
   final protected def getOrCreateAdHocRef(refTp: RefType, ephemeral: Boolean)(implicit xctx: ExtractionContext): Expr =
   {
     def id = FreshIdentifier(Utils.qualifiedNameString(refTp))
-    def body = typ(refTp.underlying)
-    if (ephemeral) {
+    def body =
+      refTp.termSymbol.getAnnotation(ptDefn.ExtractableAnnot) match {
+        case Some(annot) => typ(annot.argument(0).get.tpe)
+        case None        => typ(refTp.underlying)
+      }
+
+    if (ephemeral)
       xst.getOrCreateEphemeralRef(refTp)(EphemeralRef(trees.Variable(id, ixType(refTp), Seq.empty), body)).toVariable
-    } else
+    else
       xst.getOrCreateGlobalRef(refTp)(
         new trees.FunDef(id, Seq.empty, Seq.empty, ixType(refTp), body, Seq(trees.IsGlobalBinding)))
   }
