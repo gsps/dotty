@@ -421,24 +421,24 @@ trait ExprExtractor { this: Extractor =>
     trace(i"Extractor#typ ${tp.toString}", ptyper)
   {
     def termRef(tp: TermRef): Expr = {
+      val pre = tp.prefix
+      val sym = tp.symbol
+
       def ephemeralSupported =
-        tp.prefix == NoPrefix && (!xctx.allowOnlySimpleRefs || isSimpleReference(xctx.owner, tp.symbol))
+        (pre eq NoPrefix) && (!xctx.allowOnlySimpleRefs || isSimpleReference(xctx.owner, sym))
+      def unsupportedReference =
+        xctx.extractionError(s"Referencing bindings in other methods is unsupported", ctx.tree.pos)
 
-      xctx.termParams.get(tp.symbol) match {
-        case Some(e) => e
-
-        case None if tp.isStable =>
-          if (tp.symbol.isStatic) getOrCreateAdHocRef(tp, ephemeral = false)
-          else if (tp.prefix == NoPrefix)
+      def generalRef =
+        if (tp.isStable)
+          if (sym.isStatic)         getOrCreateAdHocRef(tp, ephemeral = false)
+          else if (pre eq NoPrefix)
             if (ephemeralSupported) getOrCreateAdHocRef(tp, ephemeral = true)
-            else xctx.extractionError(s"Referencing bindings in other methods is unsupported", ctx.tree.pos)
-          else trees.ClassSelector(typ(tp.prefix), getMethodId(tp.symbol))
+            else                    unsupportedReference
+          else                      trees.ClassSelector(typ(pre), getMethodId(sym))
+        else                        typ(tp.underlying)
 
-        case None =>
-          val tpUnderlying = tp.underlying
-          assert(tpUnderlying.isValueType)
-          typ(tpUnderlying)
-      }
+      xctx.termParams.get(sym) getOrElse generalRef
     }
 
     def thisType(clazz: Symbol): Expr = {
