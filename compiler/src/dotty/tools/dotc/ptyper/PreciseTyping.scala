@@ -265,8 +265,10 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
     protected var _pathConditions: List[PathCond] = List.empty
     final def pathConditions: List[PathCond] = _pathConditions
 
-    // _caseStack: List[List[(pat.tpe, guard.tpe, number-of-path-conditions-added)]]
-    protected var _caseStack: List[List[(Type, RefType, Int)]] = List.empty
+    // _caseStack: List[List[(pat.tpe, guard.tpe)]]
+    protected var _caseStack: List[List[(Type, RefType)]] = List.empty
+    // _numPcStack: List[number-of-path-conditions-added]
+    protected var _numPcStack: List[Int] = List.empty
 
     protected var _currentTree: Tree = _
     final def currentTree: Tree = _currentTree
@@ -339,34 +341,36 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
     // FIXME(gsps): Bail if we try to extract an impure condition or test against a user-defined (maybe impure) unapply
     override def typedCases(cases: List[untpd.CaseDef], selType: Type, pt: Type)(implicit ctx: Context) = {
       _caseStack = Nil :: _caseStack
+      _numPcStack = 0 :: _numPcStack
 
       val trees1 = super.typedCases(cases, selType, pt)
 
-      _pathConditions = _pathConditions.drop(_caseStack.head.length)
+      _pathConditions = _pathConditions.drop(_numPcStack.head)
       _caseStack = _caseStack.tail
+      _numPcStack = _numPcStack.tail
 
       trees1
     }
 
     override def caseContext(pat: Tree, guard: Tree)(implicit ctx: Context): Context = {
-      val pathCondsOutsideMatch = _caseStack match {
-        case ((_, _, n) :: _) :: _ => _pathConditions.drop(n)
-        case _                     => _pathConditions
-      }
+      val pathCondsOutsideMatch = _pathConditions.drop(_numPcStack.headOption.getOrElse(0))
 
       val prevGuardsNegated: List[PathCond] = _caseStack.headOption.map {
         _ collect {
-          case (prevPatTp, prevGuardTp, _) if typeComparer.conservative_<:<(pat.tpe, prevPatTp) =>
+          case (prevPatTp, prevGuardTp) if typeComparer.conservative_<:<(pat.tpe, prevPatTp) =>
             (false, prevGuardTp)
         }
       } getOrElse List.empty
 
       _pathConditions = prevGuardsNegated ::: pathCondsOutsideMatch
+      var numPcAdded = prevGuardsNegated.length
       if (!guard.isEmpty) {
         val guardTp     = Utils.ensureStableRef(guard.tpe, Utils.nme.PC_SUBJECT)
-        _caseStack      = ((pat.tpe, guardTp, 1 + prevGuardsNegated.length) :: _caseStack.head) :: _caseStack.tail
+        _caseStack      = ((pat.tpe, guardTp) :: _caseStack.head) :: _caseStack.tail
         _pathConditions = (true, guardTp) :: _pathConditions
+        numPcAdded += 1
       }
+      _numPcStack = numPcAdded :: _numPcStack.tail
 
       ctx
     }
