@@ -158,7 +158,7 @@ object Types {
 
     /** Is this type are reference to a function-typed symbol that has been assumed pure by the user? */
     // TODO(gsps): Should really have a dedicated PureFunctionType to carry this information.
-    @inline final def isFunAppAssumedPure(tp: TermRef)(implicit ctx: Context): Boolean = {
+    final def isFunAppAssumedPure(tp: TermRef)(implicit ctx: Context): Boolean = {
       import transform.SymUtils._
       (tp.name eq nme.apply) && (tp.prefix match {
         case pre: TermRef =>
