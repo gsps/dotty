@@ -399,7 +399,7 @@ class PreciseTyping2 extends Phase with IdentityDenotTransformer { thisPhase =>
       val tree1 = super.typedTyped(tree, pt)
       // FIXME(gsps): This might be brittle (ReTyper for some reason chooses not to re-check Typed-s)
       tree1 match {
-        case tree1: Typed => checkType(tree1.expr, tree1.tpt.tpe)
+        case tree1: Typed if !isWildcardStarArg(tree1) => checkType(tree1.expr, tree1.tpt.tpe)
         case _ =>
       }
       tree1
