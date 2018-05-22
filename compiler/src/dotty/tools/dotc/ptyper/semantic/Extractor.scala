@@ -173,10 +173,10 @@ protected class ExtractionState {
     symbol2Id.toA(id)
 
 
-  def addClassIfNew(id: Id)(compute: => (trees.ClassDef, Seq[trees.FunDef])): Unit =
+  def addClassIfNew(id: Id)(compute: () => (trees.ClassDef, Seq[trees.FunDef])): Unit =
     if (!idUnderExtraction.contains(id)) {
       idUnderExtraction.add(id)
-      val (cd, newFunctions) = compute
+      val (cd, newFunctions) = compute()
       updateSymbols(symbols.withClasses(Seq(cd)).withFunctions(newFunctions))
     }
 }
@@ -308,7 +308,7 @@ trait ClassExtractor {this: Extractor =>
   protected def ensureClassExtracted(csym: ClassSymbol): Unit = trace(i"Extractor#ensureClassExtracted $csym", ptyper)
   {
     val cid = xst.symbolToId(csym)
-    xst.addClassIfNew(cid) {
+    xst.addClassIfNew(cid) { () =>
       def allParamRefs(tp: Type): List[TermParamRef] = tp match {
         case tp: MethodType => tp.paramRefs ::: allParamRefs(tp.resType)
         case _ => Nil

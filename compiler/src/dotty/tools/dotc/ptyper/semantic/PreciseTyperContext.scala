@@ -148,7 +148,7 @@ class PreciseTyperContext(ptyperDefn: pt.Definitions) extends pt.PreciseTyperCon
     val ixCtx = defaultInoxCtx
 
     val (program, cond) = lowerToInox(extractor.xst.program, query)
-    val s = inox.solvers.SolverFactory(program, ixCtx).getNewSolver
+    val s = inox.solvers.SolverFactory(program, ixCtx).getNewSolver()
 
     import inox.solvers.SolverResponses._
     import program._
