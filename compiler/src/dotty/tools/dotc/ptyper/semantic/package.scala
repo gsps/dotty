@@ -27,6 +27,8 @@ package object semantic {
                         sorts: Map[Id, ADTSort],
                         classes: Map[Id, ClassDef]
                       ) extends SimpleSymbols
+    def mkSymbols(functions: Map[Id, FunDef], sorts: Map[Id, ADTSort], classes: Map[Id, ClassDef]): Symbols =
+      Symbols(functions, sorts, classes)
 
     object printer extends Printer { val trees: semantic.trees.type = semantic.trees }
 

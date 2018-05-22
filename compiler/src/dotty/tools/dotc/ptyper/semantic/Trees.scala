@@ -155,24 +155,24 @@ abstract class Trees extends inox.ast.Trees { self: Trees =>
 
 trait SimpleSymbols { self: Trees =>
 
-  override val NoSymbols = Symbols(Map.empty, Map.empty, Map.empty)
+  override val NoSymbols = mkSymbols(Map.empty, Map.empty, Map.empty)
 
-  val Symbols: (Map[Id, FunDef], Map[Id, ADTSort], Map[Id, ClassDef]) => Symbols
+  def mkSymbols(functions: Map[Id, FunDef], sorts: Map[Id, ADTSort], classes: Map[Id, ClassDef]): Symbols
 
   abstract class SimpleSymbols extends AbstractSymbols2 { self: Symbols =>
-    override def withFunctions(functions: Seq[FunDef]): Symbols = Symbols(
+    override def withFunctions(functions: Seq[FunDef]): Symbols = mkSymbols(
       this.functions ++ functions.map(fd => fd.id -> fd),
       this.sorts,
       this.classes
     )
 
-    override def withSorts(sorts: Seq[ADTSort]): Symbols = Symbols(
+    override def withSorts(sorts: Seq[ADTSort]): Symbols = mkSymbols(
       this.functions,
       this.sorts ++ sorts.map(s => s.id -> s),
       this.classes
     )
 
-    override def withClasses(classes: Seq[ClassDef]): Symbols = Symbols(
+    override def withClasses(classes: Seq[ClassDef]): Symbols = mkSymbols(
       this.functions,
       this.sorts,
       this.classes ++ classes.map(cd => cd.id -> cd)
