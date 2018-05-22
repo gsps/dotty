@@ -563,9 +563,6 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
         compareTypeBounds
       case tp2: AppliedTermRef =>
         def compareAppliedTerm = tp1 match {
-          case _ if !ctx.phase.isTyper =>
-            // Need to be more permissive when checking later phases, applications may have been rewritten
-            isSubType(tp1, tp2.resType)
           case tp1: AppliedTermRef =>
             sameLength(tp1.args, tp2.args) && isSubType(tp1.fn, tp2.fn) &&
               (tp1.args, tp2.args).zipped.forall(isSubType)
