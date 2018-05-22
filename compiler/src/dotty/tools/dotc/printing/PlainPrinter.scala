@@ -61,7 +61,7 @@ class PlainPrinter(_ctx: Context) extends Printer {
         case AppliedType(tycon, args) =>
           tycon.dealias.appliedTo(args)
         case tp: AppliedTermRef =>
-          homogenize(tp.underlying)
+          AppliedTermRef(homogenize(tp.fn), tp.args)
         case _ =>
           tp
       }
