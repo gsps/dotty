@@ -30,7 +30,8 @@ package object semantic {
     def mkSymbols(functions: Map[Id, FunDef], sorts: Map[Id, ADTSort], classes: Map[Id, ClassDef]): Symbols =
       Symbols(functions, sorts, classes)
 
-    object printer extends Printer { val trees: semantic.trees.type = semantic.trees }
+    // NOTE(gsps): [Bug] Dotty emits too precise accessor result type
+    val printer = new Printer { val trees: semantic.trees.type = semantic.trees }
 
     val classEncoding = new ClassEncoding
 
