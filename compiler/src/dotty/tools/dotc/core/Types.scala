@@ -2177,7 +2177,7 @@ object Types {
   abstract case class AppliedTermRef(fn: /*TermRef | AppliedTermRef*/ SingletonType, args: List[Type])
     extends CachedProxyType with SingletonType
   {
-    protected[this] var myResType: Type = _
+    private[this] var myResType: Type = _
     def resType(implicit ctx: Context): Type = {
       if (myResType == null)
         fn.widen match {
@@ -2188,7 +2188,7 @@ object Types {
 
     def underlying(implicit ctx: Context): Type = resType
 
-    def derivedAppliedTerm(fn: Type, args: List[Type])(implicit ctx: Context): Type =
+    def derivedAppliedTermRef(fn: Type, args: List[Type])(implicit ctx: Context): Type =
       if ((this.fn eq fn) && (this.args eq args)) this
       else AppliedTermRef(fn, args)
 
@@ -3961,8 +3961,8 @@ object Types {
       tp.derivedSuperType(thistp, supertp)
     protected def derivedAppliedType(tp: AppliedType, tycon: Type, args: List[Type]): Type =
       tp.derivedAppliedType(tycon, args)
-    protected def derivedAppliedTerm(tp: AppliedTermRef, fn: Type, args: List[Type]): Type =
-      tp.derivedAppliedTerm(fn, args)
+    protected def derivedAppliedTermRef(tp: AppliedTermRef, fn: Type, args: List[Type]): Type =
+      tp.derivedAppliedTermRef(fn, args)
     protected def derivedAndType(tp: AndType, tp1: Type, tp2: Type): Type =
       tp.derivedAndType(tp1, tp2)
     protected def derivedOrType(tp: OrType, tp1: Type, tp2: Type): Type =
@@ -4019,7 +4019,7 @@ object Types {
           derivedAppliedType(tp, this(tp.tycon), mapArgs(tp.args, tp.typeParams))
 
         case tp: AppliedTermRef =>
-          derivedAppliedTerm(tp, this(tp.fn), tp.args.mapConserve(this))
+          derivedAppliedTermRef(tp, this(tp.fn), tp.args.mapConserve(this))
 
         case tp: RefinedType =>
           derivedRefinedType(tp, this(tp.parent), this(tp.refinedInfo))
@@ -4317,10 +4317,10 @@ object Types {
           else tp.derivedAppliedType(tycon, args)
       }
 
-    override protected def derivedAppliedTerm(tp: AppliedTermRef, fn: Type, args: List[Type]): Type =
+    override protected def derivedAppliedTermRef(tp: AppliedTermRef, fn: Type, args: List[Type]): Type =
       fn match {
         case Range(fnLo, fnHi) =>
-          range(derivedAppliedTerm(tp, fnLo, args), derivedAppliedTerm(tp, fnHi, args))
+          range(derivedAppliedTermRef(tp, fnLo, args), derivedAppliedTermRef(tp, fnHi, args))
         case _ =>
           if (fn.isBottomType) {
             fn
@@ -4330,9 +4330,9 @@ object Types {
               case Range(lo, hi) => loBuf += lo; hiBuf += hi
               case arg => loBuf += arg; hiBuf += arg
             }
-            range(tp.derivedAppliedTerm(fn, loBuf.toList), tp.derivedAppliedTerm(fn, hiBuf.toList))
+            range(tp.derivedAppliedTermRef(fn, loBuf.toList), tp.derivedAppliedTermRef(fn, hiBuf.toList))
           } else {
-            tp.derivedAppliedTerm(fn, args)
+            tp.derivedAppliedTermRef(fn, args)
           }
       }
 

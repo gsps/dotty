@@ -163,6 +163,7 @@ Standard-Section: "ASTs" TopLevelStat*
                   methodType(_, _) Length result_Type NamesTypes    // needed for refinements
                   TYPELAMBDAtype Length result_Type NamesTypes      // variance encoded in front of name: +/-/(nothing)
                   SHAREDtype            type_ASTRef
+                  APPLIEDTERMREF Length fn_Type arg_Type*
   NamesTypes    = NameType*
   NameType      = paramName_NameRef typeOrBounds_ASTRef
 
@@ -401,6 +402,7 @@ object TastyFormat {
   final val ANNOTATION = 172
   final val TERMREFin = 173
   final val TYPEREFin = 174
+  final val APPLIEDTERMREF = 175
 
   // In binary: 101100EI
   // I = implicit method type
@@ -416,7 +418,6 @@ object TastyFormat {
     METHODtype + implicitOffset + erasedOffset
   }
 
-  final val APPLIEDTERMREF = 180
   final val HOLE = 255
 
   final val firstNatTreeTag = SHAREDterm
@@ -430,7 +431,7 @@ object TastyFormat {
     firstNatTreeTag <= tag && tag <= SYMBOLconst ||
     firstASTTreeTag <= tag && tag <= SINGLETONtpt ||
     firstNatASTTreeTag <= tag && tag <= NAMEDARG ||
-    firstLengthTreeTag <= tag && tag <= TYPEREFin ||
+    firstLengthTreeTag <= tag && tag <= ERASEDIMPLICITMETHODtype ||
     tag == HOLE
 
   def isParamTag(tag: Int) = tag == PARAM || tag == TYPEPARAM
@@ -617,6 +618,7 @@ object TastyFormat {
     case ANNOTATION => "ANNOTATION"
     case PRIVATEqualified => "PRIVATEqualified"
     case PROTECTEDqualified => "PROTECTEDqualified"
+    case APPLIEDTERMREF => "APPLIEDTERMREF"
     case HOLE => "HOLE"
   }
 

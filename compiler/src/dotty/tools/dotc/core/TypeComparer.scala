@@ -567,8 +567,8 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
             // Need to be more permissive when checking later phases, applications may have been rewritten
             isSubType(tp1, tp2.resType)
           case tp1: AppliedTermRef =>
-            tp1.args.size == tp2.args.size && isSubType(tp1.fn, tp2.fn) &&
-              (tp1.args zip tp2.args).forall(t => isSubType(t._1, t._2))
+            sameLength(tp1.args, tp2.args) && isSubType(tp1.fn, tp2.fn) &&
+              (tp1.args, tp2.args).zipped.forall(isSubType)
           case _ => fourthTry
         }
         compareAppliedTerm

@@ -855,6 +855,7 @@ object Parsers {
      *                     |  `(' ArgTypes `)'
      *                     |  `_' TypeBounds
      *                     |  Refinement
+     *                     |  `{` PostfixExpr `}`
      *                     |  Literal
      */
     def simpleType(): Tree = simpleTypeRest {

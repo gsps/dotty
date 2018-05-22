@@ -1,7 +1,11 @@
 object SimpleEqs {
   val x = 1
   val y: {x} = x
+
+  type YPlusOne = {y + 1}
+
   implicitly[{x + 1} =:= {y + 1}]
+  implicitly[{x + 1} =:= YPlusOne]
 }
 
 
