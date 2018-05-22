@@ -275,6 +275,8 @@ class TreeUnpickler(reader: TastyReader,
               readType().appliedTo(until(end)(readType()))
             case APPLIEDTERMREF =>
               AppliedTermRef(readType(), until(end)(readType()))
+            case ITEtype =>
+              IteType(readType(), readType(), readType())
             case TYPEBOUNDS =>
               TypeBounds(readType(), readType())
             case ANNOTATEDtype =>
