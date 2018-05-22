@@ -752,7 +752,7 @@ class Namer { typer: Typer =>
         sym.addAnnotation(ann)
         if (sym.is(Method, butNot = Accessor))
           if (cls == defn.InlineAnnot) sym.setFlag(Inline)
-          else if (cls == defn.AssumePureAnnot) sym.setFlag(Stable)
+          else if (cls == defn.TransparentAnnot) sym.setFlag(Stable)
       }
     }
   }
@@ -1114,11 +1114,14 @@ class Namer { typer: Typer =>
       // Widen rhs type and eliminate `|' but keep ConstantTypes if
       // definition is inline (i.e. final in Scala2) and keep module singleton types
       // instead of widening to the underlying module class types.
-      def widenRhs(tp: Type): Type = tp.widenTermRefExpr match {
-        case ctp: ConstantType if isInline => ctp
-        case ref: TypeRef if ref.symbol.is(ModuleClass) => tp
-        case _ => tp.widen.widenUnion
-      }
+      def widenRhs(tp: Type): Type =
+        if (sym.unforcedAnnotation(defn.TransparentAnnot).isDefined) tp
+        else
+          tp.widenTermRefExpr match {
+            case ctp: ConstantType if isInline => ctp
+            case ref: TypeRef if ref.symbol.is(ModuleClass) => tp
+            case _ => tp.widen.widenUnion
+          }
 
       // Replace aliases to Unit by Unit itself. If we leave the alias in
       // it would be erased to BoxedUnit.
