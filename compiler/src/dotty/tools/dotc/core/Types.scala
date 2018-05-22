@@ -2177,7 +2177,7 @@ object Types {
   abstract case class AppliedTermRef(fn: /*TermRef | AppliedTermRef*/ SingletonType, args: List[Type])
     extends CachedProxyType with SingletonType
   {
-    private[this] var myResType: Type = _
+    protected[this] var myResType: Type = _
     def resType(implicit ctx: Context): Type = {
       if (myResType == null)
         fn.widen match {
@@ -2217,6 +2217,49 @@ object Types {
       }
     }
   }
+
+
+  object Unchecked extends FlexType
+
+  // TODO(gsps): Factor out "magic" AppliedTermRefs with special resType computations
+  class IteType(fn: TermRef, condTp: Type, thenTp: Type, elseTp: Type)
+    extends AppliedTermRef(fn, List(condTp, thenTp, elseTp)) {
+    override def resType(implicit ctx: Context): Type = {
+      def approximate(tp: Type): Type = tp match {
+        case tp: IteType => tp.resType
+        case tp => tp
+      }
+      if (myResType == null) myResType = approximate(thenTp) | approximate(elseTp)
+      myResType
+    }
+
+    def upperBound(implicit ctx: Context): Type = resType
+
+    def lowerBound(implicit ctx: Context): Type = {
+      def approximate(tp: Type): Type = tp match {
+        case tp: IteType => tp.lowerBound
+        case tp => tp
+      }
+      approximate(thenTp) & approximate(elseTp)
+    }
+
+    override def derivedAppliedTermRef(fn: Type, args: List[Type])(implicit ctx: Context): Type =
+      if (this.fn ne fn) throw new UnsupportedOperationException(i"Cannot change function of IteType: $fn")
+      else if (this.args eq args) this
+      else {
+        // TODO(gsps): Optimize by widening to resType when !condTp.isStable
+        val condTp :: thenTp :: elseTp :: Nil = args
+        new IteType(this.fn, condTp, thenTp, elseTp)
+      }
+  }
+
+  object IteType {
+    def apply(condTp: Type, thenTp: Type, elseTp: Type)(implicit ctx: Context): IteType = {
+      val ref = defn.PTyperPackageVal.termRef.select(defn.iteMethod)
+      new IteType(ref.asInstanceOf[TermRef], condTp, thenTp, elseTp)
+    }
+  }
+
 
   // --- Other SingletonTypes: ThisType/SuperType/ConstantType ---------------------------
 

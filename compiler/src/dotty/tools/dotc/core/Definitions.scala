@@ -1164,6 +1164,14 @@ class Definitions {
   def isValueSubClass(sym1: Symbol, sym2: Symbol) =
     valueTypeEnc(sym2.asClass.name) % valueTypeEnc(sym1.asClass.name) == 0
 
+  // ----- Precise types --------
+
+  lazy val PTyperPackageVal = ctx.newCompletePackageSymbol(defn.RootClass, nme.PTYPER_PACKAGE).entered
+  lazy val PTyperPackageClass = PTyperPackageVal.moduleClass.asClass
+
+  lazy val iteMethod = newSymbol(PTyperPackageClass, nme.ITE, Method | Stable,
+    MethodType(List(defn.BooleanType, defn.AnyType, defn.AnyType), Types.Unchecked))
+
   // ----- Initialization ---------------------------------------------------
 
   /** Lists core classes that don't have underlying bytecode, but are synthesized on-the-fly in every reflection universe */

@@ -149,6 +149,7 @@ object StdNames {
     val QUOTE: N                      = "'"
     val TYPE_QUOTE: N                = "type_'"
     val TRAIT_SETTER_SEPARATOR: N     = str.TRAIT_SETTER_SEPARATOR
+    val PTYPER_PACKAGE: N             = "<pt>"
 
     // value types (and AnyRef) are all used as terms as well
     // as (at least) arguments to the @specialize annotation.
@@ -277,6 +278,7 @@ object StdNames {
     val TRAIT_CONSTRUCTOR: N        = "$init$"
     val U2EVT: N                    = "u2evt$"
     val ALLARGS: N                  = "$allArgs"
+    val ITE: N                      = "<ite>"
 
     final val Nil: N                = "Nil"
     final val Predef: N             = "Predef"

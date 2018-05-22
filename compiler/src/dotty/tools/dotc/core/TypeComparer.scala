@@ -266,6 +266,8 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       case OrType(tp21, tp22) =>
         if (tp21.stripTypeVar eq tp22.stripTypeVar) recur(tp1, tp21)
         else secondTry
+      case tp2: IteType =>
+        recur(tp1, tp2.lowerBound) || secondTry
       case TypeErasure.ErasedValueType(tycon1, underlying2) =>
         def compareErasedValueType = tp1 match {
           case TypeErasure.ErasedValueType(tycon2, underlying1) =>
@@ -357,6 +359,8 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
             false
         }
         joinOK || recur(tp11, tp2) && recur(tp12, tp2)
+      case tp1: IteType =>
+        recur(tp1.upperBound, tp2) || thirdTry
       case _: FlexType =>
         true
       case _ =>
@@ -562,10 +566,11 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
         }
         compareTypeBounds
       case tp2: AppliedTermRef =>
+        def subApplication(tp1: AppliedTermRef, tp2: AppliedTermRef) =
+          sameLength(tp1.args, tp2.args) && isSubType(tp1.fn, tp2.fn) && (tp1.args, tp2.args).zipped.forall(isSubType)
         def compareAppliedTerm = tp1 match {
           case tp1: AppliedTermRef =>
-            sameLength(tp1.args, tp2.args) && isSubType(tp1.fn, tp2.fn) &&
-              (tp1.args, tp2.args).zipped.forall(isSubType)
+            subApplication(tp1, tp2) || fourthTry
           case _ => fourthTry
         }
         compareAppliedTerm
