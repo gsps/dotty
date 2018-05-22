@@ -102,7 +102,7 @@ fi
 # *-------------------------------------------------*/
 
 find_lib () {
-  local lib=$(find $PROG_HOME/lib/ -name "$1")
+  local lib=$(find $PROG_HOME/lib/ -name "$1" | tr '\n' ':' | sed 's/:$//')
   if $cygwin; then
     cygpath -am $lib
   elif $mingw; then
@@ -119,6 +119,10 @@ SCALA_ASM=$(find_lib "*scala-asm*")
 SCALA_LIB=$(find_lib "*scala-library*")
 SCALA_XML=$(find_lib "*scala-xml*")
 SBT_INTF=$(find_lib "*compiler-interface*")
+INOX=$(find_lib "*inox*")
+SCALA_PARSER_COMB=$(find_lib "*scala-parser-combinators*")
+SCALA_SMTLIB=$(find_lib "*scala-smtlib*")
+SCALA_Z3=$(find_lib "*scalaz3*")
 
 # debug
 DEBUG_STR=-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005

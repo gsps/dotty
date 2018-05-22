@@ -505,8 +505,7 @@ object Build {
         "org.scala-lang.modules" % "scala-asm" % "6.0.0-scala-1", // used by the backend
         ("org.scala-lang.modules" %% "scala-xml" % "1.0.6").withDottyCompat(scalaVersion.value),
         "org.scala-lang" % "scala-library" % scalacVersion % "test",
-        Dependencies.compilerInterface(sbtVersion.value),
-        ("ch.epfl.lara" % "inox_2.12" % "1.1.0-114-g364d067" exclude("uuverifiers", "princess_2.12")).withDottyCompat(scalaVersion.value)
+        Dependencies.compilerInterface(sbtVersion.value)
       ),
 
       // For convenience, change the baseDirectory when running the compiler
@@ -551,10 +550,7 @@ object Build {
             path.contains("scala-asm") ||
             // needed for the xsbti interface
             path.contains("compiler-interface") ||
-            path.contains("util-interface") ||
-            // used for inox
-            path.contains("lara") || path.contains("z3") || path.contains("smtlib") ||
-              path.contains("princess") || path.contains("/ap/")
+            path.contains("util-interface")
         } yield "-Xbootclasspath/p:" + path
 
         val ci_build = // propagate if this is a ci build
@@ -688,6 +684,8 @@ object Build {
   }
 
   lazy val nonBootstrapedDottyCompilerSettings = commonDottyCompilerSettings ++ Seq(
+    libraryDependencies +=
+      ("ch.epfl.lara" % "inox_2.12" % "1.1.0-114-g364d067" exclude("uuverifiers", "princess_2.12")).withDottyCompat(scalaVersion.value),
     // packageAll packages all and then returns a map with the abs location
     packageAll := {
       Map(
@@ -700,6 +698,9 @@ object Build {
   )
 
   lazy val bootstrapedDottyCompilerSettings = commonDottyCompilerSettings ++ Seq(
+    libraryDependencies +=
+      "ch.epfl.lara" % "inox_0.8" % "1.1.0-151-gab883fe" exclude("uuverifiers", "princess_2.12"),
+
     packageAll := {
       packageAll.in(`dotty-compiler`).value ++ Seq(
         "dotty-compiler" -> packageBin.in(Compile).value.getAbsolutePath,

@@ -55,6 +55,7 @@ classpathArgs () {
   # echo "scala-lib: $SCALA_LIB"
   # echo "scala-xml: $SCALA_XML"
   # echo "sbt-intface: $SBT_INTF"
+  # echo "inox: $INOX"
 
   toolchain=""
   toolchain+="$SCALA_LIB$PSEP"
@@ -63,7 +64,11 @@ classpathArgs () {
   toolchain+="$SBT_INTF$PSEP"
   toolchain+="$DOTTY_INTF$PSEP"
   toolchain+="$DOTTY_LIB$PSEP"
-  toolchain+="$DOTTY_COMP"
+  toolchain+="$DOTTY_COMP$PSEP"
+  toolchain+="$INOX$PSEP"
+  toolchain+="$SCALA_PARSER_COMB$PSEP"
+  toolchain+="$SCALA_SMTLIB$PSEP"
+  toolchain+="$SCALA_Z3"
 
   if [[ -n "$bootcp" ]]; then
     jvm_cp_args="-Xbootclasspath/a:\"$toolchain\""
