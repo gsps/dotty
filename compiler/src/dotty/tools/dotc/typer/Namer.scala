@@ -1016,6 +1016,11 @@ class Namer { typer: Typer =>
     case New(tpt) => typedAheadType(tpt).tpe.classSymbol
   }
 
+  def inferredReturnType(tree: Tree, pt: Type)(implicit ctx: Context): Type = {
+    val rhsCtx = ctx.addMode(Mode.InferringReturnType)
+    typedAheadExpr(tree, pt)(rhsCtx).tpe
+  }
+
   /** Enter and typecheck parameter list */
   def completeParams(params: List[MemberDef])(implicit ctx: Context) = {
     indexAndAnnotate(params)
@@ -1115,20 +1120,17 @@ class Namer { typer: Typer =>
       // definition is inline (i.e. final in Scala2) and keep module singleton types
       // instead of widening to the underlying module class types.
       def widenRhs(tp: Type): Type =
-        if (sym.unforcedAnnotation(defn.TransparentAnnot).isDefined) tp
-        else
-          tp.widenTermRefExpr match {
-            case ctp: ConstantType if isInline => ctp
-            case ref: TypeRef if ref.symbol.is(ModuleClass) => tp
-            case _ => tp.widen.widenUnion
-          }
+        tp.widenTermRefExpr match {
+          case ctp: ConstantType if isInline => ctp
+          case ref: TypeRef if ref.symbol.is(ModuleClass) => tp
+          case _ => tp.widen.widenUnion
+        }
 
       // Replace aliases to Unit by Unit itself. If we leave the alias in
       // it would be erased to BoxedUnit.
       def dealiasIfUnit(tp: Type) = if (tp.isRef(defn.UnitClass)) defn.UnitType else tp
 
-      val rhsCtx = ctx.addMode(Mode.InferringReturnType)
-      def rhsType = typedAheadExpr(mdef.rhs, inherited orElse rhsProto)(rhsCtx).tpe
+      def rhsType = inferredReturnType(mdef.rhs, inherited orElse rhsProto)
 
       // Approximate a type `tp` with a type that does not contain skolem types.
       val deskolemize = new ApproximatingTypeMap {
@@ -1186,6 +1188,25 @@ class Namer { typer: Typer =>
       case _ =>
         WildcardType
     }
+
+    def registerTransparentInfo(): Unit = {
+      val tflags = Method | Synthetic | Deferred
+      val tinfo = new LazyType {
+        def complete(denot: SymDenotation)(implicit ctx: Context): Unit = {
+//          println(i"  COMPLETING ${sym.owner} . ${denot.symbol} : ???")
+          denot.info = paramFn(inferredReturnType(mdef.rhs, WildcardType))
+//          println(i"  COMPLETED ${sym.owner} . ${denot.symbol} : ${denot.info}")
+        }
+      }
+      val tsym = ctx.newSymbol(sym.owner, NameKinds.TransparentCompName(sym.name.asTermName), tflags, tinfo,
+        coord = sym.coord)
+      tsym.entered
+//      ctx.enter(tsym)  // FIXME: Also enter into method owner etc.
+    }
+
+    if (sym.isTransparentMethod)
+      registerTransparentInfo()
+
     paramFn(typedAheadType(mdef.tpt, tptProto).tpe)
   }
 
