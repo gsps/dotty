@@ -113,6 +113,82 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
     def apply(tp: Type) = simplify(tp, this)
   }
 
+  /** Normalize types using call-by-value reduction rules.
+    * A type is in normal form if all of its constituents are normal and it is a(n)
+    *  - TermRef, and it doesn't dealias to another type that is `smaller`
+    *  - IteType, and its `condTp` is in normal form
+    *  - AppliedTermRef, and its `fn` is not transparent
+    *  - any other type node.
+    **/
+  final def normalize(tp: Type): Type =
+    new NormalizeMap().apply(tp)
+
+  class NormalizeMap extends TypeMap {
+    private def defType(fnSym: Symbol, pre: Type): Type = {
+      assert(fnSym.isTerm)
+      val d = fnSym.owner.findMember(NameKinds.TransparentCompName(fnSym.name.asTermName), pre, EmptyFlags)
+      assert(d.exists && d.isInstanceOf[SingleDenotation], s"Expected SingleDenotation, but got $d")
+      d.asInstanceOf[SingleDenotation].info
+    }
+
+    private def normalizeApp(tp: Type, fn: TermRef, args: List[Type], allowMethodTp: Boolean): Type = {
+      val fnSym = fn.symbol
+      if (fnSym.is(allOf(Method, Stable))) {
+        if (defn.ScalaValueClasses().contains(fnSym.owner)) {
+          dotc.typer.ConstFold(tp)
+        } else if (fnSym.isTransparentMethod) {
+          // Reduction step
+          val fnTpe = defType(fnSym, fn.prefix)
+          println(i"defType( $fn ) = $fnTpe")
+          fnTpe match {
+            case methTp: MethodType if allowMethodTp => apply(methTp.instantiate(args))
+            case exprTp: ExprType                    => apply(exprTp.resType)
+            case _                                   => tp
+          }
+        } else tp
+      } else tp
+    }
+
+    def apply(tp: Type): Type = tp match {
+      case tp: IteType =>
+//        apply(tp.condTp) match {
+        val condTp1 = apply(tp.condTp)
+        println(i"CONDTP  ${tp.condTp}  ->  $condTp1")
+        condTp1 match {
+          case ConstantType(c) if c.tag == Constants.BooleanTag =>
+            if (c.value.asInstanceOf[Boolean]) tp.thenTp
+            else                               tp.elseTp
+          case condTp => tp.derivedIteType(condTp, tp.thenTp, tp.elseTp)
+        }
+
+      case tp =>
+        mapOver(tp) match {
+          case tp: TermRef =>
+            val tp1 = normalizeApp(tp, tp, Nil, allowMethodTp = false)
+            if (tp ne tp1) tp1
+            else
+              apply(tp.underlying) match {
+                case normUnderTp: ConstantType => normUnderTp
+                case normUnderTp: TermRef =>
+                  if (tp.symbol.id <= normUnderTp.symbol.id) tp
+                  else normUnderTp
+                case normUnderTp: SingletonType => normUnderTp
+                case _ => tp
+              }
+
+          case tp: AppliedTermRef =>
+            val fn = tp.underlyingFn
+            assert(fn eq tp.fn, s"Multi-param-group case isn't implemented yet.")
+            normalizeApp(tp, fn, tp.args, allowMethodTp = true)
+
+          case tp =>
+            val tp1 = tp.stripTypeVar.dealias.widenExpr
+            if (tp eq tp1) tp else apply(tp1)
+        }
+    }
+  }
+
+
   /** Approximate union type by intersection of its dominators.
    *  That is, replace a union type Tn | ... | Tn
    *  by the smallest intersection type of base-class instances of T1,...,Tn.

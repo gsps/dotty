@@ -2188,6 +2188,12 @@ object Types {
 
     def underlying(implicit ctx: Context): Type = resType
 
+    @tailrec final def underlyingFn(implicit ctx: Context): TermRef =
+      fn match {
+        case fn: TermRef => fn
+        case fn: AppliedTermRef => fn.underlyingFn
+      }
+
     def derivedAppliedTermRef(fn: Type, args: List[Type])(implicit ctx: Context): Type =
       if ((this.fn eq fn) && (this.args eq args)) this
       else AppliedTermRef(fn, args)
@@ -2222,7 +2228,7 @@ object Types {
   object Unchecked extends FlexType
 
   // TODO(gsps): Factor out "magic" AppliedTermRefs with special resType computations
-  class IteType(fn: TermRef, condTp: Type, thenTp: Type, elseTp: Type)
+  class IteType(fn: TermRef, val condTp: Type, val thenTp: Type, val elseTp: Type)
     extends AppliedTermRef(fn, List(condTp, thenTp, elseTp)) {
     override def resType(implicit ctx: Context): Type = {
       def approximate(tp: Type): Type = tp match {
@@ -2251,6 +2257,10 @@ object Types {
         val condTp :: thenTp :: elseTp :: Nil = args
         new IteType(this.fn, condTp, thenTp, elseTp)
       }
+
+    def derivedIteType(condTp: Type, thenTp: Type, elseTp: Type)(implicit ctx: Context): Type =
+      if ((this.condTp eq condTp) && (this.thenTp eq thenTp) && (this.elseTp eq elseTp)) this
+      else new IteType(this.fn, condTp, thenTp, elseTp)
   }
 
   object IteType {
@@ -4060,6 +4070,9 @@ object Types {
               nil
           }
           derivedAppliedType(tp, this(tp.tycon), mapArgs(tp.args, tp.typeParams))
+
+        case tp: IteType =>
+          derivedAppliedTermRef(tp, tp.fn, tp.args.mapConserve(this))
 
         case tp: AppliedTermRef =>
           derivedAppliedTermRef(tp, this(tp.fn), tp.args.mapConserve(this))

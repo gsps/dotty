@@ -627,7 +627,17 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
           case _ =>
             false
         }
-        isNewSubType(tp1.underlying.widenExpr) || comparePaths
+        def normalizeAndCompare: Boolean = {
+          if (ctx.mode.is(Mode.InferringReturnType) || !tp1.isStable)
+            return false
+          val tp1n = ctx.normalize(tp1)
+          val tp2n = ctx.normalize(tp2)
+          val res = tp1n == tp2n
+//          println(i"Proof by normalization: $res\n\t$tp1  ~>  $tp1n\n\t$tp2  ~>  $tp2n\n")
+          println(i"Proof by normalization: $res  @ $tp1  ~~>  $tp1n  =?=  $tp2n  <~~  $tp2\n")
+          res
+        }
+        isNewSubType(tp1.underlying.widenExpr) || comparePaths || normalizeAndCompare
       case tp1: RefinedType =>
         isNewSubType(tp1.parent)
       case tp1: RecType =>
