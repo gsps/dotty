@@ -124,6 +124,8 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
     new NormalizeMap().apply(tp)
 
   class NormalizeMap extends TypeMap {
+    private def asType(b: Boolean) = ConstantType(Constants.Constant(b))
+
     private def defType(fnSym: Symbol, pre: Type): Type = {
       assert(fnSym.isTerm)
       val d = fnSym.owner.findMember(NameKinds.TransparentCompName(fnSym.name.asTermName), pre, EmptyFlags)
@@ -131,7 +133,7 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
       d.asInstanceOf[SingleDenotation].info
     }
 
-    private def normalizeApp(tp: Type, fn: TermRef, args: List[Type], allowMethodTp: Boolean): Type = {
+    private def normalizeApp(tp: Type, fn: TermRef, args: List[Type], realApplication: Boolean): Type = {
       val fnSym = fn.symbol
       if (fnSym.is(allOf(Method, Stable))) {
         if (defn.ScalaValueClasses().contains(fnSym.owner)) {
@@ -140,10 +142,13 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
           // Reduction step
           val fnTpe = defType(fnSym, fn.prefix)
           fnTpe match {
-            case methTp: MethodType if allowMethodTp => apply(methTp.instantiate(args))
-            case exprTp: ExprType                    => apply(exprTp.resType)
-            case _                                   => tp
+            case methTp: MethodType if realApplication => apply(methTp.instantiate(args))
+            case exprTp: ExprType                      => apply(exprTp.resType)
+            case _                                     => tp
           }
+        } else if (realApplication && (fnSym eq defn.Any_isInstanceOf)) {
+          // NOTE: isInstanceOf on unerased types!
+          asType(ctx.typeComparer.isSubTypeWhenFrozen(fn.prefix, args.head))
         } else tp
       } else tp
     }
@@ -160,7 +165,7 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
       case tp =>
         mapOver(tp) match {
           case tp: TermRef =>
-            val tp1 = normalizeApp(tp, tp, Nil, allowMethodTp = false)
+            val tp1 = normalizeApp(tp, tp, Nil, realApplication = false)
             if (tp ne tp1) tp1
             else
               apply(tp.underlying) match {
@@ -175,7 +180,7 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
           case tp: AppliedTermRef =>
             val fn = tp.underlyingFn
             assert(fn eq tp.fn, s"Multi-param-group case isn't implemented yet.")
-            normalizeApp(tp, fn, tp.args, allowMethodTp = true)
+            normalizeApp(tp, fn, tp.args, realApplication = true)
 
           case tp =>
             val tp1 = tp.stripTypeVar.dealias.widenExpr
@@ -398,7 +403,7 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
 
 object TypeOps {
   @sharable var track = false // !!!DEBUG
-  @sharable var trackNormalize = false
+  @sharable var trackNormalize = true
 
   /** When a property with this key is set in a context, it limits the number
    *  of recursive member searches. If the limit is reached, findMember returns

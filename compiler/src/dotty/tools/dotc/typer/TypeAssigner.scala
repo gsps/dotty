@@ -381,7 +381,8 @@ trait TypeAssigner {
   }
 
   def assignType(tree: untpd.TypeApply, fn: Tree, args: List[Tree])(implicit ctx: Context) = {
-    val ownType = fn.tpe.widen match {
+    val fnTpe = fn.tpe
+    val ownType = fnTpe.widen match {
       case pt: TypeLambda =>
         val paramNames = pt.paramNames
         if (hasNamedArg(args)) {
@@ -429,8 +430,11 @@ trait TypeAssigner {
         }
         else {
           val argTypes = args.tpes
-          if (sameLength(argTypes, paramNames)) pt.instantiate(argTypes)
-          else wrongNumberOfTypeArgs(fn.tpe, pt.typeParams, args, tree.pos)
+          if (sameLength(argTypes, paramNames))
+            // TODO(gsps): Also implement for the named-args case
+            if (!ctx.erasedTypes && fnTpe.isStable) AppliedTermRef(fnTpe, argTypes)
+            else                                    pt.instantiate(argTypes)
+          else wrongNumberOfTypeArgs(fnTpe, pt.typeParams, args, tree.pos)
         }
       case err: ErrorType =>
         err

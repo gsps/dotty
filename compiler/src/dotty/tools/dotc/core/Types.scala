@@ -148,7 +148,9 @@ object Types {
     /** Does this type denote a stable reference (i.e. singleton type)? */
     final def isStable(implicit ctx: Context): Boolean = stripTypeVar match {
       case tp: TermRef => tp.termSymbol.isStable && tp.prefix.isStable || tp.info.isStable
-      case tp: AppliedTermRef => tp.fn.isStable && tp.args.forall(_.isStable)
+      case tp: AppliedTermRef =>
+        // FIXME(gsps): Type applications on T could be unstable if we used ValueOf[T], no?
+        tp.fn.isStable && (tp.isTypeApply || tp.args.forall(_.isStable))
       case _: SingletonType | NoPrefix => true
       case tp: RefinedOrRecType => tp.parent.isStable
       case tp: ExprType => tp.resultType.isStable
@@ -2173,7 +2175,7 @@ object Types {
 
   // --- AppliedTermRef ---------------------------------------------------------------------
 
-  /** A precise representation of a term-level application `fn(... args)`. **/
+  /** A precise representation of a term-level application `fn(... args)` or `fn[... args]`. **/
   abstract case class AppliedTermRef(fn: /*TermRef | AppliedTermRef*/ SingletonType, args: List[Type])
     extends CachedProxyType with SingletonType
   {
@@ -2181,12 +2183,26 @@ object Types {
     def resType(implicit ctx: Context): Type = {
       if (myResType == null)
         fn.widen match {
+          case polyTpe: PolyType => myResType = polyTpe.instantiate(args)
           case methTpe: MethodType => myResType = ctx.typer.applicationResultType(methTpe, args)
         }
       myResType
     }
 
     def underlying(implicit ctx: Context): Type = resType
+
+    private object TypeApplyStatus {
+      val UNINITIALIZED: Byte = 0
+      val TYPEAPPLY: Byte     = 1
+      val TERMAPPLY: Byte     = 2
+    }
+    private[this] var myTypeApplyStatus: Byte = 0
+    final def isTypeApply(implicit ctx: Context): Boolean = {
+      import TypeApplyStatus._
+      if (myTypeApplyStatus == UNINITIALIZED)
+        myTypeApplyStatus = if (fn.widen.isInstanceOf[PolyType]) TYPEAPPLY else TERMAPPLY
+      myTypeApplyStatus == TYPEAPPLY
+    }
 
     @tailrec final def underlyingFn(implicit ctx: Context): TermRef =
       fn match {
@@ -2216,6 +2232,7 @@ object Types {
         case fn: AppliedTermRef => unique(new CachedAppliedTermRef(fn, args))
         case _ =>
           fn.widenDealias match {
+            case polyTpe: PolyType => polyTpe.instantiate(args)
             case methTpe: MethodType => ctx.typer.applicationResultType(methTpe, args)
             case _: WildcardType => WildcardType
             case tp => throw new AssertionError(i"Don't know how to apply $tp.")
