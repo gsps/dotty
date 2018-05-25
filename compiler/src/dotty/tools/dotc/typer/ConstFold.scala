@@ -71,7 +71,7 @@ object ConstFold {
         tp.fn match {
           case fn: TermRef =>
             (fn.prefix.widenTermRefExpr, tp.args.head.widenTermRefExpr) match {
-              case (ConstantType(x), ConstantType(y)) => println(s"  CF ${fn.name} $x $y"); foldBinop(fn.name, x, y)
+              case (ConstantType(x), ConstantType(y)) => foldBinop(fn.name, x, y)
               case _ => null
             }
           case _ => null

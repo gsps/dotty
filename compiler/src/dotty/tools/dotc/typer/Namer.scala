@@ -1192,10 +1192,16 @@ class Namer { typer: Typer =>
     def registerTransparentInfo(): Unit = {
       val tflags = Method | Synthetic | Deferred
       val tinfo = new LazyType {
+        private val creationContext: Context = ctx
         def complete(denot: SymDenotation)(implicit ctx: Context): Unit = {
-//          println(i"  COMPLETING ${sym.owner} . ${denot.symbol} : ???")
-          denot.info = paramFn(inferredReturnType(mdef.rhs, WildcardType))
-//          println(i"  COMPLETED ${sym.owner} . ${denot.symbol} : ${denot.info}")
+          val inferredTp = inferredReturnType(mdef.rhs, WildcardType)(creationContext)
+          var transTp = fullyDefinedType(inferredTp, "transparent def", mdef.pos)
+//          if (!transTp.isStable) {
+//            val msg: String = i"Type of transparent method's body must be stable, but found: $transTp"
+//            transTp = errorType(msg, mdef.rhs.pos)
+//          }
+          denot.info = paramFn(transTp)
+          // println(i"  COMPLETED ${sym.owner} . ${denot.symbol} : ${denot.info}")
         }
       }
       val tsym = ctx.newSymbol(sym.owner, NameKinds.TransparentCompName(sym.name.asTermName), tflags, tinfo,

@@ -1834,12 +1834,19 @@ class Typer extends Namer
 
   /** Interpolate and simplify the type of the given tree. */
   protected def simplify(tree: Tree, pt: Type, locked: TypeVars)(implicit ctx: Context): tree.type = {
+    def normalized(tp: Type): Type =
+      if (ctx.mode.is(Mode.InferringReturnType) || ctx.owner.isTransparentMethod) tp
+      else {
+        val normTp = ctx.normalize(tp)
+        // if (normTp ne tp) println(i"S  $tp  -->  $normTp")
+        normTp
+      }
     if (!tree.denot.isOverloaded) // for overloaded trees: resolve overloading before simplifying
       if (!tree.tpe.widen.isInstanceOf[MethodOrPoly] // wait with simplifying until method is fully applied
           || tree.isDef)                             // ... unless tree is a definition
       {
         interpolateTypeVars(tree, pt, locked)
-        tree.overwriteType(tree.tpe.simplified)
+        tree.overwriteType(normalized(tree.tpe.simplified))
       }
     tree
   }

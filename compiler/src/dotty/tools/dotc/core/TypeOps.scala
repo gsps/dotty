@@ -139,7 +139,6 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
         } else if (fnSym.isTransparentMethod) {
           // Reduction step
           val fnTpe = defType(fnSym, fn.prefix)
-          println(i"defType( $fn ) = $fnTpe")
           fnTpe match {
             case methTp: MethodType if allowMethodTp => apply(methTp.instantiate(args))
             case exprTp: ExprType                    => apply(exprTp.resType)
@@ -149,15 +148,12 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
       } else tp
     }
 
-    def apply(tp: Type): Type = tp match {
+    def apply(tp: Type): Type = trace.conditionally(TypeOps.trackNormalize, i"normalize($tp)", show = true) { tp match {
       case tp: IteType =>
-//        apply(tp.condTp) match {
-        val condTp1 = apply(tp.condTp)
-        println(i"CONDTP  ${tp.condTp}  ->  $condTp1")
-        condTp1 match {
+        apply(tp.condTp) match {
           case ConstantType(c) if c.tag == Constants.BooleanTag =>
-            if (c.value.asInstanceOf[Boolean]) tp.thenTp
-            else                               tp.elseTp
+            if (c.value.asInstanceOf[Boolean]) apply(tp.thenTp)
+            else                               apply(tp.elseTp)
           case condTp => tp.derivedIteType(condTp, tp.thenTp, tp.elseTp)
         }
 
@@ -185,7 +181,7 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
             val tp1 = tp.stripTypeVar.dealias.widenExpr
             if (tp eq tp1) tp else apply(tp1)
         }
-    }
+    } }
   }
 
 
@@ -402,6 +398,7 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
 
 object TypeOps {
   @sharable var track = false // !!!DEBUG
+  @sharable var trackNormalize = false
 
   /** When a property with this key is set in a context, it limits the number
    *  of recursive member searches. If the limit is reached, findMember returns
