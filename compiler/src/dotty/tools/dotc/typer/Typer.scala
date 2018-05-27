@@ -1835,7 +1835,7 @@ class Typer extends Namer
   /** Interpolate and simplify the type of the given tree. */
   protected def simplify(tree: Tree, pt: Type, locked: TypeVars)(implicit ctx: Context): tree.type = {
     def normalized(tp: Type): Type =
-      if (ctx.mode.is(Mode.InferringReturnType) || ctx.owner.isTransparentMethod) tp
+      if (ctx.mode.is(Mode.InferringReturnType) || ctx.owner.flagsUNSAFE.is(Transparent)) tp  // FIXME(gsps): Dirty.
       else {
         val normTp = ctx.normalize(tp)
         // if (normTp ne tp) println(i"S  $tp  -->  $normTp")

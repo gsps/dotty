@@ -178,6 +178,7 @@ object Tokens extends TokensCommon {
   final val INLINE = 62;           enter(INLINE, "inline")
   final val ENUM = 63;             enter(ENUM, "enum")
   final val ERASED = 64;           enter(ERASED, "erased")
+  final val TRANSPARENT = 65;      enter(TRANSPARENT, "transparent")
 
   /** special symbols */
   final val NEWLINE = 78;          enter(NEWLINE, "end of statement", "new line")
@@ -198,7 +199,7 @@ object Tokens extends TokensCommon {
   /** XML mode */
   final val XMLSTART = 96;         enter(XMLSTART, "$XMLSTART$<") // TODO: deprecate
 
-  final val alphaKeywords = tokenRange(IF, ERASED)
+  final val alphaKeywords = tokenRange(IF, TRANSPARENT)
   final val symbolicKeywords = tokenRange(USCORE, VIEWBOUND)
   final val symbolicTokens = tokenRange(COMMA, VIEWBOUND)
   final val keywords = alphaKeywords | symbolicKeywords
@@ -226,7 +227,7 @@ object Tokens extends TokensCommon {
   final val defIntroTokens = templateIntroTokens | dclIntroTokens
 
   final val localModifierTokens = BitSet(
-    ABSTRACT, FINAL, SEALED, IMPLICIT, INLINE, LAZY, ERASED)
+    ABSTRACT, FINAL, SEALED, IMPLICIT, INLINE, LAZY, ERASED, TRANSPARENT)
 
   final val accessModifierTokens = BitSet(
     PRIVATE, PROTECTED)

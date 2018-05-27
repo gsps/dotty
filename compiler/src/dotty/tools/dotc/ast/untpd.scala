@@ -137,6 +137,8 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
     case class Enum() extends Mod(Flags.EmptyFlags)
 
     case class EnumCase() extends Mod(Flags.EmptyFlags)
+
+    case class Transparent() extends Mod(Flags.Transparent)
   }
 
   /** Modifiers and annotations for definitions

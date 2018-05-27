@@ -147,7 +147,7 @@ object Types {
 
     /** Does this type denote a stable reference (i.e. singleton type)? */
     final def isStable(implicit ctx: Context): Boolean = stripTypeVar match {
-      case tp: TermRef => tp.termSymbol.isStable && tp.prefix.isStable || tp.info.isStable
+      case tp: TermRef => tp.termSymbol.isStable && (tp.prefix.isStable || tp.prefix.typeSymbol.isStatic) || tp.info.isStable
       case tp: AppliedTermRef =>
         // FIXME(gsps): Type applications on T could be unstable if we used ValueOf[T], no?
         tp.fn.isStable && (tp.isTypeApply || tp.args.forall(_.isStable))

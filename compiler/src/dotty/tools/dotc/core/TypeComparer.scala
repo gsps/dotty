@@ -614,18 +614,18 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
       case tp1 @ AppliedType(tycon1, args1) =>
         compareAppliedType1(tp1, tycon1, args1)
       case tp1: SingletonType =>
+        def compareDealiasedRhsSingleton(tp2w: Type) = tp2w.widenExpr.dealias match {
+          case tp2i: SingletonType =>
+            recur(tp1, tp2i)
+              // see z1720.scala for a case where this can arise even in typer.
+              // Also, i1753.scala, to show why the dealias above is necessary.
+          case _ => false
+        }
         /** if `tp2 == p.type` and `p: q.type` then try `tp1 <:< q.type` as a last effort.*/
         def comparePaths = tp2 match {
-          case tp2: TermRef =>
-            tp2.info.widenExpr.dealias match {
-              case tp2i: SingletonType =>
-                recur(tp1, tp2i)
-                  // see z1720.scala for a case where this can arise even in typer.
-                  // Also, i1753.scala, to show why the dealias above is necessary.
-              case _ => false
-            }
-          case _ =>
-            false
+          case tp2: TermRef => compareDealiasedRhsSingleton(tp2.info)
+          case tp2: AppliedTermRef => compareDealiasedRhsSingleton(tp2.resType)
+          case _ => false
         }
         isNewSubType(tp1.underlying.widenExpr) || comparePaths
       case tp1: RefinedType =>

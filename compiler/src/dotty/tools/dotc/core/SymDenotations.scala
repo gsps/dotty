@@ -785,9 +785,6 @@ object SymDenotations {
 
     def isInlineMethod(implicit ctx: Context): Boolean = is(InlineMethod, butNot = Accessor)
 
-    def isTransparentMethod(implicit ctx: Context): Boolean =
-      unforcedAnnotation(defn.TransparentAnnot).isDefined
-
     /** ()T and => T types should be treated as equivalent for this symbol.
      *  Note: For the moment, we treat Scala-2 compiled symbols as loose matching,
      *  because the Scala library does not always follow the right conventions.

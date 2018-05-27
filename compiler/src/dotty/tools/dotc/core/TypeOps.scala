@@ -16,6 +16,7 @@ import config.Config
 import util.Property
 import collection.mutable
 import ast.tpd._
+import typer.ErrorReporting.errorType
 import reporting.trace
 import reporting.diagnostic.Message
 
@@ -121,9 +122,12 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
     *  - any other type node.
     **/
   final def normalize(tp: Type): Type =
-    new NormalizeMap().apply(tp)
+    new NormalizeMap().normalize(tp)
 
-  class NormalizeMap extends TypeMap {
+  private class NormalizeMap extends TypeMap {
+    final val NORMALIZE_FUEL = 50
+    private[this] var fuel: Int = NORMALIZE_FUEL
+
     private def asType(b: Boolean) = ConstantType(Constants.Constant(b))
 
     private def defType(fnSym: Symbol, pre: Type): Type = {
@@ -133,41 +137,54 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
       d.asInstanceOf[SingleDenotation].info
     }
 
-    private def normalizeApp(tp: Type, fn: TermRef, args: List[Type], realApplication: Boolean): Type = {
+    private def normalizeApp(fn: TermRef, argss: List[List[Type]], realApplication: Boolean): Type = {
+      import dotc.typer.ConstFold
+
       val fnSym = fn.symbol
       if (fnSym.is(allOf(Method, Stable))) {
         if (defn.ScalaValueClasses().contains(fnSym.owner)) {
-          dotc.typer.ConstFold(tp)
-        } else if (fnSym.isTransparentMethod) {
+          argss match {
+            case List()          => ConstFold(fn)
+            case List(List(arg)) => ConstFold(fn, arg)
+            case _               => NoType
+          }
+        }
+        else if (fnSym is Transparent) {
           // Reduction step
           val fnTpe = defType(fnSym, fn.prefix)
-          fnTpe match {
-            case methTp: MethodType if realApplication => apply(methTp.instantiate(args))
-            case exprTp: ExprType                      => apply(exprTp.resType)
-            case _                                     => tp
+          val instantiate: (Type, List[Type]) => Type = {
+            case (lmbdTp: MethodOrPoly, args: List[Type]) => lmbdTp.instantiate(args)
+            case (nonMethTp, _) => throw new AssertionError(i"Expected MethodOrPoly, got: $nonMethTp")
           }
-        } else if (realApplication && (fnSym eq defn.Any_isInstanceOf)) {
+          fnTpe match {
+            case lmbdTp: MethodOrPoly if realApplication => normalize(argss.foldLeft(lmbdTp: Type)(instantiate))
+            case exprTp: ExprType                        => normalize(exprTp.resType)
+            case _                                       => NoType
+          }
+        }
+        else if (realApplication && (fnSym eq defn.Any_isInstanceOf)) {
           // NOTE: isInstanceOf on unerased types!
-          asType(ctx.typeComparer.isSubTypeWhenFrozen(fn.prefix, args.head))
-        } else tp
-      } else tp
+          assert(argss.size == 1 && argss.head.size == 1, i"Expected one argument, got: $argss")
+          asType(ctx.typeComparer.isSubTypeWhenFrozen(fn.prefix, argss.head.head))
+        }
+        else NoType
+      }
+      else NoType
     }
 
-    def apply(tp: Type): Type = trace.conditionally(TypeOps.trackNormalize, i"normalize($tp)", show = true) { tp match {
+    def apply(tp: Type): Type = tp match {
       case tp: IteType =>
         apply(tp.condTp) match {
           case ConstantType(c) if c.tag == Constants.BooleanTag =>
-            if (c.value.asInstanceOf[Boolean]) apply(tp.thenTp)
-            else                               apply(tp.elseTp)
+            if (c.value.asInstanceOf[Boolean]) normalize(tp.thenTp)
+            else                               normalize(tp.elseTp)
           case condTp => tp.derivedIteType(condTp, tp.thenTp, tp.elseTp)
         }
 
       case tp =>
         mapOver(tp) match {
           case tp: TermRef =>
-            val tp1 = normalizeApp(tp, tp, Nil, realApplication = false)
-            if (tp ne tp1) tp1
-            else
+            normalizeApp(tp, Nil, realApplication = false) orElse {
               apply(tp.underlying) match {
                 case normUnderTp: ConstantType => normUnderTp
                 case normUnderTp: TermRef =>
@@ -176,17 +193,31 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
                 case normUnderTp: SingletonType => normUnderTp
                 case _ => tp
               }
+            }
 
           case tp: AppliedTermRef =>
-            val fn = tp.underlyingFn
-            assert(fn eq tp.fn, s"Multi-param-group case isn't implemented yet.")
-            normalizeApp(tp, fn, tp.args, realApplication = true)
+            @tailrec def normFnAndArgss(tp: Type, argss: List[List[Type]]): (TermRef, List[List[Type]]) =
+              tp match {
+                case tp: TermRef => (tp, argss.reverse)
+                case tp: AppliedTermRef => normFnAndArgss(tp.fn, tp.args :: argss)
+              }
+            val (fn, argss) = normFnAndArgss(tp, Nil)
+            normalizeApp(fn, argss, realApplication = true) orElse tp
 
           case tp =>
             val tp1 = tp.stripTypeVar.dealias.widenExpr
             if (tp eq tp1) tp else apply(tp1)
         }
-    } }
+    }
+
+    def normalize(tp: Type): Type = trace.conditionally(TypeOps.trackNormalize, i"normalize($tp)", show = true) {
+      if (fuel == 0)
+        errorType(i"Diverged while normalizing $tp ($NORMALIZE_FUEL steps)", ctx.tree.pos)
+      else {
+        fuel -= 1
+        apply(tp)
+      }
+    }
   }
 
 

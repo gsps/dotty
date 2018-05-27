@@ -346,6 +346,7 @@ class Namer { typer: Typer =>
           case TypeDef(_, LambdaTypeTree(_, _)) if isDeferred => HigherKinded
           case _ => EmptyFlags
         }
+        val stable = if (flags.is(Transparent)) Stable else EmptyFlags
 
         // to complete a constructor, move one context further out -- this
         // is the context enclosing the class. Note that the context in which a
@@ -363,7 +364,7 @@ class Namer { typer: Typer =>
           case _ => new Completer(tree)(cctx)
         }
         val info = adjustIfModule(completer, tree)
-        createOrRefine[Symbol](tree, name, flags | deferred | method | higherKinded,
+        createOrRefine[Symbol](tree, name, flags | deferred | method | higherKinded | stable,
           _ => info,
           (fs, _, pwithin) => ctx.newSymbol(ctx.owner, name, fs, info, pwithin, tree.namePos))
       case tree: Import =>
@@ -752,7 +753,6 @@ class Namer { typer: Typer =>
         sym.addAnnotation(ann)
         if (sym.is(Method, butNot = Accessor))
           if (cls == defn.InlineAnnot) sym.setFlag(Inline)
-          else if (cls == defn.TransparentAnnot) sym.setFlag(Stable)
       }
     }
   }
@@ -1027,6 +1027,23 @@ class Namer { typer: Typer =>
     for (param <- params) typedAheadExpr(param)
   }
 
+  /** Register a companion symbol with sym's reflected body type.
+    * The resulting `transparentTp` should be computed in the creation context. */
+  def registerTransparentInfo(sym: Symbol)(transparentTp: => Type)(implicit ctx: Context): Unit = {
+    val tflags = Method | Synthetic | Deferred
+    val tinfo = new LazyType {
+      def complete(denot: SymDenotation)(implicit ctx: Context): Unit = {
+//        println(i"  COMPLETING ${sym.owner} . ${denot.symbol} : ???")
+        denot.info = transparentTp
+//        println(i"  COMPLETED ${sym.owner} . ${denot.symbol} : ${denot.info}")
+      }
+    }
+    val tsym = ctx.newSymbol(sym.owner, NameKinds.TransparentCompName(sym.name.asTermName), tflags, tinfo,
+      coord = sym.coord)
+    tsym.entered
+//    ctx.enter(tsym)  // FIXME(gsps): Also enter into method owner etc.
+  }
+
   /** The signature of a module valdef.
    *  This will compute the corresponding module class TypeRef immediately
    *  without going through the defined type of the ValDef. This is necessary
@@ -1189,29 +1206,10 @@ class Namer { typer: Typer =>
         WildcardType
     }
 
-    def registerTransparentInfo(): Unit = {
-      val tflags = Method | Synthetic | Deferred
-      val tinfo = new LazyType {
-        private val creationContext: Context = ctx
-        def complete(denot: SymDenotation)(implicit ctx: Context): Unit = {
-          val inferredTp = inferredReturnType(mdef.rhs, WildcardType)(creationContext)
-          var transTp = fullyDefinedType(inferredTp, "transparent def", mdef.pos)
-//          if (!transTp.isStable) {
-//            val msg: String = i"Type of transparent method's body must be stable, but found: $transTp"
-//            transTp = errorType(msg, mdef.rhs.pos)
-//          }
-          denot.info = paramFn(transTp)
-          // println(i"  COMPLETED ${sym.owner} . ${denot.symbol} : ${denot.info}")
-        }
+    if (mdef.mods.is(Transparent))
+      registerTransparentInfo(sym) {
+        paramFn(fullyDefinedType(inferredReturnType(mdef.rhs, WildcardType), "transparent def", mdef.pos))
       }
-      val tsym = ctx.newSymbol(sym.owner, NameKinds.TransparentCompName(sym.name.asTermName), tflags, tinfo,
-        coord = sym.coord)
-      tsym.entered
-//      ctx.enter(tsym)  // FIXME: Also enter into method owner etc.
-    }
-
-    if (sym.isTransparentMethod)
-      registerTransparentInfo()
 
     paramFn(typedAheadType(mdef.tpt, tptProto).tpe)
   }
@@ -1249,11 +1247,11 @@ class Namer { typer: Typer =>
     for (tparam <- tparams) typedAheadExpr(tparam)
 
     vparamss foreach completeParams
-    def typeParams = tparams map symbolOfTree
+    val typeParams = tparams map symbolOfTree
     val termParamss = ctx.normalizeIfConstructor(vparamss.nestedMap(symbolOfTree), isConstructor)
     def wrapMethType(restpe: Type): Type = {
       instantiateDependent(restpe, typeParams, termParamss)
-      ctx.methodType(tparams map symbolOfTree, termParamss, restpe, isJava = ddef.mods is JavaDefined)
+      ctx.methodType(typeParams, termParamss, restpe, isJava = ddef.mods is JavaDefined)
     }
     if (isConstructor) {
       // set result type tree to unit, but take the current class as result type of the symbol

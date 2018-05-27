@@ -369,6 +369,9 @@ object Flags {
   /** Labeled with `erased` modifier (erased value)  */
   final val Erased = termFlag(42, "erased")
 
+  /** Labeled with `transparent` modifier (transparent definition)  */
+  final val Transparent = commonFlag(43, "transparent")
+
   // Flags following this one are not pickled
 
   /** Symbol is not a member of its owner */
@@ -437,7 +440,7 @@ object Flags {
   /** Flags representing source modifiers */
   final val SourceModifierFlags =
     commonFlags(Private, Protected, Abstract, Final, Inline,
-     Sealed, Case, Implicit, Override, AbsOverride, Lazy, JavaStatic, Erased)
+     Sealed, Case, Implicit, Override, AbsOverride, Lazy, JavaStatic, Erased, Transparent)
 
   /** Flags representing modifiers that can appear in trees */
   final val ModifierFlags =

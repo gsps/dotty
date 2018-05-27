@@ -679,8 +679,6 @@ class Definitions {
   def AliasAnnot(implicit ctx: Context) = AliasAnnotType.symbol.asClass
   lazy val AnnotationDefaultAnnotType = ctx.requiredClassRef("scala.annotation.internal.AnnotationDefault")
   def AnnotationDefaultAnnot(implicit ctx: Context) = AnnotationDefaultAnnotType.symbol.asClass
-  lazy val TransparentAnnotType = ctx.requiredClassRef("scala.annotation.transparent")
-  def TransparentAnnot(implicit ctx: Context) = TransparentAnnotType.symbol.asClass
   lazy val BodyAnnotType = ctx.requiredClassRef("scala.annotation.internal.Body")
   def BodyAnnot(implicit ctx: Context) = BodyAnnotType.symbol.asClass
   lazy val ChildAnnotType = ctx.requiredClassRef("scala.annotation.internal.Child")

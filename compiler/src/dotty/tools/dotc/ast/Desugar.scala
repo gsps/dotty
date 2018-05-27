@@ -309,6 +309,9 @@ object desugar {
     val isValueClass = parents.nonEmpty && isAnyVal(parents.head)
       // This is not watertight, but `extends AnyVal` will be replaced by `inline` later.
 
+    val (maybeStable, maybeTransparent) =
+      if (cdef.mods is Transparent) (Stable, Transparent) else (EmptyFlags, EmptyFlags)
+
     val originalTparams = constr1.tparams
     val originalVparamss = constr1.vparamss
     lazy val derivedEnumParams = enumClass.typeParams.map(derivedTypeParam)
@@ -326,6 +329,7 @@ object desugar {
       }
       else originalVparamss.nestedMap(toDefParam)
     val constr = cpy.DefDef(constr1)(tparams = constrTparams, vparamss = constrVparamss)
+      .withMods(constr1.mods | maybeStable)
 
     val (normalizedBody, enumCases, enumCompanionRef) = {
       // Add constructor type parameters and evidence implicit parameters
@@ -533,7 +537,7 @@ object desugar {
           if (mods is Abstract) Nil
           else
             DefDef(nme.apply, derivedTparams, derivedVparamss, applyResultTpt, widenedCreatorExpr)
-              .withFlags(Synthetic | (constr1.mods.flags & DefaultParameterized)) :: widenDefs
+              .withFlags(Synthetic | maybeTransparent | (constr1.mods.flags & DefaultParameterized)) :: widenDefs
         val unapplyMeth = {
           val unapplyParam = makeSyntheticParameter(tpt = classTypeRef)
           val unapplyRHS = if (arity == 0) Literal(Constant(true)) else Ident(unapplyParam.name)
