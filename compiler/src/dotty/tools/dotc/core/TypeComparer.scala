@@ -627,7 +627,10 @@ class TypeComparer(initctx: Context) extends DotClass with ConstraintHandling {
           case tp2: AppliedTermRef => compareDealiasedRhsSingleton(tp2.resType)
           case _ => false
         }
-        isNewSubType(tp1.underlying.widenExpr) || comparePaths
+        tp1 match {
+          case tp1: AppliedTermRef => isSubType(tp1.resType, tp2, approx.addLow) || comparePaths
+          case _ => isNewSubType(tp1.underlying.widenExpr) || comparePaths
+        }
       case tp1: RefinedType =>
         isNewSubType(tp1.parent)
       case tp1: RecType =>

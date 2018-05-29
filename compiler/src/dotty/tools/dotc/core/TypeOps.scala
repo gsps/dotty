@@ -128,6 +128,9 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
     final val NORMALIZE_FUEL = 50
     private[this] var fuel: Int = NORMALIZE_FUEL
 
+    private def assertOneArg(argss: List[List[Type]]): Unit =
+      assert(argss.size == 1 && argss.head.size == 1, i"Expected one argument, got: $argss")
+
     private def asType(b: Boolean) = ConstantType(Constants.Constant(b))
 
     private def defType(fnSym: Symbol, pre: Type): Type = {
@@ -162,11 +165,48 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
             case _                                       => NoType
           }
         }
-        else if (realApplication && (fnSym eq defn.Any_isInstanceOf)) {
-          // NOTE: isInstanceOf on unerased types!
-          assert(argss.size == 1 && argss.head.size == 1, i"Expected one argument, got: $argss")
-          asType(ctx.typeComparer.isSubTypeWhenFrozen(fn.prefix, argss.head.head))
+        else if (realApplication && ((fnSym eq defn.Any_isInstanceOf) || (fnSym eq defn.Any_asInstanceOf))) {
+          import TypeErasure.erasure
+          assertOneArg(argss)
+          val isSubType = ctx.typeComparer.isSubTypeWhenFrozen(erasure(fn.prefix), erasure(argss.head.head))
+          if (fnSym eq defn.Any_isInstanceOf) asType(isSubType)
+          else
+            if (isSubType) normalize(fn.prefix)
+            else           NoType
         }
+        else NoType
+      }
+      else NoType
+    }
+
+    def normalizeTermParamSel(tp: TermRef): Type = {
+      def argForParam(param: Symbol, vparams0: List[Symbol], argss0: List[List[Type]]): Type = {
+        var vparams = vparams0
+        var argss = argss0
+        var args = argss.head
+        argss = argss.tail
+        while (vparams.nonEmpty && args.nonEmpty) {
+          if (vparams.head.eq(param))
+            return args.head
+          vparams = vparams.tail
+          args = args.tail
+          if (args.isEmpty && argss.nonEmpty) {
+            args = argss.head
+            argss = argss.tail
+          }
+        }
+        NoType
+      }
+
+      val param = tp.symbol
+      val cls = param.owner
+      if (cls.flagsUNSAFE.is(Transparent)) {
+        val termParams = cls.termParams
+        if (termParams.exists(_.name eq param.name))
+          tp.prefix.baseType(cls) match {
+            case base: AppliedTermRef => argForParam(param, termParams, base.underlyingFnAndArgss._2)
+            case base => NoType
+          }
         else NoType
       }
       else NoType
@@ -184,24 +224,15 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
       case tp =>
         mapOver(tp) match {
           case tp: TermRef =>
-            normalizeApp(tp, Nil, realApplication = false) orElse {
-              apply(tp.underlying) match {
-                case normUnderTp: ConstantType => normUnderTp
-                case normUnderTp: TermRef =>
-                  if (tp.symbol.id <= normUnderTp.symbol.id) tp
-                  else normUnderTp
-                case normUnderTp: SingletonType => normUnderTp
-                case _ => tp
+            normalizeApp(tp, Nil, realApplication = false) orElse normalizeTermParamSel(tp) orElse {
+              tp.underlying match {
+                case underTp: SingletonType => normalize(underTp)
+                case underTp => tp
               }
             }
 
           case tp: AppliedTermRef =>
-            @tailrec def normFnAndArgss(tp: Type, argss: List[List[Type]]): (TermRef, List[List[Type]]) =
-              tp match {
-                case tp: TermRef => (tp, argss.reverse)
-                case tp: AppliedTermRef => normFnAndArgss(tp.fn, tp.args :: argss)
-              }
-            val (fn, argss) = normFnAndArgss(tp, Nil)
+            val (fn, argss) = tp.underlyingFnAndArgss
             normalizeApp(fn, argss, realApplication = true) orElse tp
 
           case tp =>

@@ -1157,6 +1157,9 @@ object SymDenotations {
     /** The type parameters of a class symbol, Nil for all other symbols */
     def typeParams(implicit ctx: Context): List[TypeSymbol] = Nil
 
+    /** The term parameters of a class symbol, Nil for all other symbols */
+    def termParams(implicit ctx: Context): List[TermSymbol] = Nil
+
     /** The type This(cls), where cls is this class, NoPrefix for all other symbols */
     def thisType(implicit ctx: Context): Type = NoPrefix
 
@@ -1293,6 +1296,7 @@ object SymDenotations {
     // ----- caches -------------------------------------------------------
 
     private[this] var myTypeParams: List[TypeSymbol] = null
+    private[this] var myTermParams: List[TermSymbol] = null
     private[this] var fullNameCache: SimpleIdentityMap[QualifiedNameKind, Name] = SimpleIdentityMap.Empty
 
     private[this] var myMemberCache: LRUCache[Name, PreDenotation] = null
@@ -1386,11 +1390,25 @@ object SymDenotations {
       myTypeParams
     }
 
+    /** The term parameters of this class */
+    override final def termParams(implicit ctx: Context): List[TermSymbol] = {
+      if (myTermParams == null)
+        myTermParams =
+          if (ctx.erasedTypes || is(Module)) Nil // fast return for modules to avoid scanning package decls
+          else {
+            val di = initial
+            if (this ne di) di.termParams
+            else unforcedDecls.filter(sym => (sym is ParamAccessor) && sym.owner == symbol).asInstanceOf[List[TermSymbol]]
+          }
+      myTermParams
+    }
+
     override protected[dotc] final def info_=(tp: Type) = {
       if (changedClassParents(infoOrCompleter, tp, completersMatter = true))
         invalidateBaseDataCache()
       invalidateMemberNamesCache()
       myTypeParams = null // changing the info might change decls, and with it typeParams
+      myTermParams = null
       super.info_=(tp)
     }
 
@@ -1653,7 +1671,8 @@ object SymDenotations {
           Stats.record("computeBaseType, total")
           Stats.record(s"computeBaseType, ${tp.getClass}")
         }
-        if (symbol.isStatic && tp.derivesFrom(symbol) && symbol.typeParams.isEmpty)
+        if (symbol.isStatic && tp.derivesFrom(symbol) && symbol.typeParams.isEmpty &&
+            (!symbol.is(Transparent) || symbol.termParams.isEmpty))
           symbol.typeRef
         else tp match {
           case tp @ TypeRef(prefix, _) =>
@@ -1684,6 +1703,10 @@ object SymDenotations {
               case tparams: List[Symbol @unchecked] =>
                 baseTypeOf(tycon).subst(tparams, args)
             }
+          case tp: AppliedTermRef =>
+            val fnSym = tp.underlyingFn.symbol
+            if (fnSym.isConstructor && (fnSym.owner eq symbol)) tp
+            else baseTypeOf(tp.resType)
           case tp: TypeProxy =>
             baseTypeOf(tp.superType)
           case AndType(tp1, tp2) =>

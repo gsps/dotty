@@ -57,6 +57,8 @@ class SymUtils(val self: Symbol) extends AnyVal {
 
   def isSuperAccessor(implicit ctx: Context): Boolean = self.name.is(SuperAccessorName)
 
+  def isTransparentCompanion(implicit ctx: Context): Boolean = self.name.is(TransparentCompName)
+
   /** A type or term parameter or a term parameter accessor */
   def isParamOrAccessor(implicit ctx: Context): Boolean =
     self.is(Param) || self.is(ParamAccessor)

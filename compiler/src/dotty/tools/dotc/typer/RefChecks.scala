@@ -449,7 +449,8 @@ object RefChecks {
       def ignoreDeferred(member: SingleDenotation) =
         member.isType ||
           member.symbol.isSuperAccessor || // not yet synthesized
-          member.symbol.is(JavaDefined) && hasJavaErasedOverriding(member.symbol)
+          member.symbol.is(JavaDefined) && hasJavaErasedOverriding(member.symbol) ||
+          member.symbol.isTransparentCompanion
 
       // 2. Check that only abstract classes have deferred members
       def checkNoAbstractMembers(): Unit = {

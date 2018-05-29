@@ -2185,6 +2185,7 @@ object Types {
         fn.widen match {
           case polyTpe: PolyType => myResType = polyTpe.instantiate(args)
           case methTpe: MethodType => myResType = ctx.typer.applicationResultType(methTpe, args)
+          case errTpe: ErrorType => myResType = errTpe
         }
       myResType
     }
@@ -2209,6 +2210,15 @@ object Types {
         case fn: TermRef => fn
         case fn: AppliedTermRef => fn.underlyingFn
       }
+
+    @inline final def underlyingFnAndArgss = {
+      @tailrec def rec(tp: Type, argss: List[List[Type]]): (TermRef, List[List[Type]]) =
+        tp match {
+          case tp: TermRef => (tp, argss.reverse)
+          case tp: AppliedTermRef => rec(tp.fn, tp.args :: argss)
+        }
+      rec(this, Nil)
+    }
 
     def derivedAppliedTermRef(fn: Type, args: List[Type])(implicit ctx: Context): Type =
       if ((this.fn eq fn) && (this.args eq args)) this

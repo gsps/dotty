@@ -55,6 +55,10 @@ object nats {
     val Nat1: {Succ(Zero)}       = asNat(1)
     val Nat2: {Succ(Succ(Zero))} = asNat(2)
 
+    Succ(Zero).pred: {Zero}
+    Nat1.pred: {Zero}
+    val _: {Nat1} = Nat2.pred  // FIXME: Why is `Nat2.pred` considered a pure expression but the above are not?
+
     transparent def isZero(n: Nat): Boolean =
       n.isInstanceOf[{Zero}]
 
@@ -67,12 +71,7 @@ object nats {
 
     plus(Zero, Zero): {Zero}
     plus(Succ(Zero), Zero): {Succ(Zero)}
-
-    // TODO: Can't prove this yet (or currently diverge doing it)
-    /*
-    Nat1.pred: {Zero}
     plus(Zero, Succ(Zero)): {Succ(Zero)}
     plus(Nat1, Nat1): {Nat2}
-    */
   }
 }
