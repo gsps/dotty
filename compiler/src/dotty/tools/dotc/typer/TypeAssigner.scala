@@ -462,7 +462,9 @@ trait TypeAssigner {
     tree.withType(avoidingType(expansion, bindings))
 
   def assignType(tree: untpd.If, thenp: Tree, elsep: Tree)(implicit ctx: Context) = {
-    val tpe = IteType(tree.cond.tpe, thenp.tpe, elsep.tpe)
+    val tpe =
+      if (ctx.owner.is(Transparent)) IteType(tree.cond.tpe, thenp.tpe, elsep.tpe)
+      else thenp.tpe | elsep.tpe
     tree.withType(tpe)
   }
 
