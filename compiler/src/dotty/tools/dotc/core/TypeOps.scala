@@ -133,6 +133,11 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
 
     private def asType(b: Boolean) = ConstantType(Constants.Constant(b))
 
+    private def typeTest(actualTp: Type, testedTp: Type): Option[Boolean] =
+      if (ctx.typeComparer.isSubTypeWhenFrozen(actualTp, testedTp))      Some(true)
+      else if (ctx.typeComparer.isSubTypeWhenFrozen(testedTp, actualTp)) None
+      else                                                               Some(false)
+
     private def defType(fnSym: Symbol, pre: Type): Type = {
       assert(fnSym.isTerm)
       val d = fnSym.owner.findMember(NameKinds.TransparentCompName(fnSym.name.asTermName), pre, EmptyFlags)
@@ -168,11 +173,14 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
         else if (realApplication && ((fnSym eq defn.Any_isInstanceOf) || (fnSym eq defn.Any_asInstanceOf))) {
           import TypeErasure.erasure
           assertOneArg(argss)
-          val isSubType = ctx.typeComparer.isSubTypeWhenFrozen(erasure(fn.prefix), erasure(argss.head.head))
-          if (fnSym eq defn.Any_isInstanceOf) asType(isSubType)
+          val isSubTypeOpt = typeTest(erasure(fn.prefix), erasure(argss.head.head))
+          if (fnSym eq defn.Any_isInstanceOf)
+            isSubTypeOpt map asType getOrElse NoType
           else
-            if (isSubType) normalize(fn.prefix)
-            else           NoType
+            isSubTypeOpt match {
+              case Some(true) => normalize(fn.prefix)
+              case _          => NoType
+            }
         }
         else NoType
       }
