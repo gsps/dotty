@@ -1834,18 +1834,18 @@ class Typer extends Namer
 
   /** Interpolate and simplify the type of the given tree. */
   protected def simplify(tree: Tree, pt: Type, locked: TypeVars)(implicit ctx: Context): tree.type = {
-    def treeOrEnclosureIsTransparent: Boolean = {
-      import transform.SymUtils._
-      ctx.owner.enclosingMethodOrClass.flagsUNSAFE.is(Transparent) ||   // FIXME(gsps): Dirty.
-        (tree.isDef && tree.symbol.is(Transparent))
-    }
-    def normalized(tp: Type): Type =
-      if (ctx.mode.is(Mode.InferringReturnType) || treeOrEnclosureIsTransparent) tp
-      else {
-        val normTp = ctx.normalize(tp)
-        // if (normTp ne tp) println(i"S  $tp  -->  $normTp")
-        normTp
+    def normalized(tp: Type): Type = {
+      def skipNormalization = {
+        import transform.SymUtils._
+        ctx.isAfterTyper || !ctx.mode.isExpr || ctx.mode.is(Mode.InferringReturnType) ||
+          ctx.owner.enclosingMethodOrClass.flagsUNSAFE.is(Transparent) ||   // FIXME(gsps): Dirty.
+          tree.isDef && tree.symbol.is(Transparent)
       }
+      // TODO(gsps): Make sure prototypes make it here and don't normalize if the proto matches syntactically
+      if (!skipNormalization && ctx.isNormalizationEntrypoint(tp)) ctx.normalize(tp)
+      else tp
+    }
+
     if (!tree.denot.isOverloaded) // for overloaded trees: resolve overloading before simplifying
       if (!tree.tpe.widen.isInstanceOf[MethodOrPoly] // wait with simplifying until method is fully applied
           || tree.isDef)                             // ... unless tree is a definition

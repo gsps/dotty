@@ -114,19 +114,32 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
     def apply(tp: Type) = simplify(tp, this)
   }
 
-  /** Normalize types using call-by-value reduction rules.
-    * A type is in normal form if all of its constituents are normal and it is a(n)
-    *  - TermRef, and it doesn't dealias to another type that is `smaller`
-    *  - IteType, and its `condTp` is in normal form
-    *  - AppliedTermRef, and its `fn` is not transparent
-    *  - any other type node.
+  /** Normalize types via congruence rules that reflect TypeMap's behavior and
+    * beta-reduction on AppliedTermRefs. Our reduction relation essentially corresponds
+    * to call-by-value evaluation. Further, we consider every type that has gone through
+    * normalization a value with the exception of applications of transparent methods.
+    *
+    * The general principle behind normalization is to dealias singleton types, e.g.,
+    * TermRefs whose underlying types are singletons are normalized, as are method
+    * applications (whose arguments are singleton by construction).
+    *
+    * IteTypes are handled as one would expect in that the `then` and the `else` types are
+    * evaluated lazily, i.e., only once the conditional has reduced to true or false.
     **/
   final def normalize(tp: Type): Type =
-    new NormalizeMap().normalize(tp)
+    new NormalizeMap().apply(tp)
 
-  private class NormalizeMap extends TypeMap {
+  final def isNormalizationEntrypoint(tp: Type): Boolean =
+    tp match {
+      case tp: AppliedTermRef => tp.underlyingFn.symbol.is(Transparent)
+      case tp: TermRef        => tp.symbol.is(Transparent)
+      case _                  => false
+    }
+
+  private final class NormalizeMap extends TypeMap {
     final val NORMALIZE_FUEL = 50
     private[this] var fuel: Int = NORMALIZE_FUEL
+    private[this] var canReduce: Boolean = true
 
     private def assertOneArg(argss: List[List[Type]]): Unit =
       assert(argss.size == 1 && argss.head.size == 1, i"Expected one argument, got: $argss")
@@ -159,6 +172,7 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
         }
         else if (fnSym is Transparent) {
           // Reduction step
+          // TODO(gsps): Also reduce if fnSym's finalResultType is singleton (or do this in TypeAssigner?)
           val fnTpe = defType(fnSym, fn.prefix)
           val instantiate: (Type, List[Type]) => Type = {
             case (lmbdTp: MethodOrPoly, args: List[Type]) => lmbdTp.instantiate(args)
@@ -220,17 +234,22 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
       else NoType
     }
 
-    def apply(tp: Type): Type = tp match {
+    private def bigStep(tp: Type): Type = tp match {
       case tp: IteType =>
         apply(tp.condTp) match {
           case ConstantType(c) if c.tag == Constants.BooleanTag =>
             if (c.value.asInstanceOf[Boolean]) normalize(tp.thenTp)
             else                               normalize(tp.elseTp)
-          case condTp => tp.derivedIteType(condTp, tp.thenTp, tp.elseTp)
+          case condTp =>
+            canReduce = false
+            tp.derivedIteType(condTp, tp.thenTp, tp.elseTp)
         }
 
       case tp =>
         mapOver(tp) match {
+          case _ if !canReduce =>
+            tp
+
           case tp: TermRef =>
             normalizeApp(tp, Nil, realApplication = false) orElse normalizeTermParamSel(tp) orElse {
               tp.underlying match {
@@ -249,12 +268,12 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
         }
     }
 
-    def normalize(tp: Type): Type = trace.conditionally(TypeOps.trackNormalize, i"normalize($tp)", show = true) {
+    def apply(tp: Type): Type = trace.conditionally(TypeOps.trackNormalize, i"normalize($tp)", show = true) {
       if (fuel == 0)
         errorType(i"Diverged while normalizing $tp ($NORMALIZE_FUEL steps)", ctx.tree.pos)
       else {
         fuel -= 1
-        apply(tp)
+        bigStep(tp)
       }
     }
   }
