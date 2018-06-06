@@ -266,7 +266,7 @@ trait TypeAssigner {
    *   - any further information it needs to access to compute that type.
    */
   def assignType(tree: untpd.Ident, tp: Type)(implicit ctx: Context) =
-    tree.withType(tp)
+    tree.withType(normalizedType(tp))
 
   def assignType(tree: untpd.Select, qual: Tree)(implicit ctx: Context): Select = {
     def qualType = qual.tpe.widen
@@ -286,7 +286,7 @@ trait TypeAssigner {
       // is casted to T[] by javac. Since the return type of Array[T]#clone() is Array[T],
       // this is exactly what Erasure will do.
 
-      case _ => accessibleSelectionType(tree, qual)
+      case _ => normalizedType(accessibleSelectionType(tree, qual))
     }
     tree.withType(tp)
   }
@@ -362,14 +362,27 @@ trait TypeAssigner {
     if (methTp.isResultDependent) safeSubstParams(methTp.resultType, methTp.paramRefs, args)
     else methTp.resultType
 
+  protected def normalizedType(tp: Type)(implicit ctx: Context): Type = {
+    def skipNormalization = {
+      import transform.SymUtils._
+      ctx.isAfterTyper || ctx.mode.is(Mode.Type) || ctx.mode.is(Mode.InferringReturnType) ||
+        ctx.owner.enclosingMethodOrClass.flagsUNSAFE.is(Transparent)   // FIXME(gsps): Dirty.
+    }
+//    println(i"NORM?:  ${ctx.owner}, ${ctx.mode}, ${tp}   --> ${!skipNormalization}, ${ctx.isNormalizationEntrypoint(tp)}")
+    // TODO(gsps): Make sure prototypes make it here and don't normalize if the proto matches syntactically
+    if (!skipNormalization && ctx.isNormalizationEntrypoint(tp)) ctx.normalize(tp)
+    else tp
+  }
+
   def assignType(tree: untpd.Apply, fn: Tree, args: List[Tree])(implicit ctx: Context) = {
     val fnTpe = fn.tpe
     val ownType = fnTpe.widen match {
       case methTp: MethodType =>
         if (sameLength(methTp.paramInfos, args) || ctx.phase.prev.relaxedTyping) {
           val argTpes = args.tpes
+//          println(i"ATR???  $fnTpe ( $argTpes )  @  ${fnTpe.isStable}  ${argTpes.map(_.isStable)}")
           if (!ctx.erasedTypes && fnTpe.isStable && argTpes.forall(_.isStable))
-            AppliedTermRef(fnTpe, argTpes)
+            normalizedType(AppliedTermRef(fnTpe, argTpes))
           else
             applicationResultType(methTp, argTpes)
         } else
@@ -476,8 +489,12 @@ trait TypeAssigner {
   def assignType(tree: untpd.CaseDef, body: Tree)(implicit ctx: Context) =
     tree.withType(body.tpe)
 
-  def assignType(tree: untpd.Match, cases: List[CaseDef])(implicit ctx: Context) =
-    tree.withType(ctx.typeComparer.lub(cases.tpes))
+  def assignType(tree: untpd.Match, selector: Tree, cases: List[CaseDef])(implicit ctx: Context) = {
+    val tpe =
+      if (ctx.owner.is(Transparent)) PatMatTypeAssigner(selector, cases)
+      else ctx.typeComparer.lub(cases.tpes)
+    tree.withType(tpe)
+  }
 
   def assignType(tree: untpd.Return)(implicit ctx: Context) =
     tree.withType(defn.NothingType)

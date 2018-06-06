@@ -418,7 +418,7 @@ object desugar {
     // two errors without @uncheckedVariance, one of them spurious.
     val caseClassMeths = {
       def syntheticProperty(name: TermName, rhs: Tree) =
-        DefDef(name, Nil, Nil, TypeTree(), rhs).withMods(synthetic)
+        DefDef(name, Nil, Nil, TypeTree(), rhs).withFlags(Synthetic | maybeTransparent)
       def productElemMeths = {
         val caseParams = constrVparamss.head.toArray
         for (i <- 0 until arity if nme.selectorName(i) `ne` caseParams(i).name)
@@ -542,7 +542,7 @@ object desugar {
           val unapplyParam = makeSyntheticParameter(tpt = classTypeRef)
           val unapplyRHS = if (arity == 0) Literal(Constant(true)) else Ident(unapplyParam.name)
           DefDef(nme.unapply, derivedTparams, (unapplyParam :: Nil) :: Nil, TypeTree(), unapplyRHS)
-            .withMods(synthetic)
+            .withFlags(Synthetic | maybeTransparent)
         }
         companionDefs(companionParent, applyMeths ::: unapplyMeth :: companionMembers)
       }

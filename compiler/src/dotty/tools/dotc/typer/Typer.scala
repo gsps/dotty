@@ -965,11 +965,12 @@ class Typer extends Namer
         typed(desugar.makeCaseLambda(tree.cases, protoFormals.length, unchecked) withPos tree.pos, pt)
       case _ =>
         val sel1 = typedExpr(tree.selector)
-        val selType = fullyDefinedType(sel1.tpe, "pattern selector", tree.pos).widen
+//        val selType = fullyDefinedType(sel1.tpe, "pattern selector", tree.pos).widen
+        val selType = fullyDefinedType(sel1.tpe, "pattern selector", tree.pos)
 
         val cases1 = harmonic(harmonize)(typedCases(tree.cases, selType, pt.notApplied))
           .asInstanceOf[List[CaseDef]]
-        assignType(cpy.Match(tree)(sel1, cases1), cases1)
+        assignType(cpy.Match(tree)(sel1, cases1), sel1, cases1)
     }
   }
 
@@ -992,7 +993,7 @@ class Typer extends Namer
           foldOver(tsyms1, t)
         }
       }
-      accu(Set.empty, selType)
+      accu(Set.empty, selType.widen)
     }
 
     cases mapconserve (typedCase(_, pt, selType, gadtSyms))
@@ -1307,7 +1308,7 @@ class Typer extends Namer
   }
 
   def typedBind(tree: untpd.Bind, pt: Type)(implicit ctx: Context): Tree = track("typedBind") {
-    val pt1 = fullyDefinedType(pt, "pattern variable", tree.pos)
+    val pt1 = fullyDefinedType(pt.widen, "pattern variable", tree.pos)
     val body1 = typed(tree.body, pt1)
     body1 match {
       case UnApply(fn, Nil, arg :: Nil)
@@ -1322,9 +1323,13 @@ class Typer extends Namer
         else {
           // for a singleton pattern like `x @ Nil`, `x` should get the type from the scrutinee
           // see tests/neg/i3200b.scala and SI-1503
-          val symTp =
+          val bindTp =
             if (body1.tpe.isInstanceOf[TermRef]) pt1
             else body1.tpe.underlyingIfRepeated(isJava = false)
+          val symTp =
+            if (pt.isStable) AppliedTermRef(pt.select(defn.Any_asInstanceOf), List(bindTp))
+            else bindTp
+//          println(i"BIND $tree @   body ${body1} : ${body1.tpe}   proto $pt1")
           val sym = ctx.newPatternBoundSymbol(tree.name, symTp, tree.pos)
           if (ctx.mode.is(Mode.InPatternAlternative))
             ctx.error(i"Illegal variable ${sym.name} in pattern alternative", tree.pos)
@@ -1834,24 +1839,12 @@ class Typer extends Namer
 
   /** Interpolate and simplify the type of the given tree. */
   protected def simplify(tree: Tree, pt: Type, locked: TypeVars)(implicit ctx: Context): tree.type = {
-    def normalized(tp: Type): Type = {
-      def skipNormalization = {
-        import transform.SymUtils._
-        ctx.isAfterTyper || !ctx.mode.isExpr || ctx.mode.is(Mode.InferringReturnType) ||
-          ctx.owner.enclosingMethodOrClass.flagsUNSAFE.is(Transparent) ||   // FIXME(gsps): Dirty.
-          tree.isDef && tree.symbol.is(Transparent)
-      }
-      // TODO(gsps): Make sure prototypes make it here and don't normalize if the proto matches syntactically
-      if (!skipNormalization && ctx.isNormalizationEntrypoint(tp)) ctx.normalize(tp)
-      else tp
-    }
-
     if (!tree.denot.isOverloaded) // for overloaded trees: resolve overloading before simplifying
       if (!tree.tpe.widen.isInstanceOf[MethodOrPoly] // wait with simplifying until method is fully applied
           || tree.isDef)                             // ... unless tree is a definition
       {
         interpolateTypeVars(tree, pt, locked)
-        tree.overwriteType(normalized(tree.tpe.simplified))
+        tree.overwriteType(tree.tpe.simplified)
       }
     tree
   }

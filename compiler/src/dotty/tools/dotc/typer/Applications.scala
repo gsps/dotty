@@ -46,7 +46,10 @@ object Applications {
     val ref = extractorMember(tp, name)
     if (ref.isOverloaded)
       errorType(i"Overloaded reference to $ref is not allowed in extractor", errorPos)
-    ref.info.widenExpr.annotatedToRepeated.dealias
+//    val res = ref.info.widenExpr.annotatedToRepeated.dealias
+    val res = if (ref.exists) ref.termRef else ref.info
+//    println(i"EMT $tp $name  =  $ref / $res")
+    res
   }
 
   /** Does `tp` fit the "product match" conditions as an unapply result type
@@ -102,7 +105,8 @@ object Applications {
     if (unapplyName == nme.unapplySeq) {
       if (unapplyResult derivesFrom defn.SeqClass) seqSelector :: Nil
       else if (isGetMatch(unapplyResult, pos)) {
-        val seqArg = getTp.elemType.hiBound
+//        val seqArg = getTp.elemType.hiBound
+         val seqArg = getTp.widenTermRefExpr.elemType.hiBound
         if (seqArg.exists) args.map(Function.const(seqArg))
         else fail
       }
@@ -940,6 +944,7 @@ trait Applications extends Compatibility { self: Typer with Dynamic =>
         case _ => false
       }
 
+//    println(i"unapplyFn 1 = $unapplyFn")
     unapplyFn.tpe.widen match {
       case mt: MethodType if mt.paramInfos.length == 1 =>
         val unapplyArgType = mt.paramInfos.head
@@ -961,7 +966,16 @@ trait Applications extends Compatibility { self: Typer with Dynamic =>
               ex"Pattern type $unapplyArgType is neither a subtype nor a supertype of selector type $selType",
               tree.pos)
           }
-        val dummyArg = dummyTreeOfType(ownType)
+//        println(i"unapplyFn 2 = $unapplyFn")
+//        println(i"selType = $selType")
+//        println(i"unapplyArgType = $unapplyArgType")
+//        println(i"ownType = $ownType  (${selType <:< unapplyArgType})")
+
+//        val dummyArg = dummyTreeOfType(ownType)
+////        val dummyArg = dummyTreeOfType(selType.select(defn.Any_asInstanceOf).appliedToType(ownType).tpe)
+        val dummyArgTpe =
+          if (selType.isStable) singleton(selType).select(defn.Any_asInstanceOf).appliedToType(ownType).tpe else ownType
+        val dummyArg = dummyTreeOfType(dummyArgTpe)
         val unapplyApp = typedExpr(untpd.TypedSplice(Apply(unapplyFn, dummyArg :: Nil)))
         def unapplyImplicits(unapp: Tree): List[Tree] = unapp match {
           case Apply(Apply(unapply, `dummyArg` :: Nil), args2) => assert(args2.nonEmpty); args2
@@ -969,8 +983,10 @@ trait Applications extends Compatibility { self: Typer with Dynamic =>
           case Inlined(u, _, _) => unapplyImplicits(u)
         }
 
+//        println(i"unapplyApp.tpe = ${unapplyApp.tpe}")
         var argTypes = unapplyArgs(unapplyApp.tpe, unapplyFn, args, tree.pos)
         for (argType <- argTypes) assert(!argType.isInstanceOf[TypeBounds], unapplyApp.tpe.show)
+//        println(i"typedUnApply:  argTypes: $argTypes")
         val bunchedArgs =
           if (argTypes.nonEmpty && argTypes.last.isRepeatedParam)
             args.lastOption match {

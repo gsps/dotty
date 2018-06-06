@@ -491,8 +491,8 @@ trait TypeOps { this: Context => // TODO: Make standalone object.
 }
 
 object TypeOps {
-  @sharable var track = false // !!!DEBUG
-  @sharable var trackNormalize = true
+  @sharable var track = true // !!!DEBUG
+  @sharable var trackNormalize = false
 
   /** When a property with this key is set in a context, it limits the number
    *  of recursive member searches. If the limit is reached, findMember returns

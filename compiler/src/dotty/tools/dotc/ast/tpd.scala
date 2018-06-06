@@ -114,7 +114,7 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
     ta.assignType(untpd.CaseDef(pat, guard, body), body)
 
   def Match(selector: Tree, cases: List[CaseDef])(implicit ctx: Context): Match =
-    ta.assignType(untpd.Match(selector, cases), cases)
+    ta.assignType(untpd.Match(selector, cases), selector, cases)
 
   def Return(expr: Tree, from: Tree)(implicit ctx: Context): Return =
     ta.assignType(untpd.Return(expr, from))
@@ -557,7 +557,7 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
       val tree1 = untpd.cpy.Match(tree)(selector, cases)
       tree match {
         case tree: Match if sameTypes(cases, tree.cases) => tree1.withTypeUnchecked(tree.tpe)
-        case _ => ta.assignType(tree1, cases)
+        case _ => ta.assignType(tree1, selector, cases)
       }
     }
 
